@@ -6,6 +6,5 @@ matplotlib
 pillow
 reportlab
 openpyxl
-kaleido
 gspread
 google-auth
