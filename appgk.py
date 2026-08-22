@@ -101,7 +101,7 @@ st.set_page_config(page_title="Goalkeeper Performance Analytics", layout="wide")
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v17 - 2026-08-21 - Full English translation of the entire app (UI, tables, charts, PDF reports)"
+APP_VERSION = "v19 - 2026-08-21 - Persistenza automatica su Google Sheets (con file locale come riserva se non configurato)"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -714,12 +714,67 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     return buffer.getvalue()
 
 
-# I dati di tutte le partite caricate restano salvati anche
-# se l'app viene chiusa e riaperta, finché non si preme "Reset Season"
+# I dati di tutte le partite caricate restano salvati anche se l'app viene
+# chiusa e riaperta, finché non si preme "Reset Season". Se sono configurati
+# i Secrets di Google (season_sheet_id + gcp_service_account), i dati vengono
+# salvati su Google Sheets (permanenti, indipendenti dal server dell'app).
+# Altrimenti si usa un file locale come riserva (utile per test in locale).
 # ============================================================
 SEASON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_data.pkl")
+GOOGLE_SHEETS_SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+GOOGLE_SHEETS_HEADER = ['nome', 'data', 'squadra', 'dati_json']
+
+def _google_sheets_configurato():
+    try:
+        return 'gcp_service_account' in st.secrets and 'season_sheet_id' in st.secrets
+    except Exception:
+        return False
+
+@st.cache_resource
+def _ottieni_worksheet_stagione():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('SeasonData')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=4)
+        worksheet.append_row(GOOGLE_SHEETS_HEADER)
+    return worksheet
+
+def _match_a_riga_sheet(match):
+    return [match['nome'], str(match['data']), match['squadra'],
+            match['dati'].to_json(orient='split', date_format='iso')]
+
+def _riga_sheet_a_match(riga):
+    from datetime import datetime as _dt
+    nome, data_str, squadra, dati_json = riga[0], riga[1], riga[2], riga[3]
+    df = pd.read_json(io.StringIO(dati_json), orient='split')
+    if 'GPI_Tiro' in df.columns:
+        df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
+    if 'Is_Stress_Test' in df.columns:
+        df['Is_Stress_Test'] = df['Is_Stress_Test'].astype(bool)
+    try:
+        data_valore = _dt.strptime(data_str, '%Y-%m-%d').date()
+    except Exception:
+        data_valore = data_str
+    return {'nome': nome, 'data': data_valore, 'squadra': squadra, 'dati': df}
 
 def carica_stagione_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_stagione()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                return []
+            return [_riga_sheet_a_match(riga) for riga in valori[1:] if riga and riga[0]]
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load season from Google Sheets: {e}")
+            return []
     if os.path.exists(SEASON_FILE):
         try:
             with open(SEASON_FILE, 'rb') as f:
@@ -729,6 +784,17 @@ def carica_stagione_da_disco():
     return []
 
 def salva_stagione_su_disco(db):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_stagione()
+            worksheet.clear()
+            worksheet.append_row(GOOGLE_SHEETS_HEADER)
+            righe = [_match_a_riga_sheet(m) for m in db]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save season to Google Sheets: {e}")
     with open(SEASON_FILE, 'wb') as f:
         pickle.dump(db, f)
 
@@ -736,6 +802,7 @@ if 'db' not in st.session_state:
     st.session_state['db'] = carica_stagione_da_disco()
 
 st.sidebar.caption(f"📦 Matches in memory (season): {len(st.session_state['db'])}")
+st.sidebar.caption("☁️ Storage: Google Sheets" if _google_sheets_configurato() else "💻 Storage: local file")
 
 tab1, tab2, tab3 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report'])
 
@@ -836,6 +903,49 @@ with tab1:
                     st.warning(f'{duplicati} match(es) skipped because already present (same name, date and team). Rename the "Game Name" if this is actually a different match.')
                 if not aggiunte and not duplicati:
                     st.info('No matches to add.')
+
+        st.markdown("---")
+        st.subheader("💾 Season Backup")
+        st.caption("Download a backup file of the whole season anytime and keep it on your computer. "
+                   "If anything ever goes wrong with the online app, you can restore everything from this file.")
+
+        col_backup1, col_backup2 = st.columns(2)
+        with col_backup1:
+            st.markdown("**Download backup**")
+            if st.session_state['db']:
+                backup_bytes = pickle.dumps(st.session_state['db'])
+                nome_backup = f"goalkeeper_season_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pkl"
+                st.download_button(
+                    label="⬇️ Download Season Backup",
+                    data=backup_bytes,
+                    file_name=nome_backup,
+                    mime="application/octet-stream"
+                )
+            else:
+                st.caption("No data to back up yet.")
+
+        with col_backup2:
+            st.markdown("**Restore from backup**")
+            file_backup = st.file_uploader("Upload a .pkl backup file", type=['pkl'], key="restore_backup")
+            if file_backup is not None:
+                if st.button("♻️ Restore backup (merge into current season)"):
+                    try:
+                        db_ripristinato = pickle.loads(file_backup.read())
+                        chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
+                        aggiunte_backup = 0
+                        for match in db_ripristinato:
+                            chiave = (match['nome'], str(match['data']), match['squadra'])
+                            if chiave in chiavi_esistenti:
+                                continue
+                            st.session_state['db'].append(match)
+                            chiavi_esistenti.add(chiave)
+                            aggiunte_backup += 1
+                        salva_stagione_su_disco(st.session_state['db'])
+                        st.success(f"Restored {aggiunte_backup} match(es) from the backup file. "
+                                  f"Total matches now in memory: {len(st.session_state['db'])}.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not read this backup file: {e}")
 
         st.markdown("---")
         st.subheader("⚠️ Reset Season")
