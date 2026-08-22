@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v23 - 2026-08-21 - Icona del sito (favicon) impostata sul logo, per un'icona corretta quando si aggiunge alla schermata home del telefono"
+APP_VERSION = "v24 - 2026-08-21 - Fix: colonna Timeline vuota mostra ora una casella vuota invece di 'None'/'nan'"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -121,6 +121,9 @@ def mappa_macro_settore(s):
     return None
 
 def analizza_timeline(timeline_str):
+    if pd.isna(timeline_str) or str(timeline_str).strip().lower() in ('', 'none', 'nan'):
+        return 0, "", 0, "0-0"
+
     t_str = str(timeline_str).strip()
     minuti_totali = 0
     scarto = 0
