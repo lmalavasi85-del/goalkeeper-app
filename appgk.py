@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v27 - 2026-08-21 - Fix: chiavi univoche esplicite per tutti i grafici, risolve StreamlitDuplicateElementId quando partita singola e stagione hanno dati identici"
+APP_VERSION = "v28 - 2026-08-21 - Fix: rimosso key da st.image (non supportato dalla versione Streamlit del server), causava un TypeError all'avvio"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1437,14 +1437,14 @@ with tab3:
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_gpi_screen:
                 generato = _disegna_grafico_stagione(dati_per_portiere, 'gpi_totale', 'Total Match GPI', tmp_gpi_screen.name)
                 if generato:
-                    st.image(tmp_gpi_screen.name, width=1000, key="img_gpi_seasonal")
+                    st.image(tmp_gpi_screen.name, width=1000)
 
             st.markdown("---")
             st.subheader("📈 Season Save % Trend (per match + cumulative average)")
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_pct_screen:
                 generato = _disegna_grafico_stagione(dati_per_portiere, 'pct', 'Match Save %', tmp_pct_screen.name)
                 if generato:
-                    st.image(tmp_pct_screen.name, width=1000, key="img_pct_seasonal")
+                    st.image(tmp_pct_screen.name, width=1000)
 
             st.markdown("---")
             st.subheader("📋 Match History")
