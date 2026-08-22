@@ -91,7 +91,11 @@ LOGO_BYTES = base64.b64decode(LOGO_BASE64)
 
 
 
-st.set_page_config(page_title="Goalkeeper Performance Analytics", layout="wide")
+st.set_page_config(
+    page_title="Goalkeeper Performance Analytics",
+    page_icon=PILImage.open(io.BytesIO(LOGO_BYTES)),
+    layout="wide"
+)
 
 # ============================================================
 # CODICE DI ACCESSO PER CARICARE FILE / GESTIRE LA STAGIONE
@@ -101,7 +105,7 @@ st.set_page_config(page_title="Goalkeeper Performance Analytics", layout="wide")
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v22 - 2026-08-21 - Nuovo: elimina una singola partita dalla stagione senza toccare le altre"
+APP_VERSION = "v23 - 2026-08-21 - Icona del sito (favicon) impostata sul logo, per un'icona corretta quando si aggiunge alla schermata home del telefono"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
