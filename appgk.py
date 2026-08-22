@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v25 - 2026-08-21 - Fix: grafico timeline non impila più i tiri quando la colonna Timeline è vuota (etichette sempre uniche)"
+APP_VERSION = "v26 - 2026-08-21 - Fix importante: grafico blocchi nel PDF ora usa Matplotlib invece di Kaleido/Chrome (risolve l'errore di generazione PDF su Streamlit Cloud)"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -435,6 +435,51 @@ def _disegna_grafico_timeline_pdf(df_match, output_path):
     fig.savefig(output_path, bbox_inches='tight', dpi=150)
     plt.close(fig)
 
+def _disegna_grafico_blocchi_pdf(df_blocchi, output_path):
+    """Disegna il grafico a blocchi da 10 minuti (linea % sopra, barre GPI sotto) con Matplotlib,
+    per il PDF — evita del tutto la dipendenza da Kaleido/Chrome, non sempre disponibile
+    negli ambienti di hosting online come Streamlit Cloud."""
+    blocchi = df_blocchi['Block'].tolist()
+    percentuali = df_blocchi['Save %'].tolist()
+    gpi_totali = df_blocchi['Total GPI'].tolist()
+    x = list(range(len(blocchi)))
+
+    fig, (ax_pct, ax_gpi) = plt.subplots(2, 1, figsize=(10, 6.5), dpi=150, sharex=True)
+
+    ax_pct.plot(x, percentuali, marker='o', color='#1f77b4', linewidth=3, markersize=9)
+    for xi, v in zip(x, percentuali):
+        ax_pct.annotate(f"{v:.0f}%", (xi, v), textcoords='offset points', xytext=(0, 10),
+                        ha='center', fontsize=10, fontweight='bold', color='#1f77b4')
+    ax_pct.set_ylabel('Save %')
+    ax_pct.set_ylim(0, max(110, max(percentuali, default=0) * 1.2))
+    ax_pct.set_title('Save % per block', fontsize=11)
+    ax_pct.grid(axis='y', linestyle='--', alpha=0.3)
+    ax_pct.spines['top'].set_visible(False)
+    ax_pct.spines['right'].set_visible(False)
+
+    colori_barre = ['#ff7f0e'] * len(gpi_totali)
+    ax_gpi.bar(x, gpi_totali, color=colori_barre, width=0.5)
+    max_abs_gpi = max(1, max((abs(v) for v in gpi_totali), default=1))
+    for xi, v in zip(x, gpi_totali):
+        offset = max_abs_gpi * 0.06
+        va = 'bottom' if v >= 0 else 'top'
+        ax_gpi.annotate(f"{v:+.1f}", (xi, v + (offset if v >= 0 else -offset)),
+                        ha='center', va=va, fontsize=10, fontweight='bold', color='#ff7f0e')
+    ax_gpi.axhline(0, color='black', linewidth=1)
+    ax_gpi.set_ylabel('Total GPI')
+    ax_gpi.set_xlabel('Game block (minutes)')
+    ax_gpi.set_xticks(x)
+    ax_gpi.set_xticklabels(blocchi)
+    ax_gpi.set_ylim(-max_abs_gpi * 1.35, max_abs_gpi * 1.35)
+    ax_gpi.set_title('Total GPI per block', fontsize=11)
+    ax_gpi.grid(axis='y', linestyle='--', alpha=0.3)
+    ax_gpi.spines['top'].set_visible(False)
+    ax_gpi.spines['right'].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(output_path, bbox_inches='tight', dpi=150)
+    plt.close(fig)
+
 COLORE_ACCENTO = colors.HexColor('#15304f')
 COLORE_TESTATA_TABELLE = colors.HexColor('#1b3a63')
 
@@ -571,12 +616,10 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
         elementi.append(_separatore())
 
     # 10-minute block performance
-    larghezza_blocchi_px, altezza_blocchi_px = 1300, 750
-    fig_export_blocchi = go.Figure(fig_blocchi)
-    fig_export_blocchi.update_layout(width=larghezza_blocchi_px, height=altezza_blocchi_px)
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_blocchi:
-        fig_export_blocchi.write_image(tmp_blocchi.name, scale=2)
-        larghezza_blocchi_cm, altezza_blocchi_cm = _dimensioni_adattate(larghezza_blocchi_px, altezza_blocchi_px, 16, 9)
+        _disegna_grafico_blocchi_pdf(df_blocchi, tmp_blocchi.name)
+        larghezza_px, altezza_px = PILImage.open(tmp_blocchi.name).size
+        larghezza_blocchi_cm, altezza_blocchi_cm = _dimensioni_adattate(larghezza_px, altezza_px, 16, 9)
         elementi.append(KeepTogether([
             Paragraph("Performance by 10-Minute Blocks", sezione_stile),
             RLImage(tmp_blocchi.name, width=larghezza_blocchi_cm*cm, height=altezza_blocchi_cm*cm)
@@ -703,12 +746,10 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
         elementi.append(_separatore())
 
     # 10-minute block performance (season cumulative)
-    larghezza_blocchi_px, altezza_blocchi_px = 1300, 750
-    fig_export_blocchi = go.Figure(fig_blocchi)
-    fig_export_blocchi.update_layout(width=larghezza_blocchi_px, height=altezza_blocchi_px)
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_blocchi:
-        fig_export_blocchi.write_image(tmp_blocchi.name, scale=2)
-        larghezza_blocchi_cm, altezza_blocchi_cm = _dimensioni_adattate(larghezza_blocchi_px, altezza_blocchi_px, 16, 9)
+        _disegna_grafico_blocchi_pdf(df_blocchi, tmp_blocchi.name)
+        larghezza_px, altezza_px = PILImage.open(tmp_blocchi.name).size
+        larghezza_blocchi_cm, altezza_blocchi_cm = _dimensioni_adattate(larghezza_px, altezza_px, 16, 9)
         elementi.append(KeepTogether([
             Paragraph("Performance by 10-Minute Blocks (season cumulative)", sezione_stile),
             RLImage(tmp_blocchi.name, width=larghezza_blocchi_cm*cm, height=altezza_blocchi_cm*cm)
