@@ -101,7 +101,7 @@ st.set_page_config(page_title="Goalkeeper Performance Analytics", layout="wide")
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v20 - 2026-08-21 - Diagnostica dettagliata per la configurazione Google Sheets nella sidebar"
+APP_VERSION = "v22 - 2026-08-21 - Nuovo: elimina una singola partita dalla stagione senza toccare le altre"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -969,11 +969,36 @@ with tab1:
                         st.error(f"Could not read this backup file: {e}")
 
         st.markdown("---")
+        st.subheader("🗑️ Delete a Single Match")
+        st.caption("Remove one specific match from the season (e.g. a friendly you only needed a one-off "
+                   "report for) without touching any of the other matches.")
+        if st.session_state['db']:
+            opzioni_partite_elimina = [
+                f"{p['nome']} ({p['data']}) - {p['squadra']}" for p in st.session_state['db']
+            ]
+            partita_da_eliminare = st.selectbox(
+                "Select the match to delete:", opzioni_partite_elimina, key="elimina_partita_select"
+            )
+            idx_da_eliminare = opzioni_partite_elimina.index(partita_da_eliminare)
+            conferma_elimina_singola = st.checkbox(
+                "I confirm I want to delete this match only (this action is irreversible)",
+                key="conferma_elimina_singola"
+            )
+            if st.button("🗑️ Delete This Match", disabled=not conferma_elimina_singola):
+                st.session_state['db'].pop(idx_da_eliminare)
+                salva_stagione_su_disco(st.session_state['db'])
+                st.success(f"Match '{partita_da_eliminare}' deleted. Remaining matches: {len(st.session_state['db'])}.")
+                st.rerun()
+        else:
+            st.caption("No matches to delete yet.")
+
+        st.markdown("---")
         st.subheader("⚠️ Reset Season")
         st.caption(f"Matches currently saved in memory/season: **{len(st.session_state['db'])}**")
         conferma_reset = st.checkbox("I confirm I want to delete ALL season data (this action is irreversible)")
         if st.button("🔄 Reset Season", disabled=not conferma_reset):
             st.session_state['db'] = []
+            salva_stagione_su_disco(st.session_state['db'])
             if os.path.exists(SEASON_FILE):
                 os.remove(SEASON_FILE)
             st.success("Season reset. All data has been deleted.")
