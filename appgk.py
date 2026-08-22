@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v26 - 2026-08-21 - Fix importante: grafico blocchi nel PDF ora usa Matplotlib invece di Kaleido/Chrome (risolve l'errore di generazione PDF su Streamlit Cloud)"
+APP_VERSION = "v27 - 2026-08-21 - Fix: chiavi univoche esplicite per tutti i grafici, risolve StreamlitDuplicateElementId quando partita singola e stagione hanno dati identici"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1154,7 +1154,7 @@ with tab2:
             plot_bgcolor='white'
         )
 
-        st.plotly_chart(fig_linee, use_container_width=True)
+        st.plotly_chart(fig_linee, use_container_width=True, key="fig_linee_single_match")
         st.caption("🟢 Save/positive Miss   🔴 Goal conceded   🟨 square = Money Time (last 10 real match minutes, score margin between -5 and +5)")
 
         # ============================================================
@@ -1329,7 +1329,7 @@ with tab2:
         fig_blocchi.update_yaxes(title_text="Total GPI", range=[y_bottom_gpi * 1.15, y_top_gpi * 1.15], row=2, col=1)
         fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
 
-        st.plotly_chart(fig_blocchi, use_container_width=True)
+        st.plotly_chart(fig_blocchi, use_container_width=True, key="fig_blocchi_single_match")
         st.dataframe(df_blocchi, use_container_width=True, hide_index=True)
 
         # ============================================================
@@ -1437,14 +1437,14 @@ with tab3:
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_gpi_screen:
                 generato = _disegna_grafico_stagione(dati_per_portiere, 'gpi_totale', 'Total Match GPI', tmp_gpi_screen.name)
                 if generato:
-                    st.image(tmp_gpi_screen.name, width=1000)
+                    st.image(tmp_gpi_screen.name, width=1000, key="img_gpi_seasonal")
 
             st.markdown("---")
             st.subheader("📈 Season Save % Trend (per match + cumulative average)")
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_pct_screen:
                 generato = _disegna_grafico_stagione(dati_per_portiere, 'pct', 'Match Save %', tmp_pct_screen.name)
                 if generato:
-                    st.image(tmp_pct_screen.name, width=1000)
+                    st.image(tmp_pct_screen.name, width=1000, key="img_pct_seasonal")
 
             st.markdown("---")
             st.subheader("📋 Match History")
@@ -1488,7 +1488,7 @@ with tab3:
             st.markdown("---")
             st.subheader("⏱️ Performance by 10-Minute Blocks (season cumulative)")
             df_blocchi_stagione, fig_blocchi_stagione = costruisci_grafico_blocchi(df_stagione_totale)
-            st.plotly_chart(fig_blocchi_stagione, use_container_width=True)
+            st.plotly_chart(fig_blocchi_stagione, use_container_width=True, key="fig_blocchi_seasonal")
             st.dataframe(df_blocchi_stagione, use_container_width=True, hide_index=True)
 
             st.markdown("---")
