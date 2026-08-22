@@ -101,7 +101,7 @@ st.set_page_config(page_title="Goalkeeper Performance Analytics", layout="wide")
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v19 - 2026-08-21 - Persistenza automatica su Google Sheets (con file locale come riserva se non configurato)"
+APP_VERSION = "v20 - 2026-08-21 - Diagnostica dettagliata per la configurazione Google Sheets nella sidebar"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -730,6 +730,23 @@ def _google_sheets_configurato():
     except Exception:
         return False
 
+def _diagnosi_google_sheets():
+    """Restituisce una breve spiegazione di cosa manca nella configurazione, per aiutare il debug."""
+    try:
+        chiavi_presenti = list(st.secrets.keys())
+    except Exception as e:
+        return f"Secrets not readable at all ({e}). Are they saved in the app's Settings > Secrets?"
+    if not chiavi_presenti:
+        return "Secrets are empty. Nothing was saved in Settings > Secrets."
+    mancanti = []
+    if 'season_sheet_id' not in chiavi_presenti:
+        mancanti.append('season_sheet_id')
+    if 'gcp_service_account' not in chiavi_presenti:
+        mancanti.append('[gcp_service_account]')
+    if mancanti:
+        return f"Found these keys: {chiavi_presenti}. Missing: {', '.join(mancanti)}."
+    return "Configuration looks present but something else is failing (see error above, if any)."
+
 @st.cache_resource
 def _ottieni_worksheet_stagione():
     import gspread
@@ -802,7 +819,11 @@ if 'db' not in st.session_state:
     st.session_state['db'] = carica_stagione_da_disco()
 
 st.sidebar.caption(f"📦 Matches in memory (season): {len(st.session_state['db'])}")
-st.sidebar.caption("☁️ Storage: Google Sheets" if _google_sheets_configurato() else "💻 Storage: local file")
+if _google_sheets_configurato():
+    st.sidebar.caption("☁️ Storage: Google Sheets")
+else:
+    st.sidebar.caption("💻 Storage: local file")
+    st.sidebar.caption(f"ℹ️ {_diagnosi_google_sheets()}")
 
 tab1, tab2, tab3 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report'])
 
