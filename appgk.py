@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v24 - 2026-08-21 - Fix: colonna Timeline vuota mostra ora una casella vuota invece di 'None'/'nan'"
+APP_VERSION = "v25 - 2026-08-21 - Fix: grafico timeline non impila più i tiri quando la colonna Timeline è vuota (etichette sempre uniche)"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1056,7 +1056,16 @@ with tab2:
         simboli_colore = ['🔵', '🔴', '🟢', '🟡', '🟣']
         mappa_colori_testo = {gk: simboli_colore[i % len(simboli_colore)] for i, gk in enumerate(portieri_unici)}
         
-        df_match['Label_Asse_X'] = df_match.apply(lambda r: f"{mappa_colori_testo[r['PORTIERE_CLEAN']]} {r['PORTIERE_CLEAN']} | {r['Tempo_Visuale']}", axis=1)
+        def _costruisci_etichetta_asse_x(indice, gk, tempo_visuale):
+            prefisso = f"{mappa_colori_testo[gk]} {gk}"
+            if str(tempo_visuale).strip():
+                return f"{prefisso} | {tempo_visuale}"
+            return f"{prefisso} | Shot {indice + 1}"
+
+        df_match['Label_Asse_X'] = [
+            _costruisci_etichetta_asse_x(i, row['PORTIERE_CLEAN'], row['Tempo_Visuale'])
+            for i, row in df_match.iterrows()
+        ]
         
         colori_punti = []
         for _, row in df_match.iterrows():
