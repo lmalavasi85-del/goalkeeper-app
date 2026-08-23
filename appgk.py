@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v29 - 2026-08-21 - Nuovo: Expected Saves % per settore specifico, con colorazione verde/giallo/rosso a schermo e nei PDF"
+APP_VERSION = "v30 - 2026-08-21 - Fix formattazione tabella Expected Saves: percentuali con simbolo %, GPI con un decimale, colonna rinominata in Expected Efficiency %"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -148,11 +148,11 @@ def ottieni_expected_pct(zona):
 
 def applica_colori_expected(df_settore):
     """Restituisce una versione 'stilizzata' della tabella per settore specifico, con lo sfondo
-    di ogni riga colorato in base al confronto tra Efficiency % reale ed Expected %:
+    di ogni riga colorato in base al confronto tra Efficiency % reale ed Expected Efficiency %:
     verde = sopra media, giallo = esattamente in media, rosso = sotto media.
-    Le righe senza un valore Expected % mappato restano senza colore."""
+    Le righe senza un valore Expected Efficiency % mappato restano senza colore."""
     def _colora_riga(row):
-        expected = row.get('Expected %', '')
+        expected = row.get('Expected Efficiency %', '')
         if expected == '' or expected is None:
             return [''] * len(row)
         valore_reale = row['Efficiency %']
@@ -164,7 +164,15 @@ def applica_colori_expected(df_settore):
         else:
             colore = 'background-color: #ffc7ce'
         return [colore] * len(row)
-    return df_settore.style.apply(_colora_riga, axis=1)
+
+    formattatori_disponibili = {
+        'Save %': lambda x: f"{x:.1f}%",
+        'Efficiency %': lambda x: f"{x:.1f}%",
+        'Expected Efficiency %': lambda x: f"{x:.0f}%" if x != '' else '',
+        'GPI': lambda x: f"{x:+.1f}",
+    }
+    formattatori_da_usare = {c: f for c, f in formattatori_disponibili.items() if c in df_settore.columns}
+    return df_settore.style.apply(_colora_riga, axis=1).format(formattatori_da_usare)
 
 def analizza_timeline(timeline_str):
     if pd.isna(timeline_str) or str(timeline_str).strip().lower() in ('', 'none', 'nan'):
@@ -298,7 +306,7 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
         righe_settore.append({
             'Zone': settore, 'Saves': s2, 'Goals': g2, 'Miss': m2,
             'Save %': round(pct2, 1), 'Efficiency %': round(eff2, 1),
-            'Expected %': expected if expected is not None else '',
+            'Expected Efficiency %': expected if expected is not None else '',
             'GPI': round(df_s['GPI_Tiro'].sum(), 1)
         })
 
@@ -331,7 +339,10 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
 
     return {
         'gpi_totale': gpi_totale, 'parate': s, 'gol': g, 'pct': pct, 'eff': eff,
-        'tabella_settore': pd.DataFrame(righe_settore) if righe_settore else pd.DataFrame({'Zone': [], 'GPI': []}),
+        'tabella_settore': pd.DataFrame(righe_settore) if righe_settore else pd.DataFrame({
+            'Zone': [], 'Saves': [], 'Goals': [], 'Miss': [],
+            'Save %': [], 'Efficiency %': [], 'Expected Efficiency %': [], 'GPI': []
+        }),
         'tabella_macro': pd.DataFrame(righe_macro) if righe_macro else pd.DataFrame({'Macro-Zone': [], 'GPI': []}),
         'money_time_riassunto': money_time_riassunto
     }
@@ -553,8 +564,19 @@ COLORE_EXPECTED_SOTTO = colors.HexColor('#ffc7ce')
 
 def _tabella_settore_reportlab(df_settore, col_widths=None, font_size=7):
     """Come _df_to_reportlab_table, ma colora lo sfondo di ogni riga in base al confronto
-    Efficiency % vs Expected %: verde = sopra media, giallo = esattamente in media, rosso = sotto."""
-    dati = [list(df_settore.columns)] + df_settore.astype(str).values.tolist()
+    Efficiency % vs Expected Efficiency %: verde = sopra media, giallo = esattamente in media, rosso = sotto."""
+    formattatori_disponibili = {
+        'Save %': lambda x: f"{x:.1f}%",
+        'Efficiency %': lambda x: f"{x:.1f}%",
+        'Expected Efficiency %': lambda x: f"{x:.0f}%" if x != '' else '',
+        'GPI': lambda x: f"{x:+.1f}",
+    }
+    df_formattato = df_settore.copy()
+    for colonna, formattatore in formattatori_disponibili.items():
+        if colonna in df_formattato.columns:
+            df_formattato[colonna] = df_formattato[colonna].apply(formattatore)
+
+    dati = [list(df_formattato.columns)] + df_formattato.astype(str).values.tolist()
     t = Table(dati, colWidths=col_widths, repeatRows=1)
     comandi_stile = [
         ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
@@ -566,7 +588,7 @@ def _tabella_settore_reportlab(df_settore, col_widths=None, font_size=7):
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
     ]
     for i, (_, row) in enumerate(df_settore.iterrows(), start=1):
-        expected = row.get('Expected %', '')
+        expected = row.get('Expected Efficiency %', '')
         if expected == '' or expected is None:
             colore_riga = colors.white if i % 2 == 1 else colors.HexColor('#f2f2f2')
         else:
@@ -1304,7 +1326,7 @@ with tab2:
                     righe_settore.append({
                         'Zone': settore, 'Saves': s, 'Goals': g, 'Miss': m,
                         'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
-                        'Expected %': expected if expected is not None else '',
+                        'Expected Efficiency %': expected if expected is not None else '',
                         'GPI': round(df_s['GPI_Tiro'].sum(), 1)
                     })
                 st.dataframe(applica_colori_expected(pd.DataFrame(righe_settore)), use_container_width=True, hide_index=True)
