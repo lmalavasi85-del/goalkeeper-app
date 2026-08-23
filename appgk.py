@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v30 - 2026-08-21 - Fix formattazione tabella Expected Saves: percentuali con simbolo %, GPI con un decimale, colonna rinominata in Expected Efficiency %"
+APP_VERSION = "v31 - 2026-08-21 - Total Season Statistics: aggiunta Efficiency %, riquadro più grande in stile dashboard nel PDF, meno spazio vuoto in prima pagina"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -542,6 +542,30 @@ def _disegna_grafico_blocchi_pdf(df_blocchi, output_path):
 COLORE_ACCENTO = colors.HexColor('#15304f')
 COLORE_TESTATA_TABELLE = colors.HexColor('#1b3a63')
 
+def _tabella_metriche_pdf(voci, stili, larghezza_totale_cm=25.5):
+    """Costruisce una riga di 'schede' in stile dashboard (etichetta piccola sopra, valore grande
+    e in evidenza sotto) — usata per rendere le statistiche totali più prominenti nel PDF,
+    invece di un'unica riga di testo compressa."""
+    stile_etichetta = ParagraphStyle('EtichettaMetrica', parent=stili['Normal'], fontSize=8,
+                                      textColor=colors.HexColor('#666666'), alignment=1, leading=10)
+    stile_valore = ParagraphStyle('ValoreMetrica', parent=stili['Normal'], fontSize=18,
+                                   textColor=COLORE_ACCENTO, alignment=1, fontName='Helvetica-Bold',
+                                   spaceBefore=4)
+    riga_etichette = [Paragraph(etichetta, stile_etichetta) for etichetta, _ in voci]
+    riga_valori = [Paragraph(valore, stile_valore) for _, valore in voci]
+    larghezza_colonna = larghezza_totale_cm / len(voci)
+    t = Table([riga_etichette, riga_valori], colWidths=[larghezza_colonna * cm] * len(voci))
+    t.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#dddddd')),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f7f9fc')),
+        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#dddddd')),
+    ]))
+    return t
+
 def _df_to_reportlab_table(df_in, col_widths=None, font_size=8):
     dati = [list(df_in.columns)] + df_in.astype(str).values.tolist()
     t = Table(dati, colWidths=col_widths, repeatRows=1)
@@ -774,12 +798,16 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     media_cumulativa_gpi = (df_stagione_totale['GPI_Tiro'].sum() / numero_partite_coinvolte) if numero_partite_coinvolte > 0 else 0.0
     elementi.append(KeepTogether([
         Paragraph("Total Season Statistics", sezione_stile),
-        Paragraph(
-            f"Shots Faced: {len(df_stagione_totale)}   |   Saves: {s_tot}   |   "
-            f"Goals Conceded: {g_tot}   |   Save %: {pct_tot:.1f}%   |   Average GPI (per shot): {gpi_medio_tot:+.2f}   |   "
-            f"Cumulative Average GPI (per match): {media_cumulativa_gpi:+.2f}",
-            stili['Normal']
-        )
+        Spacer(1, 0.2*cm),
+        _tabella_metriche_pdf([
+            ("Shots Faced", str(len(df_stagione_totale))),
+            ("Saves", str(s_tot)),
+            ("Goals Conceded", str(g_tot)),
+            ("Save %", f"{pct_tot:.1f}%"),
+            ("Efficiency %", f"{eff_tot:.1f}%"),
+            ("Avg GPI (per shot)", f"{gpi_medio_tot:+.2f}"),
+            ("Avg GPI (per match)", f"{media_cumulativa_gpi:+.2f}"),
+        ], stili)
     ]))
     elementi.append(_separatore())
 
@@ -795,7 +823,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_gpi:
         _disegna_grafico_stagione(dati_portieri, 'gpi_totale', 'Total Match GPI', tmp_gpi.name)
         larghezza_px, altezza_px = PILImage.open(tmp_gpi.name).size
-        larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 9.0)
+        larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 6.0)
         elementi.append(KeepTogether([
             Paragraph("Season GPI Trend (per match + cumulative average)", sezione_stile),
             RLImage(tmp_gpi.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
@@ -806,7 +834,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_pct:
         _disegna_grafico_stagione(dati_portieri, 'pct', 'Match Save %', tmp_pct.name)
         larghezza_px, altezza_px = PILImage.open(tmp_pct.name).size
-        larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 9.0)
+        larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 6.0)
         elementi.append(KeepTogether([
             Paragraph("Season Save % Trend (per match + cumulative average)", sezione_stile),
             RLImage(tmp_pct.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
@@ -1515,13 +1543,14 @@ with tab3:
             gpi_medio_tot = df_stagione_totale['GPI_Tiro'].mean() if not df_stagione_totale.empty else 0.0
             numero_partite_coinvolte = len(set(p['label'] for lista in dati_per_portiere.values() for p in lista))
             media_cumulativa_gpi = (df_stagione_totale['GPI_Tiro'].sum() / numero_partite_coinvolte) if numero_partite_coinvolte > 0 else 0.0
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
             c1.metric("Shots Faced", len(df_stagione_totale))
             c2.metric("Saves", s_tot)
             c3.metric("Goals Conceded", g_tot)
             c4.metric("Save %", f"{pct_tot:.1f}%")
-            c5.metric("Average GPI (per shot)", f"{gpi_medio_tot:+.2f}")
-            c6.metric("Cumulative Average GPI (per match)", f"{media_cumulativa_gpi:+.2f}")
+            c5.metric("Efficiency %", f"{eff_tot:.1f}%")
+            c6.metric("Average GPI (per shot)", f"{gpi_medio_tot:+.2f}")
+            c7.metric("Cumulative Average GPI (per match)", f"{media_cumulativa_gpi:+.2f}")
 
             st.markdown("---")
             st.subheader("🥅 Total Season GPI per Goalkeeper")
