@@ -105,7 +105,7 @@ st.set_page_config(
 # ============================================================
 UPLOAD_ACCESS_CODE = "gkmethod2026"
 
-APP_VERSION = "v28 - 2026-08-21 - Fix: rimosso key da st.image (non supportato dalla versione Streamlit del server), causava un TypeError all'avvio"
+APP_VERSION = "v29 - 2026-08-21 - Nuovo: Expected Saves % per settore specifico, con colorazione verde/giallo/rosso a schermo e nei PDF"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -119,6 +119,52 @@ def mappa_macro_settore(s):
         if s_str.startswith(m):
             return m
     return None
+
+# ============================================================
+# EXPECTED SAVES % (efficacia attesa per settore specifico)
+# Valori di riferimento basati sul database storico di migliaia di tiri.
+# ============================================================
+EXPECTED_SAVE_PCT = {
+    'lw1': 46, 'lw2': 39,
+    'rw1': 48, 'rw2': 36,
+    '6m1': 30, '6m1,5': 30, '6m2': 29, '6m2,5': 24, '6m3': 24,
+    'bt1': 34, 'bt1,5': 34, 'bt2': 25, 'bt2,5': 34, 'bt3': 34,
+    '9m1': 60, '9m1,5': 60, '9m2': 52, '9m2,5': 55, '9m3': 55,
+    '7m': 25,
+    'fb1': 22, 'fb2': 22, 'fb3': 22,
+}
+
+def _normalizza_zona(zona):
+    """Normalizza la stringa del settore per il confronto (rimuove spazi e suffissi non numerici
+    come '-'/'+' che a volte compaiono nei file Excel, es. '9m 2' o '6m3-')."""
+    z = str(zona).strip().lower().replace(' ', '')
+    z = z.rstrip('-+')
+    return z
+
+def ottieni_expected_pct(zona):
+    """Restituisce il valore di Expected Saves % per un settore specifico, o None se non mappato
+    (es. settori scritti in modo non riconosciuto: in quel caso la riga non viene colorata)."""
+    return EXPECTED_SAVE_PCT.get(_normalizza_zona(zona))
+
+def applica_colori_expected(df_settore):
+    """Restituisce una versione 'stilizzata' della tabella per settore specifico, con lo sfondo
+    di ogni riga colorato in base al confronto tra Efficiency % reale ed Expected %:
+    verde = sopra media, giallo = esattamente in media, rosso = sotto media.
+    Le righe senza un valore Expected % mappato restano senza colore."""
+    def _colora_riga(row):
+        expected = row.get('Expected %', '')
+        if expected == '' or expected is None:
+            return [''] * len(row)
+        valore_reale = row['Efficiency %']
+        differenza = valore_reale - expected
+        if abs(differenza) < 0.05:
+            colore = 'background-color: #ffeb9c'
+        elif differenza > 0:
+            colore = 'background-color: #c6efce'
+        else:
+            colore = 'background-color: #ffc7ce'
+        return [colore] * len(row)
+    return df_settore.style.apply(_colora_riga, axis=1)
 
 def analizza_timeline(timeline_str):
     if pd.isna(timeline_str) or str(timeline_str).strip().lower() in ('', 'none', 'nan'):
@@ -248,9 +294,11 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
     for settore in sorted(df_gk['TIRO_CLEAN'].dropna().unique()):
         df_s = df_gk[df_gk['TIRO_CLEAN'] == settore]
         s2, g2, m2, pct2, eff2 = calcola_metriche_gruppo(df_s)
+        expected = ottieni_expected_pct(settore)
         righe_settore.append({
             'Zone': settore, 'Saves': s2, 'Goals': g2, 'Miss': m2,
             'Save %': round(pct2, 1), 'Efficiency %': round(eff2, 1),
+            'Expected %': expected if expected is not None else '',
             'GPI': round(df_s['GPI_Tiro'].sum(), 1)
         })
 
@@ -499,6 +547,40 @@ def _df_to_reportlab_table(df_in, col_widths=None, font_size=8):
     t.setStyle(stile)
     return t
 
+COLORE_EXPECTED_SOPRA = colors.HexColor('#c6efce')
+COLORE_EXPECTED_UGUALE = colors.HexColor('#ffeb9c')
+COLORE_EXPECTED_SOTTO = colors.HexColor('#ffc7ce')
+
+def _tabella_settore_reportlab(df_settore, col_widths=None, font_size=7):
+    """Come _df_to_reportlab_table, ma colora lo sfondo di ogni riga in base al confronto
+    Efficiency % vs Expected %: verde = sopra media, giallo = esattamente in media, rosso = sotto."""
+    dati = [list(df_settore.columns)] + df_settore.astype(str).values.tolist()
+    t = Table(dati, colWidths=col_widths, repeatRows=1)
+    comandi_stile = [
+        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTSIZE', (0, 0), (-1, -1), font_size),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ]
+    for i, (_, row) in enumerate(df_settore.iterrows(), start=1):
+        expected = row.get('Expected %', '')
+        if expected == '' or expected is None:
+            colore_riga = colors.white if i % 2 == 1 else colors.HexColor('#f2f2f2')
+        else:
+            differenza = row['Efficiency %'] - expected
+            if abs(differenza) < 0.05:
+                colore_riga = COLORE_EXPECTED_UGUALE
+            elif differenza > 0:
+                colore_riga = COLORE_EXPECTED_SOPRA
+            else:
+                colore_riga = COLORE_EXPECTED_SOTTO
+        comandi_stile.append(('BACKGROUND', (0, i), (-1, i), colore_riga))
+    t.setStyle(TableStyle(comandi_stile))
+    return t
+
 def _dimensioni_adattate(larghezza_px, altezza_px, max_larghezza_cm, max_altezza_cm):
     """Calcola le dimensioni (in cm) per stare dentro un riquadro massimo, mantenendo le proporzioni originali."""
     scala = min(max_larghezza_cm / larghezza_px, max_altezza_cm / altezza_px)
@@ -603,7 +685,7 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             Spacer(1, 0.2*cm),
             Paragraph("By specific shot zone", stili['Heading4']),
         ]))
-        elementi.append(_df_to_reportlab_table(info['tabella_settore'], font_size=7))
+        elementi.append(_tabella_settore_reportlab(info['tabella_settore'], font_size=7))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
             Paragraph("By aggregated macro-zone", stili['Heading4']),
@@ -733,7 +815,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
             Spacer(1, 0.2*cm),
             Paragraph("By specific shot zone", stili['Heading4']),
         ]))
-        elementi.append(_df_to_reportlab_table(info['tabella_settore'], font_size=7))
+        elementi.append(_tabella_settore_reportlab(info['tabella_settore'], font_size=7))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
             Paragraph("By aggregated macro-zone", stili['Heading4']),
@@ -1218,12 +1300,14 @@ with tab2:
                 for settore in sorted(df_gk['TIRO_CLEAN'].dropna().unique()):
                     df_s = df_gk[df_gk['TIRO_CLEAN'] == settore]
                     s, g, m, pct, eff = calcola_metriche_gruppo(df_s)
+                    expected = ottieni_expected_pct(settore)
                     righe_settore.append({
                         'Zone': settore, 'Saves': s, 'Goals': g, 'Miss': m,
                         'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
+                        'Expected %': expected if expected is not None else '',
                         'GPI': round(df_s['GPI_Tiro'].sum(), 1)
                     })
-                st.dataframe(pd.DataFrame(righe_settore), use_container_width=True, hide_index=True)
+                st.dataframe(applica_colori_expected(pd.DataFrame(righe_settore)), use_container_width=True, hide_index=True)
 
                 st.markdown("**Statistics by aggregated macro-zone** (all 6m, all bt, all 9m ...)")
                 righe_macro = []
@@ -1478,7 +1562,7 @@ with tab3:
                     cE.metric("Efficiency", f"{info['eff']:.1f}%")
 
                     st.markdown("**Statistics by specific shot zone**")
-                    st.dataframe(info['tabella_settore'], use_container_width=True, hide_index=True)
+                    st.dataframe(applica_colori_expected(info['tabella_settore']), use_container_width=True, hide_index=True)
 
                     st.markdown("**Statistics by aggregated macro-zone**")
                     st.dataframe(info['tabella_macro'], use_container_width=True, hide_index=True)
