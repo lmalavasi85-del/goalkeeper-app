@@ -135,6 +135,27 @@ def estrai_home_away_da_nome_file(nome_file):
         return None, None
     return m.group(1).strip(), m.group(2).strip()
 
+def estrai_nome_e_data_da_nome_file(nome_file):
+    """Ricava (nome_partita, data) dal nome del file: la prima parte (SquadraHome-SquadraAway)
+    è il nome della partita, il resto è la data (giorno-mese-anno). Es. 'Merano-Brixen
+    23-8-2026.xlsx' -> ('Merano-Brixen', date(2026, 8, 23)). Restituisce (None, None) per la
+    parte che non riesce a riconoscere."""
+    base = os.path.splitext(str(nome_file))[0]
+    squadra_home, squadra_away = estrai_home_away_da_nome_file(nome_file)
+    nome_partita = f"{squadra_home}-{squadra_away}" if squadra_home and squadra_away else None
+
+    data = None
+    m_data = re.search(r'(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})', base)
+    if m_data:
+        giorno, mese, anno = int(m_data.group(1)), int(m_data.group(2)), int(m_data.group(3))
+        if anno < 100:
+            anno += 2000
+        try:
+            data = datetime(anno, mese, giorno).date()
+        except ValueError:
+            data = None
+    return nome_partita, data
+
 def determina_casa_trasferta(squadra_analizzata, squadra_home, squadra_away):
     """Restituisce 'home', 'away' o None (se non determinabile), confrontando in modo
     tollerante (case-insensitive, contenimento) il nome della squadra analizzata con
@@ -2267,14 +2288,19 @@ with tab1:
             pe_gk_uni, pe_tir_uni, pe_h2h_uni = [], [], []
             for idx, f in enumerate(fc_uni):
                 st.markdown(f"**File Configuration: {f.name}**")
+                nome_da_file, data_da_file = estrai_nome_e_data_da_nome_file(f.name)
                 col1, col2 = st.columns(2)
-                with col1: nm_u = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'un_{idx}')
-                with col2: dt_u = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"ud_{idx}")
+                with col1:
+                    nm_u = st.text_input(f'Game Name {idx+1}', value=nome_da_file or f'Game {idx+1}', key=f'un_{idx}')
+                with col2:
+                    dt_u = st.date_input(f'Event Date {idx+1}', value=data_da_file or datetime.now(), key=f"ud_{idx}")
                 sq_home_u, sq_away_u = estrai_home_away_da_nome_file(f.name)
                 if not sq_home_u or not sq_away_u:
                     st.error(f"Could not read the two team names from the file name '{f.name}'. "
                              f"Rename it as \"TeamHome-TeamAway date.xlsx\" and re-upload.")
                     continue
+                if not data_da_file:
+                    st.warning("Could not read the date from the file name — check/set 'Event Date' above.")
                 st.caption(f"Home: **{sq_home_u}**  |  Away: **{sq_away_u}**")
                 try:
                     df_raw_u = pd.read_excel(f)
