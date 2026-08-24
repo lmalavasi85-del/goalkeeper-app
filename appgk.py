@@ -1237,7 +1237,11 @@ def classifica_h2h(df_h2h, giocatore, e_portiere):
     df_classifica = pd.DataFrame(righe)
     # Portiere: più sofferto = tiratore che gli segna più spesso (Goal % decrescente)
     # Tiratore: più sofferto = portiere contro cui segna meno spesso (Goal % crescente)
-    return df_classifica.sort_values('Goal %', ascending=(not e_portiere)).reset_index(drop=True)
+    # A parità di Goal %: più tiri prima (campione più solido); a parità anche di tiri: alfabetico.
+    return df_classifica.sort_values(
+        ['Goal %', 'Shots', 'Opponent'],
+        ascending=[not e_portiere, False, True]
+    ).reset_index(drop=True)
 
 COLORE_ACCENTO = colors.HexColor('#15304f')
 COLORE_TESTATA_TABELLE = colors.HexColor('#1b3a63')
