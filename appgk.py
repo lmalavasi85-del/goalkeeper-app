@@ -1645,8 +1645,9 @@ def _immagine_da_figura_matplotlib(fig, max_larghezza_cm, max_altezza_cm):
         return RLImage(tmp.name, width=w_cm * cm, height=h_cm * cm)
 
 def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, nota_html=None):
-    """Costruisce gli elementi ReportLab (porta, tastiera, statistiche, note) per UN giocatore,
-    a partire dal suo sottoinsieme di tiri già filtrato (per partite/money-time/macro a monte)."""
+    """Costruisce gli elementi ReportLab (porta, tastiera, tabella macro-zone, note) per UN
+    giocatore, a partire dal suo sottoinsieme di tiri già filtrato (per partite/money-time/macro
+    a monte). Porta, tastiera e tabella macro-zone stanno tutte sulla stessa riga."""
     elementi = []
     goal, tot, pct = calcola_metriche_tiratori_gruppo(df_giocatore)
     elementi.append(Paragraph(f"{nome_giocatore}", sezione_stile))
@@ -1658,18 +1659,23 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore)
     fig_tast = disegna_tastiera(tot_tast, goal_tast)
 
-    img_porta = _immagine_da_figura_matplotlib(fig_porta, 11, 9)
-    img_tast = _immagine_da_figura_matplotlib(fig_tast, 13, 8.5)
-    tabella_immagini = Table([[img_porta, img_tast]], colWidths=[11.5 * cm, 13.5 * cm])
-    tabella_immagini.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
-    elementi.append(tabella_immagini)
-    elementi.append(Spacer(1, 0.2 * cm))
+    img_porta = _immagine_da_figura_matplotlib(fig_porta, 7.5, 6.5)
+    img_tast = _immagine_da_figura_matplotlib(fig_tast, 11, 7.5)
 
     df_macro = tabella_macro_tiratori(df_giocatore)
+    stile_intestazione_macro = ParagraphStyle('IntestazioneMacroPdf', parent=stili['Heading4'], fontSize=9, spaceAfter=4)
     if not df_macro.empty:
-        elementi.append(Paragraph("By macro-zone", stili['Heading4']))
-        elementi.append(_df_to_reportlab_table(df_macro, font_size=7))
-        elementi.append(Spacer(1, 0.2 * cm))
+        blocco_macro = [
+            Paragraph("By macro-zone", stile_intestazione_macro),
+            _df_to_reportlab_table(df_macro, col_widths=[2.7 * cm, 1.5 * cm, 1.5 * cm, 2.3 * cm], font_size=7)
+        ]
+    else:
+        blocco_macro = [Paragraph("By macro-zone", stile_intestazione_macro), Paragraph("No shots recorded.", stili['Normal'])]
+
+    riga_layout = Table([[img_porta, img_tast, blocco_macro]], colWidths=[8 * cm, 11.5 * cm, 8 * cm])
+    riga_layout.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+    elementi.append(riga_layout)
+    elementi.append(Spacer(1, 0.3 * cm))
 
     if nota_html:
         elementi.append(Paragraph("Coach notes", stili['Heading4']))
@@ -1678,8 +1684,8 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     return elementi
 
 def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None):
-    """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con una sezione
-    per ciascun giocatore (porta, tastiera, macro-zone, note)."""
+    """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con UNA PAGINA per
+    ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto)."""
     note_dict = note_dict or {}
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
@@ -1707,12 +1713,12 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None):
     elementi.append(blocco_titolo)
     elementi.append(Spacer(1, 0.5 * cm))
 
-    for nome_giocatore, df_g in dati_per_giocatore.items():
-        if df_g.empty:
-            continue
+    giocatori_validi = [(g, df_g) for g, df_g in dati_per_giocatore.items() if not df_g.empty]
+    for indice, (nome_giocatore, df_g) in enumerate(giocatori_validi):
+        if indice > 0:
+            elementi.append(PageBreak())
         nota_html = note_markup_a_reportlab(note_dict.get(nome_giocatore, '')) if note_dict.get(nome_giocatore) else None
         elementi.extend(_blocco_giocatore_pdf(nome_giocatore, df_g, stili, sezione_stile, nota_html))
-        elementi.append(_separatore())
 
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     buffer.seek(0)
