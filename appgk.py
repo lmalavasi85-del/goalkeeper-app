@@ -1683,9 +1683,12 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
 
     return elementi
 
-def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None):
+def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None):
     """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con UNA PAGINA per
-    ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto)."""
+    ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto).
+    Se df_squadra_riepilogo è fornito (dataframe aggregato dell'intera selezione), il PDF apre
+    con due pagine di riepilogo squadra: 1) mappa generale (porta + tastiera con heat map),
+    2) tabelle tiratori per volume di tiro (totale e Money Time) e statistiche per macro-zona."""
     note_dict = note_dict or {}
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
@@ -1697,7 +1700,9 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None):
                                         textColor=colors.HexColor('#555555'))
     sezione_stile = ParagraphStyle('SezioneTir', parent=stili['Heading2'], spaceBefore=4, spaceAfter=6,
                                     textColor=COLORE_ACCENTO)
-    elementi = []
+    intestazione_tabella_stile = ParagraphStyle('IntestazioneTabellaTir', parent=stili['Heading4'], fontSize=9, spaceAfter=4)
+    sezione_compatta_stile = ParagraphStyle('SezioneCompattaTir', parent=stili['Heading2'], fontSize=13,
+                                             spaceBefore=0, spaceAfter=4, textColor=COLORE_ACCENTO)
 
     dimensione_logo_copertina = 2.6 * cm
     blocco_titolo = Table(
@@ -1710,15 +1715,59 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None):
         ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
-    elementi.append(blocco_titolo)
-    elementi.append(Spacer(1, 0.5 * cm))
+
+    blocchi_pagine = []
+
+    if df_squadra_riepilogo is not None and not df_squadra_riepilogo.empty:
+        # Pagina 1: mappa generale di squadra (porta + tastiera con heat map)
+        pagina1 = [Paragraph("General Shot Map", sezione_stile), Spacer(1, 0.2 * cm)]
+        tot_p_sq, goal_p_sq = costruisci_conteggi_porta(df_squadra_riepilogo)
+        fig_p_sq = disegna_porta(tot_p_sq, goal_p_sq)
+        tot_t_sq, goal_t_sq = costruisci_conteggi_tastiera(df_squadra_riepilogo)
+        fig_t_sq = disegna_tastiera(tot_t_sq, goal_t_sq)
+        img_p_sq = _immagine_da_figura_matplotlib(fig_p_sq, 11, 10)
+        img_t_sq = _immagine_da_figura_matplotlib(fig_t_sq, 16, 10.5)
+        riga_mappa = Table([[img_p_sq, img_t_sq]], colWidths=[11.5 * cm, 16.5 * cm])
+        riga_mappa.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+        pagina1.append(riga_mappa)
+        blocchi_pagine.append(pagina1)
+
+        # Pagina 2: tiratori per volume di tiro (tabelle affiancate) + statistiche per macro-zona
+        intest_volume_tot = Paragraph("By total shot volume", intestazione_tabella_stile)
+        tabella_volume_tot = _df_to_reportlab_table(
+            classifica_tiratori_per_volume(df_squadra_riepilogo), col_widths=[7*cm, 2*cm, 2*cm, 2*cm], font_size=7
+        )
+        intest_volume_mt = Paragraph("By Money Time shot volume", intestazione_tabella_stile)
+        tabella_volume_mt = _df_to_reportlab_table(
+            classifica_tiratori_per_volume(df_squadra_riepilogo, solo_money_time=True),
+            col_widths=[7 * cm, 2 * cm, 2 * cm, 2 * cm], font_size=7
+        )
+        riga_volume = Table(
+            [[[intest_volume_tot, tabella_volume_tot], [intest_volume_mt, tabella_volume_mt]]],
+            colWidths=[13.5 * cm, 13.5 * cm]
+        )
+        riga_volume.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+        pagina2 = [
+            Paragraph("Shooters by Shot Volume", sezione_compatta_stile), Spacer(1, 0.1 * cm),
+            riga_volume,
+            Spacer(1, 0.2 * cm),
+            Paragraph("By Macro-Zone (team total)", sezione_compatta_stile), Spacer(1, 0.1 * cm),
+            _df_to_reportlab_table(tabella_macro_tiratori(df_squadra_riepilogo),
+                                    col_widths=[5 * cm, 3 * cm, 3 * cm, 3 * cm], font_size=7),
+        ]
+        blocchi_pagine.append(pagina2)
 
     giocatori_validi = [(g, df_g) for g, df_g in dati_per_giocatore.items() if not df_g.empty]
-    for indice, (nome_giocatore, df_g) in enumerate(giocatori_validi):
-        if indice > 0:
-            elementi.append(PageBreak())
+    for nome_giocatore, df_g in giocatori_validi:
         nota_html = note_markup_a_reportlab(note_dict.get(nome_giocatore, '')) if note_dict.get(nome_giocatore) else None
-        elementi.extend(_blocco_giocatore_pdf(nome_giocatore, df_g, stili, sezione_stile, nota_html))
+        blocchi_pagine.append(_blocco_giocatore_pdf(nome_giocatore, df_g, stili, sezione_stile, nota_html))
+
+    elementi = [blocco_titolo, Spacer(1, 0.5 * cm)]
+    if blocchi_pagine:
+        elementi.extend(blocchi_pagine[0])
+        for blocco in blocchi_pagine[1:]:
+            elementi.append(PageBreak())
+            elementi.extend(blocco)
 
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     buffer.seek(0)
@@ -2816,7 +2865,10 @@ with tab4:
                         with st.spinner("Generating PDF..."):
                             try:
                                 note_selezione = {g: st.session_state['note_tiratori'].get(g, '') for g in dati_pdf_giocatori}
-                                pdf_bytes_sel = genera_pdf_tiratori(titolo_dashboard, dati_pdf_giocatori, note_selezione)
+                                pdf_bytes_sel = genera_pdf_tiratori(
+                                    titolo_dashboard, dati_pdf_giocatori, note_selezione,
+                                    df_squadra_riepilogo=(df_selezione if modalita_tir == "Team" else None)
+                                )
                                 st.download_button(
                                     label="⬇️ Download PDF", data=pdf_bytes_sel,
                                     file_name=f"Shooting_Report_{titolo_dashboard}".replace(' ', '_') + ".pdf",
