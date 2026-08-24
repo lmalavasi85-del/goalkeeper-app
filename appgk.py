@@ -2226,37 +2226,119 @@ with tab1:
             else:
                 st.error("Incorrect code.")
     else:
-        fc = st.file_uploader('Drag and drop Excel files here', type=['xlsx', 'xls'], accept_multiple_files=True)
-    
-        if fc:
-            pe = []
-            for idx, f in enumerate(fc):
-                st.subheader(f"File Configuration: {f.name}")
-                col1, col2, col3 = st.columns(3)
-                with col1: nm = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'n_{idx}')
-                with col2: dt = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"d_{idx}")
-                with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f's_{idx}')
-            
+        # ============================================================
+        # UPLOAD FILE UNIFICATO (formato unico HOME/AWAY, un solo file per l'intera gara)
+        # ============================================================
+        st.subheader("📥 Upload Match (unified format — recommended)")
+        st.caption("A single Excel file for the whole match, columns: HOME, AWAY, TIRO, RESULT, "
+                   "GOAL SECTOR, TIMELINE. The goalkeeper on duty is marked with \"[G]\" in the "
+                   "HOME or AWAY cell; the other cell holds the shooter facing them. Team names "
+                   "are read automatically from the file name (e.g. \"Merano-Brixen 23-8-2026.xlsx\" "
+                   "→ Merano home, Brixen away) — no need to type them in. This single upload "
+                   "feeds goalkeepers, shooters (Shooting Trend Analysis) and the Head-to-Head "
+                   "analysis all at once.")
+        fc_uni = st.file_uploader('Drag and drop the unified match file(s) here', type=['xlsx', 'xls'],
+                                   accept_multiple_files=True, key="upload_unificato")
+
+        if fc_uni:
+            pe_gk_uni, pe_tir_uni, pe_h2h_uni = [], [], []
+            for idx, f in enumerate(fc_uni):
+                st.markdown(f"**File Configuration: {f.name}**")
+                col1, col2 = st.columns(2)
+                with col1: nm_u = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'un_{idx}')
+                with col2: dt_u = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"ud_{idx}")
+                sq_home_u, sq_away_u = estrai_home_away_da_nome_file(f.name)
+                if not sq_home_u or not sq_away_u:
+                    st.error(f"Could not read the two team names from the file name '{f.name}'. "
+                             f"Rename it as \"TeamHome-TeamAway date.xlsx\" and re-upload.")
+                    continue
+                st.caption(f"Home: **{sq_home_u}**  |  Away: **{sq_away_u}**")
                 try:
-                    df_raw = pd.read_excel(f)
-                    df = elabora_file_portieri(df_raw)
-                    sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
-                    pe.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df,
-                               'squadra_home': sq_home, 'squadra_away': sq_away})
+                    df_raw_u = pd.read_excel(f)
+                    df_gk_h, df_gk_a, df_tir_h, df_tir_a, df_h2h_u = elabora_file_unificato(df_raw_u, sq_home_u, sq_away_u)
+                    if not df_gk_h.empty:
+                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_gk_a.empty:
+                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_tir_h.empty:
+                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_tir_a.empty:
+                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_h2h_u.empty:
+                        pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
+                    st.caption(f"Parsed: {len(df_gk_h)} GK-home rows, {len(df_gk_a)} GK-away rows, "
+                               f"{len(df_tir_h)} shooter-home rows, {len(df_tir_a)} shooter-away rows, "
+                               f"{len(df_h2h_u)} head-to-head events.")
                 except Exception as e:
                     st.error(f'Error processing file {f.name}: {e}')
-                
-            if st.button('➕ Save & Process Matches (add to season)'):
-                chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
-                aggiunte, duplicati = 0, 0
-                for match in pe:
+
+            if st.button('➕ Save & Process Match (unified)'):
+                chiavi_gk = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
+                chiavi_tir = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
+                chiavi_h2h = {(p['nome'], str(p['data'])) for p in st.session_state['db_h2h']}
+                agg_gk = agg_tir = agg_h2h = 0
+                for match in pe_gk_uni:
                     chiave = (match['nome'], str(match['data']), match['squadra'])
-                    if chiave in chiavi_esistenti:
-                        duplicati += 1
-                        continue
-                    st.session_state['db'].append(match)
-                    chiavi_esistenti.add(chiave)
-                    aggiunte += 1
+                    if chiave not in chiavi_gk:
+                        st.session_state['db'].append(match)
+                        chiavi_gk.add(chiave)
+                        agg_gk += 1
+                for match in pe_tir_uni:
+                    chiave = (match['nome'], str(match['data']), match['squadra'])
+                    if chiave not in chiavi_tir:
+                        st.session_state['db_tiratori'].append(match)
+                        chiavi_tir.add(chiave)
+                        agg_tir += 1
+                for match in pe_h2h_uni:
+                    chiave = (match['nome'], str(match['data']))
+                    if chiave not in chiavi_h2h:
+                        st.session_state['db_h2h'].append(match)
+                        chiavi_h2h.add(chiave)
+                        agg_h2h += 1
+                salva_stagione_su_disco(st.session_state['db'])
+                salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+                salva_h2h_su_disco(st.session_state['db_h2h'])
+                st.success(f"Saved: {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
+                           f"{agg_h2h} head-to-head match(es) added.")
+
+        st.markdown("---")
+
+        with st.expander("Old 4-file format (deprecated — only for legacy one-off files)"):
+            fc = st.file_uploader('Drag and drop Excel files here', type=['xlsx', 'xls'], accept_multiple_files=True)
+
+            if fc:
+                pe = []
+                for idx, f in enumerate(fc):
+                    st.subheader(f"File Configuration: {f.name}")
+                    col1, col2, col3 = st.columns(3)
+                    with col1: nm = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'n_{idx}')
+                    with col2: dt = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"d_{idx}")
+                    with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f's_{idx}')
+
+                    try:
+                        df_raw = pd.read_excel(f)
+                        df = elabora_file_portieri(df_raw)
+                        sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
+                        pe.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df,
+                                   'squadra_home': sq_home, 'squadra_away': sq_away})
+                    except Exception as e:
+                        st.error(f'Error processing file {f.name}: {e}')
+
+                if st.button('➕ Save & Process Matches (add to season)'):
+                    chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
+                    aggiunte, duplicati = 0, 0
+                    for match in pe:
+                        chiave = (match['nome'], str(match['data']), match['squadra'])
+                        if chiave in chiavi_esistenti:
+                            duplicati += 1
+                            continue
+                        st.session_state['db'].append(match)
+                        chiavi_esistenti.add(chiave)
+                        aggiunte += 1
 
                 salva_stagione_su_disco(st.session_state['db'])
 
@@ -2877,90 +2959,12 @@ with tab4:
                 st.error("Incorrect code.")
     else:
         # ============================================================
-        # UPLOAD FILE UNIFICATO (formato unico HOME/AWAY, un solo file per l'intera gara)
+        # UPLOAD FILE TIRATORI (formato a 5 colonne, alternativa al file unificato)
         # ============================================================
-        st.subheader("📥 Upload Match (unified format — recommended)")
-        st.caption("A single Excel file for the whole match, columns: HOME, AWAY, TIRO, RESULT, "
-                   "GOAL SECTOR, TIMELINE. The goalkeeper on duty is marked with \"[G]\" in the "
-                   "HOME or AWAY cell; the other cell holds the shooter facing them. Team names "
-                   "are read automatically from the file name (e.g. \"Merano-Brixen 23-8-2026.xlsx\" "
-                   "→ Merano home, Brixen away) — no need to type them in.")
-        fc_uni = st.file_uploader('Drag and drop the unified match file(s) here', type=['xlsx', 'xls'],
-                                   accept_multiple_files=True, key="upload_unificato")
-
-        if fc_uni:
-            pe_gk_uni, pe_tir_uni, pe_h2h_uni = [], [], []
-            for idx, f in enumerate(fc_uni):
-                st.markdown(f"**File Configuration: {f.name}**")
-                col1, col2 = st.columns(2)
-                with col1: nm_u = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'un_{idx}')
-                with col2: dt_u = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"ud_{idx}")
-                sq_home_u, sq_away_u = estrai_home_away_da_nome_file(f.name)
-                if not sq_home_u or not sq_away_u:
-                    st.error(f"Could not read the two team names from the file name '{f.name}'. "
-                             f"Rename it as \"TeamHome-TeamAway date.xlsx\" and re-upload.")
-                    continue
-                st.caption(f"Home: **{sq_home_u}**  |  Away: **{sq_away_u}**")
-                try:
-                    df_raw_u = pd.read_excel(f)
-                    df_gk_h, df_gk_a, df_tir_h, df_tir_a, df_h2h_u = elabora_file_unificato(df_raw_u, sq_home_u, sq_away_u)
-                    if not df_gk_h.empty:
-                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
-                    if not df_gk_a.empty:
-                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
-                    if not df_tir_h.empty:
-                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
-                    if not df_tir_a.empty:
-                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
-                    if not df_h2h_u.empty:
-                        pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
-                    st.caption(f"Parsed: {len(df_gk_h)} GK-home rows, {len(df_gk_a)} GK-away rows, "
-                               f"{len(df_tir_h)} shooter-home rows, {len(df_tir_a)} shooter-away rows, "
-                               f"{len(df_h2h_u)} head-to-head events.")
-                except Exception as e:
-                    st.error(f'Error processing file {f.name}: {e}')
-
-            if st.button('➕ Save & Process Match (unified)'):
-                chiavi_gk = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
-                chiavi_tir = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
-                chiavi_h2h = {(p['nome'], str(p['data'])) for p in st.session_state['db_h2h']}
-                agg_gk = agg_tir = agg_h2h = 0
-                for match in pe_gk_uni:
-                    chiave = (match['nome'], str(match['data']), match['squadra'])
-                    if chiave not in chiavi_gk:
-                        st.session_state['db'].append(match)
-                        chiavi_gk.add(chiave)
-                        agg_gk += 1
-                for match in pe_tir_uni:
-                    chiave = (match['nome'], str(match['data']), match['squadra'])
-                    if chiave not in chiavi_tir:
-                        st.session_state['db_tiratori'].append(match)
-                        chiavi_tir.add(chiave)
-                        agg_tir += 1
-                for match in pe_h2h_uni:
-                    chiave = (match['nome'], str(match['data']))
-                    if chiave not in chiavi_h2h:
-                        st.session_state['db_h2h'].append(match)
-                        chiavi_h2h.add(chiave)
-                        agg_h2h += 1
-                salva_stagione_su_disco(st.session_state['db'])
-                salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
-                salva_h2h_su_disco(st.session_state['db_h2h'])
-                st.success(f"Saved: {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
-                           f"{agg_h2h} head-to-head match(es) added.")
-
-        st.caption("Prefer the old 4-file workflow for a specific match? You can still use "
-                   "'Upload Match Sheets' (goalkeepers) and the legacy shooter uploader below.")
-
-        st.markdown("---")
-        # ============================================================
-        # UPLOAD FILE TIRATORI (formato legacy, un file per squadra — ancora supportato)
-        # ============================================================
-        with st.expander("📥 Legacy shooter-only upload (old 5-column format)"):
+        st.info("📌 Match uploads (unified format, goalkeepers + shooters + head-to-head) now "
+                "live in **📥 Upload Match Sheets**. Use the panel below only if you want to add "
+                "shooter data on its own, without a full unified file.")
+        with st.expander("📥 Shooter-only upload (5-column format)"):
             st.caption("Excel files with columns TIRATORE, TIRO, GOAL SECTOR, RESULT, TIMELINE — one file per team.")
             fc_tir = st.file_uploader('Drag and drop shooter Excel files here', type=['xlsx', 'xls'],
                                        accept_multiple_files=True, key="upload_tiratori")
