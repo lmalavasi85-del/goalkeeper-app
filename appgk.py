@@ -2370,15 +2370,21 @@ with tab1:
 
         st.markdown("---")
         st.subheader("💾 Season Backup")
-        st.caption("Download a backup file of the whole season anytime and keep it on your computer. "
-                   "If anything ever goes wrong with the online app, you can restore everything from this file.")
+        st.caption("Download a backup file of the whole season (goalkeepers + shooters + head-to-head) "
+                   "anytime and keep it on your computer. If anything ever goes wrong with the online "
+                   "app, or before a Reset Season, you can restore everything from this file. Player "
+                   "photos and notes are not affected by Reset Season, so they are not included here.")
 
         col_backup1, col_backup2 = st.columns(2)
         with col_backup1:
             st.markdown("**Download backup**")
-            if st.session_state['db']:
-                backup_bytes = pickle.dumps(st.session_state['db'])
-                nome_backup = f"goalkeeper_season_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pkl"
+            if st.session_state['db'] or st.session_state['db_tiratori'] or st.session_state['db_h2h']:
+                backup_bytes = pickle.dumps({
+                    'db': st.session_state['db'],
+                    'db_tiratori': st.session_state['db_tiratori'],
+                    'db_h2h': st.session_state['db_h2h'],
+                })
+                nome_backup = f"season_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pkl"
                 st.download_button(
                     label="⬇️ Download Season Backup",
                     data=backup_bytes,
@@ -2394,19 +2400,52 @@ with tab1:
             if file_backup is not None:
                 if st.button("♻️ Restore backup (merge into current season)"):
                     try:
-                        db_ripristinato = pickle.loads(file_backup.read())
-                        chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
-                        aggiunte_backup = 0
-                        for match in db_ripristinato:
+                        contenuto_backup = pickle.loads(file_backup.read())
+                        # Retrocompatibilità: i backup vecchi erano una semplice lista (solo portieri)
+                        if isinstance(contenuto_backup, dict):
+                            db_gk_ripristinato = contenuto_backup.get('db', [])
+                            db_tir_ripristinato = contenuto_backup.get('db_tiratori', [])
+                            db_h2h_ripristinato = contenuto_backup.get('db_h2h', [])
+                        else:
+                            db_gk_ripristinato = contenuto_backup
+                            db_tir_ripristinato = []
+                            db_h2h_ripristinato = []
+
+                        chiavi_gk = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
+                        agg_gk = 0
+                        for match in db_gk_ripristinato:
                             chiave = (match['nome'], str(match['data']), match['squadra'])
-                            if chiave in chiavi_esistenti:
+                            if chiave in chiavi_gk:
                                 continue
                             st.session_state['db'].append(match)
-                            chiavi_esistenti.add(chiave)
-                            aggiunte_backup += 1
+                            chiavi_gk.add(chiave)
+                            agg_gk += 1
+
+                        chiavi_tir = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
+                        agg_tir = 0
+                        for match in db_tir_ripristinato:
+                            chiave = (match['nome'], str(match['data']), match['squadra'])
+                            if chiave in chiavi_tir:
+                                continue
+                            st.session_state['db_tiratori'].append(match)
+                            chiavi_tir.add(chiave)
+                            agg_tir += 1
+
+                        chiavi_h2h = {(p['nome'], str(p['data'])) for p in st.session_state['db_h2h']}
+                        agg_h2h = 0
+                        for match in db_h2h_ripristinato:
+                            chiave = (match['nome'], str(match['data']))
+                            if chiave in chiavi_h2h:
+                                continue
+                            st.session_state['db_h2h'].append(match)
+                            chiavi_h2h.add(chiave)
+                            agg_h2h += 1
+
                         salva_stagione_su_disco(st.session_state['db'])
-                        st.success(f"Restored {aggiunte_backup} match(es) from the backup file. "
-                                  f"Total matches now in memory: {len(st.session_state['db'])}.")
+                        salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+                        salva_h2h_su_disco(st.session_state['db_h2h'])
+                        st.success(f"Restored {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
+                                   f"{agg_h2h} head-to-head match(es) from the backup file.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Could not read this backup file: {e}")
