@@ -2592,12 +2592,14 @@ with tab2:
         
         st.subheader("📊 Team Goalkeeping Totals")
         s_t, g_t, m_t, pct_t, eff_t = calcola_metriche_gruppo(df_match)
-        
-        c1, c2, c3, c4 = st.columns(4)
+        gpi_totale_squadra = df_match['GPI_Tiro'].sum()
+
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Total Saves", s_t)
         c2.metric("Total Goals Conceded", g_t)
         c3.metric("Team Save %", f"{pct_t:.1f}%")
         c4.metric("Team Efficiency %", f"{eff_t:.1f}%")
+        c5.metric("Team GPI (Total)", f"{gpi_totale_squadra:+.1f}")
         
         st.markdown("---")
         st.subheader("📈 Goalkeeper Cumulative Match Performance Graph")
