@@ -121,6 +121,113 @@ def mappa_macro_settore(s):
     return None
 
 # ============================================================
+# HOME / AWAY: la prima squadra scritta nel nome del file è sempre "home",
+# la seconda è sempre "away" (es. "Merano-Brixen 23-8-2026" -> Merano=home, Brixen=away).
+# Usato sia per i portieri che per i tiratori.
+# ============================================================
+def estrai_home_away_da_nome_file(nome_file):
+    """Ricava (squadra_home, squadra_away) dal nome del file. Restituisce (None, None)
+    se il pattern 'Squadra1-Squadra2...' non viene riconosciuto."""
+    base = os.path.splitext(str(nome_file))[0]
+    m = re.match(r"^\s*([A-Za-zÀ-ÖØ-öø-ÿ'\.]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'\.]+)*)\s*-\s*([A-Za-zÀ-ÖØ-öø-ÿ'\.]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'\.]+)*)", base)
+    if not m:
+        return None, None
+    return m.group(1).strip(), m.group(2).strip()
+
+def determina_casa_trasferta(squadra_analizzata, squadra_home, squadra_away):
+    """Restituisce 'home', 'away' o None (se non determinabile), confrontando in modo
+    tollerante (case-insensitive, contenimento) il nome della squadra analizzata con
+    le due squadre estratte dal nome del file."""
+    if not squadra_analizzata or not squadra_home or not squadra_away:
+        return None
+    sa = str(squadra_analizzata).strip().lower()
+    sh = str(squadra_home).strip().lower()
+    saw = str(squadra_away).strip().lower()
+    if sa == sh or sa in sh or sh in sa:
+        return 'home'
+    if sa == saw or sa in saw or saw in sa:
+        return 'away'
+    return None
+
+def calcola_split_casa_trasferta(righe_partite, chiave_valore_realizzati, chiave_valore_totali):
+    """Dato un elenco di voci-partita (ciascuna con 'casa_trasferta', numeratore e denominatore),
+    calcola il rendimento complessivo in casa e in trasferta e il gap assoluto in punti percentuali.
+    righe_partite: lista di dict con chiavi 'casa_trasferta' ('home'/'away'/None), chiave_valore_realizzati, chiave_valore_totali."""
+    home_num = sum(r[chiave_valore_realizzati] for r in righe_partite if r.get('casa_trasferta') == 'home')
+    home_den = sum(r[chiave_valore_totali] for r in righe_partite if r.get('casa_trasferta') == 'home')
+    away_num = sum(r[chiave_valore_realizzati] for r in righe_partite if r.get('casa_trasferta') == 'away')
+    away_den = sum(r[chiave_valore_totali] for r in righe_partite if r.get('casa_trasferta') == 'away')
+    home_pct = (home_num / home_den * 100) if home_den > 0 else None
+    away_pct = (away_num / away_den * 100) if away_den > 0 else None
+    gap = abs(home_pct - away_pct) if (home_pct is not None and away_pct is not None) else None
+    return {
+        'home_num': home_num, 'home_den': home_den, 'home_pct': home_pct,
+        'away_num': away_num, 'away_den': away_den, 'away_pct': away_pct,
+        'gap': gap
+    }
+
+def formatta_riga_casa_trasferta(split):
+    """Formatta il dizionario di calcola_split_casa_trasferta in una stringa leggibile,
+    con il gap evidenziato (in Markdown, rosso) se supera il 10%."""
+    if split['home_pct'] is None and split['away_pct'] is None:
+        return "No home/away data available (team names in the file names did not match)."
+    parti = []
+    if split['home_pct'] is not None:
+        parti.append(f"Home {split['home_num']}/{split['home_den']} = {split['home_pct']:.1f}%")
+    else:
+        parti.append("Home: n/a")
+    if split['away_pct'] is not None:
+        parti.append(f"Away {split['away_num']}/{split['away_den']} = {split['away_pct']:.1f}%")
+    else:
+        parti.append("Away: n/a")
+    if split['gap'] is not None:
+        gap_testo = f"Gap {split['gap']:.1f}%"
+        if split['gap'] > 10:
+            parti.append(f":red[**{gap_testo}**]")
+        else:
+            parti.append(gap_testo)
+    return "   |   ".join(parti)
+
+# ============================================================
+# MACRO-SETTORI PER I TIRATORI (diversi da quelli dei portieri: qui si raggruppa
+# per "fascia" numerica orizzontale tra 6m/bt/9m, non per riga radiale)
+# lw -> lw1+lw2 | rw -> rw1+rw2 | fb -> fb1+fb2+fb3
+# settore 1 -> 6m1+bt1+9m1 | settore 1,5 -> 6m1,5+bt1,5+9m1,5 | ... | settore 3 -> 6m3+bt3+9m3
+# 7m ed eg sono sia macro che micro (singoli)
+# ============================================================
+ORDINE_MACRO_TIRATORI = ['7m', 'eg', 'lw', 'rw', '1', '1,5', '2', '2,5', '3', 'fb']
+ETICHETTA_MACRO_TIRATORI = {
+    '7m': '7m', 'eg': 'EG', 'lw': 'LW', 'rw': 'RW', 'fb': 'FB',
+    '1': 'Sector 1', '1,5': 'Sector 1.5', '2': 'Sector 2', '2,5': 'Sector 2.5', '3': 'Sector 3',
+}
+
+def mappa_macro_settore_tiratori(zona):
+    z = _normalizza_zona(zona)
+    if z in ('7m', 'eg'):
+        return z
+    if z.startswith('lw'):
+        return 'lw'
+    if z.startswith('rw'):
+        return 'rw'
+    if z.startswith('fb'):
+        return 'fb'
+    m = re.match(r'^(6m|bt|9m)(1,5|2,5|1|2|3)$', z)
+    if m:
+        return m.group(2)
+    return None
+
+# Ordine "naturale" dei tasti della tastiera dei settori di campo (come da immagine allegata)
+ORDINE_TASTIERA_TIRATORI = [
+    ['7m', 'eg'],
+    ['lw1', 'lw2', 'rw2', 'rw1'],
+    ['6m1', '6m1,5', '6m2', '6m2,5', '6m3'],
+    ['bt1', 'bt1,5', 'bt2', 'bt2,5', 'bt3'],
+    ['9m1', '9m1,5', '9m2', '9m2,5', '9m3'],
+    ['fb1', 'fb2', 'fb3'],
+]
+TUTTI_I_TASTI_TIRATORI = [t for riga in ORDINE_TASTIERA_TIRATORI for t in riga]
+
+# ============================================================
 # EXPECTED SAVES % (efficacia attesa per settore specifico)
 # Valori di riferimento basati sul database storico di migliaia di tiri.
 # ============================================================
@@ -132,6 +239,7 @@ EXPECTED_SAVE_PCT = {
     '9m1': 60, '9m1,5': 60, '9m2': 52, '9m2,5': 55, '9m3': 55,
     '7m': 25,
     'fb1': 22, 'fb2': 22, 'fb3': 22,
+    'eg': 5,  # empty goal (porta vuota): expected save % molto basso di default, modificabile
 }
 
 def _normalizza_zona(zona):
@@ -145,6 +253,13 @@ def ottieni_expected_pct(zona):
     """Restituisce il valore di Expected Saves % per un settore specifico, o None se non mappato
     (es. settori scritti in modo non riconosciuto: in quel caso la riga non viene colorata)."""
     return EXPECTED_SAVE_PCT.get(_normalizza_zona(zona))
+
+def ottieni_expected_goal_pct(zona):
+    """Expected Goal % per i TIRATORI: è semplicemente il ribaltamento dell'Expected Save %
+    dei portieri (100 - Expected Save %). Es. 7m: Expected Save % portiere = 25% -> Expected
+    Goal % tiratore = 75%. Restituisce None se il settore non è mappato."""
+    save_pct = ottieni_expected_pct(zona)
+    return (100 - save_pct) if save_pct is not None else None
 
 def applica_colori_expected(df_settore):
     """Restituisce una versione 'stilizzata' della tabella per settore specifico, con lo sfondo
@@ -245,12 +360,14 @@ def raccogli_stagione_per_portiere(elenco_partite, nome_portiere):
     lista_partite = []
     for match in partite_ordinate:
         df_m = match['dati']
-        df_gk = df_m[df_m['PORTIERE_CLEAN'] == nome_portiere]
+        df_gk = df_m[df_m['PORTIERE_CLEAN'] == nome_portiere].copy()
         if df_gk.empty:
             continue
+        df_gk['Match_Label'] = f"{match['nome']} ({match['data']})"
         s, g, m_, pct, eff = calcola_metriche_gruppo(df_gk)
         df_gk_stress = df_gk[df_gk['Is_Stress_Test'] == True]
         gpi_money_time = df_gk_stress['GPI_Tiro'].sum() if not df_gk_stress.empty else None
+        s_mt, g_mt, m_mt, pct_mt, eff_mt = calcola_metriche_gruppo(df_gk_stress)
         frammenti.append(df_gk)
         lista_partite.append({
             'label': f"{match['nome']} ({match['data']})",
@@ -259,7 +376,12 @@ def raccogli_stagione_per_portiere(elenco_partite, nome_portiere):
             'pct': pct,
             'eff': eff,
             'tiri': len(df_gk),
-            'money_time_gpi': gpi_money_time
+            'saves': s,
+            'money_time_gpi': gpi_money_time,
+            'money_time_tiri': len(df_gk_stress),
+            'money_time_saves': s_mt,
+            'money_time_pct': pct_mt,
+            'casa_trasferta': determina_casa_trasferta(match['squadra'], match.get('squadra_home'), match.get('squadra_away')),
         })
     df_aggregato = pd.concat(frammenti, ignore_index=True) if frammenti else pd.DataFrame()
     return df_aggregato, lista_partite
@@ -538,6 +660,225 @@ def _disegna_grafico_blocchi_pdf(df_blocchi, output_path):
     fig.tight_layout()
     fig.savefig(output_path, bbox_inches='tight', dpi=150)
     plt.close(fig)
+
+# ============================================================
+# DISEGNO PORTA (9 settori T1-T9) E TASTIERA (settori di campo) PER I TIRATORI
+# Condivisi tra schermata (st.pyplot) e PDF (RLImage), stesso stile grafico del resto dell'app.
+# ============================================================
+ORDINE_PORTA = [['T1', 'T2', 'T3'], ['T4', 'T5', 'T6'], ['T7', 'T8', 'T9']]
+
+def _colore_expected(reale_pct, expected_pct):
+    """Verde se il tiratore è sopra la media attesa, giallo se coincide, rosso se sotto."""
+    if reale_pct is None or expected_pct is None:
+        return '#2c4a6e'  # colore neutro (nessun confronto disponibile)
+    diff = reale_pct - expected_pct
+    if abs(diff) < 0.05:
+        return '#c9a600'
+    elif diff > 0:
+        return '#1e7d34'
+    else:
+        return '#b5231a'
+
+def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=None):
+    """Disegna la porta con i 9 settori (T1-T9): sotto ogni settore, 'goal/totale = pct%'.
+    colore_cornice: se fornito ('#rrggbb'), colora il bordo esterno (usato quando è selezionato
+    un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
+    fig, ax = plt.subplots(figsize=(5.2, 4.4), dpi=150)
+    ax.set_xlim(0, 3)
+    ax.set_ylim(0, 3)
+    ax.set_aspect('equal')
+    ax.axis('off')
+
+    bordo = colore_cornice if colore_cornice else '#2c4a6e'
+    fig.patch.set_facecolor('white')
+    ax.add_patch(plt.Rectangle((-0.12, -0.12), 3.24, 3.24, facecolor=bordo, edgecolor='none', zorder=0))
+
+    for r, riga in enumerate(ORDINE_PORTA):
+        for c, sett in enumerate(riga):
+            x0 = c
+            y0 = 2 - r
+            tot = conteggi_totali.get(sett, 0)
+            goal = conteggi_goal.get(sett, 0)
+            pct = (goal / tot * 100) if tot > 0 else None
+            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor='#4a6da3', edgecolor='white', linewidth=2.5, zorder=1))
+            ax.text(x0 + 0.5, y0 + 0.62, sett, ha='center', va='center', fontsize=11,
+                    color='white', fontweight='bold', zorder=2)
+            testo_val = f"{goal}/{tot} = {pct:.0f}%" if tot > 0 else "0/0"
+            ax.text(x0 + 0.5, y0 + 0.32, testo_val, ha='center', va='center', fontsize=10.5,
+                    color='white', zorder=2)
+    if titolo:
+        ax.set_title(titolo, fontsize=11, color='#15304f', pad=10)
+    fig.tight_layout()
+    return fig
+
+def _colori_heatmap_frequenza(conteggi):
+    """Assegna a ciascun settore uno dei 4 livelli della heat map in base alla frequenza dei tiri
+    (quartili sui settori con almeno un tiro): rosso = più ricorrenti, arancio, giallo, sfondo = nessun tiro."""
+    valori = sorted(set(v for v in conteggi.values() if v > 0), reverse=True)
+    colori = {}
+    if not valori:
+        return {k: '#e9edf3' for k in conteggi}
+    soglie = valori[max(0, len(valori)//3 - 1)] if len(valori) >= 3 else valori[0]
+    soglia_alta = valori[0]
+    soglia_media = valori[len(valori)//3] if len(valori) > 3 else (valori[1] if len(valori) > 1 else valori[0])
+    soglia_bassa = valori[-1]
+    for k, v in conteggi.items():
+        if v <= 0:
+            colori[k] = '#e9edf3'
+        else:
+            rank_pct = 1 - (sorted(valori, reverse=True).index(v) / max(1, len(valori) - 1)) if len(valori) > 1 else 1
+            if rank_pct >= 0.66 or v == soglia_alta:
+                colori[k] = '#d13b2e'
+            elif rank_pct >= 0.33:
+                colori[k] = '#f0872b'
+            else:
+                colori[k] = '#f2d24b'
+    return colori
+
+def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None):
+    """Disegna la tastiera dei settori di campo con heat map a 4 colori (frequenza tiri) e,
+    sotto ogni tasto, 'goal/totale = pct%'. Il tasto eventualmente selezionato viene evidenziato
+    con un bordo nero spesso."""
+    colori_heat = _colori_heatmap_frequenza(conteggi_totali)
+    n_righe = len(ORDINE_TASTIERA_TIRATORI)
+    n_col_max = max(len(r) for r in ORDINE_TASTIERA_TIRATORI)
+
+    fig, ax = plt.subplots(figsize=(9.5, 6.2), dpi=150)
+    ax.set_xlim(0, n_col_max)
+    ax.set_ylim(0, n_righe)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    fig.patch.set_facecolor('white')
+
+    for r, riga in enumerate(ORDINE_TASTIERA_TIRATORI):
+        offset = (n_col_max - len(riga)) / 2
+        for c, tasto in enumerate(riga):
+            x0 = offset + c
+            y0 = n_righe - 1 - r
+            tot = conteggi_totali.get(tasto, 0)
+            goal = conteggi_goal.get(tasto, 0)
+            pct = (goal / tot * 100) if tot > 0 else None
+            colore = colori_heat.get(tasto, '#e9edf3')
+            bordo_larghezza = 3.2 if tasto == tasto_selezionato else 1.2
+            colore_bordo = 'black' if tasto == tasto_selezionato else 'white'
+            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor=colore, edgecolor=colore_bordo,
+                                        linewidth=bordo_larghezza, zorder=1))
+            testo_colore = '#222222' if colore == '#f2d24b' or colore == '#e9edf3' else 'white'
+            ax.text(x0 + 0.5, y0 + 0.62, tasto, ha='center', va='center', fontsize=10.5,
+                    color=testo_colore, fontweight='bold', zorder=2)
+            testo_val = f"{goal}/{tot} = {pct:.0f}%" if tot > 0 else "0/0"
+            ax.text(x0 + 0.5, y0 + 0.32, testo_val, ha='center', va='center', fontsize=9,
+                    color=testo_colore, zorder=2)
+    fig.tight_layout()
+    return fig
+
+# ============================================================
+# TIRATORI: PARSING FILE, METRICHE, TOP SCORERS, MACRO-SETTORI
+# ============================================================
+def calcola_money_time_flag(minuti, scarto):
+    return (minuti >= 50) and (-5 <= scarto <= 5)
+
+def elabora_file_tiratori(df_raw):
+    """Prende il DataFrame grezzo letto da un file Excel dei tiratori (TIRATORE, TIRO,
+    GOAL SECTOR, RESULT, TIMELINE) e restituisce il DataFrame arricchito con tutte le colonne
+    calcolate necessarie al resto dell'app. Solleva ValueError se manca una colonna essenziale."""
+    def _trova_colonna(parole_chiave):
+        for c in df_raw.columns:
+            c_low = str(c).lower()
+            if any(p in c_low for p in parole_chiave):
+                return c
+        return None
+
+    c_tiratore = _trova_colonna(['tiratore', 'shooter', 'giocatore', 'player'])
+    c_tiro = _trova_colonna(['tiro', 'shot'])
+    c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
+    c_result = _trova_colonna(['result', 'esito', 'risultato'])
+    c_time = _trova_colonna(['timeline', 'tempo', 'minut'])
+
+    mancanti = [nome for nome, val in [('TIRATORE', c_tiratore), ('TIRO', c_tiro),
+                ('GOAL SECTOR', c_goalsector), ('RESULT', c_result), ('TIMELINE', c_time)] if val is None]
+    if mancanti:
+        raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
+
+    df = df_raw.copy()
+    df['TIRATORE_CLEAN'] = df[c_tiratore].astype(str).str.strip()
+    df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
+    df['GOAL_SECTOR_CLEAN'] = df[c_goalsector].astype(str).str.strip()
+    df['RESULT_CLEAN'] = df[c_result].astype(str).str.lower().str.strip()
+
+    minuti_list, tempo_list, scarti_list, punteggi_list = [], [], [], []
+    for val in df[c_time]:
+        m_tot, t_s, sc, pt = analizza_timeline(val)
+        minuti_list.append(m_tot); tempo_list.append(t_s); scarti_list.append(sc); punteggi_list.append(pt)
+    df['Minuti_Gara'] = minuti_list
+    df['Tempo_Visuale'] = tempo_list
+    df['Scarto_Punteggio'] = scarti_list
+    df['Punteggio_Live'] = punteggi_list
+
+    df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+    df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
+    return df
+
+def calcola_metriche_tiratori_gruppo(df):
+    """(goal, totale, pct realizzazione) per un qualsiasi sottoinsieme di tiri di tiratori."""
+    if df.empty:
+        return 0, 0, 0.0
+    tot = len(df)
+    goal = len(df[df['RESULT_CLEAN'].isin(['goal', 'g'])])
+    pct = (goal / tot * 100) if tot > 0 else 0.0
+    return goal, tot, pct
+
+def costruisci_conteggi_porta(df):
+    """dict settore-porta(T1..T9) -> totale tiri, dict -> goal segnati."""
+    tot, goal = {}, {}
+    for sett in [t for riga in ORDINE_PORTA for t in riga]:
+        df_s = df[df['GOAL_SECTOR_CLEAN'] == sett]
+        tot[sett] = len(df_s)
+        goal[sett] = len(df_s[df_s['RESULT_CLEAN'].isin(['goal', 'g'])])
+    return tot, goal
+
+def costruisci_conteggi_tastiera(df):
+    """dict settore-campo -> totale tiri, dict -> goal segnati (sui tasti standard della tastiera)."""
+    tot, goal = {}, {}
+    for tasto in TUTTI_I_TASTI_TIRATORI:
+        df_s = df[df['TIRO_CLEAN'].apply(lambda z: _normalizza_zona(z)) == tasto]
+        tot[tasto] = len(df_s)
+        goal[tasto] = len(df_s[df_s['RESULT_CLEAN'].isin(['goal', 'g'])])
+    return tot, goal
+
+def top_n_tiratori(df, n=6, solo_money_time=False):
+    """Restituisce i primi n giocatori per NUMERO di tiri presi (non per %), con relativa % di
+    realizzazione, in ordine decrescente di volume."""
+    d = df[df['Is_Money_Time'] == True] if solo_money_time else df
+    if d.empty:
+        return pd.DataFrame({'Player': [], 'Shots': [], 'Goals': [], 'Goal %': []})
+    righe = []
+    for giocatore, df_g in d.groupby('TIRATORE_CLEAN'):
+        goal, tot, pct = calcola_metriche_tiratori_gruppo(df_g)
+        righe.append({'Player': giocatore, 'Shots': tot, 'Goals': goal, 'Goal %': round(pct, 1)})
+    df_top = pd.DataFrame(righe).sort_values('Shots', ascending=False).head(n).reset_index(drop=True)
+    return df_top
+
+def tabella_macro_tiratori(df):
+    """Tabella con il totale per ciascun macro-settore (LW, RW, FB, Sector 1...3, 7m, EG)."""
+    righe = []
+    for macro in ORDINE_MACRO_TIRATORI:
+        df_m = df[df['macro_settore_tir'] == macro]
+        if df_m.empty:
+            continue
+        goal, tot, pct = calcola_metriche_tiratori_gruppo(df_m)
+        righe.append({'Macro-Zone': ETICHETTA_MACRO_TIRATORI[macro], 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
+    return pd.DataFrame(righe) if righe else pd.DataFrame({'Macro-Zone': [], 'Goals': [], 'Shots': [], 'Goal %': []})
+
+def tabella_micro_di_un_macro(df, macro):
+    """Ripartizione nei micro-settori di uno specifico macro-settore selezionato."""
+    df_m = df[df['macro_settore_tir'] == macro]
+    righe = []
+    for zona in sorted(df_m['TIRO_CLEAN'].apply(_normalizza_zona).unique()):
+        df_z = df_m[df_m['TIRO_CLEAN'].apply(_normalizza_zona) == zona]
+        goal, tot, pct = calcola_metriche_tiratori_gruppo(df_z)
+        righe.append({'Zone': zona, 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
+    return pd.DataFrame(righe) if righe else pd.DataFrame({'Zone': [], 'Goals': [], 'Shots': [], 'Goal %': []})
 
 COLORE_ACCENTO = colors.HexColor('#15304f')
 COLORE_TESTATA_TABELLE = colors.HexColor('#1b3a63')
@@ -995,8 +1336,289 @@ def salva_stagione_su_disco(db):
     with open(SEASON_FILE, 'wb') as f:
         pickle.dump(db, f)
 
+# ============================================================
+# STORAGE STAGIONALE SEPARATO PER I TIRATORI (seconda "app" nella app)
+# Stessa identica logica di persistenza dei portieri (Google Sheets se configurato,
+# altrimenti file locale), ma su un worksheet/file dedicato, cosicché le due stagioni
+# (portieri e tiratori) restino indipendenti pur condividendo lo stesso "Reset Season".
+# ============================================================
+SHOOTER_SEASON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_data_shooters.pkl")
+SHOOTER_NOTES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shooter_notes.pkl")
+STAFF_ACCESS_CODE = "GigiGiamba2026"
+
+@st.cache_resource
+def _ottieni_worksheet_tiratori():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('ShooterSeasonData')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='ShooterSeasonData', rows=2000, cols=6)
+        worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json'])
+    return worksheet
+
+def _match_a_riga_sheet_tiratori(match):
+    return [match['nome'], str(match['data']), match['squadra'],
+            match.get('squadra_home') or '', match.get('squadra_away') or '',
+            match['dati'].to_json(orient='split', date_format='iso')]
+
+def _riga_sheet_a_match_tiratori(riga):
+    from datetime import datetime as _dt
+    nome, data_str, squadra = riga[0], riga[1], riga[2]
+    squadra_home = riga[3] if len(riga) > 3 and riga[3] else None
+    squadra_away = riga[4] if len(riga) > 4 and riga[4] else None
+    dati_json = riga[5] if len(riga) > 5 else riga[3]
+    df = pd.read_json(io.StringIO(dati_json), orient='split')
+    if 'Is_Money_Time' in df.columns:
+        df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
+    try:
+        data_valore = _dt.strptime(data_str, '%Y-%m-%d').date()
+    except Exception:
+        data_valore = data_str
+    return {'nome': nome, 'data': data_valore, 'squadra': squadra,
+            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df}
+
+def carica_stagione_tiratori_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_tiratori()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                return []
+            return [_riga_sheet_a_match_tiratori(riga) for riga in valori[1:] if riga and riga[0]]
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load shooter season from Google Sheets: {e}")
+            return []
+    if os.path.exists(SHOOTER_SEASON_FILE):
+        try:
+            with open(SHOOTER_SEASON_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_stagione_tiratori_su_disco(db):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_tiratori()
+            worksheet.clear()
+            worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json'])
+            righe = [_match_a_riga_sheet_tiratori(m) for m in db]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save shooter season to Google Sheets: {e}")
+    with open(SHOOTER_SEASON_FILE, 'wb') as f:
+        pickle.dump(db, f)
+
+@st.cache_resource
+def _ottieni_worksheet_note():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('ShooterNotes')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='ShooterNotes', rows=500, cols=2)
+        worksheet.append_row(['giocatore', 'nota'])
+    return worksheet
+
+def carica_note_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_note()
+            valori = worksheet.get_all_values()
+            return {r[0]: r[1] for r in valori[1:] if r and r[0]}
+        except Exception:
+            return {}
+    if os.path.exists(SHOOTER_NOTES_FILE):
+        try:
+            with open(SHOOTER_NOTES_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_note_su_disco(note_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_note()
+            worksheet.clear()
+            worksheet.append_row(['giocatore', 'nota'])
+            righe = [[g, n] for g, n in note_dict.items()]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save notes to Google Sheets: {e}")
+    with open(SHOOTER_NOTES_FILE, 'wb') as f:
+        pickle.dump(note_dict, f)
+
 if 'db' not in st.session_state:
     st.session_state['db'] = carica_stagione_da_disco()
+if 'db_tiratori' not in st.session_state:
+    st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
+if 'note_tiratori' not in st.session_state:
+    st.session_state['note_tiratori'] = carica_note_da_disco()
+
+# ============================================================
+# NOTE DEL COACH: markup semplice **grassetto**, __sottolineato__, ==evidenziato==
+# ============================================================
+def note_markup_a_html_streamlit(testo):
+    t = str(testo or '')
+    t = t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'__(.+?)__', r'<u>\1</u>', t)
+    t = re.sub(r'==(.+?)==', r'<mark style="background-color:#ffef7a">\1</mark>', t)
+    return t.replace('\n', '<br>')
+
+def note_markup_a_reportlab(testo):
+    t = str(testo or '')
+    t = t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    t = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', t)
+    t = re.sub(r'__(.+?)__', r'<u>\1</u>', t)
+    t = re.sub(r'==(.+?)==', r'<span backColor="#ffef7a">\1</span>', t)
+    return t.replace('\n', '<br/>')
+
+# ============================================================
+# GENERAZIONE PDF PER I TIRATORI (singolo giocatore / squadra / Trend Summary)
+# Stessa identità grafica (logo, colori, footer) del resto dell'app.
+# ============================================================
+def _immagine_da_figura_matplotlib(fig, max_larghezza_cm, max_altezza_cm):
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+        fig.savefig(tmp.name, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        larghezza_px, altezza_px = PILImage.open(tmp.name).size
+        w_cm, h_cm = _dimensioni_adattate(larghezza_px, altezza_px, max_larghezza_cm, max_altezza_cm)
+        return RLImage(tmp.name, width=w_cm * cm, height=h_cm * cm)
+
+def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, nota_html=None):
+    """Costruisce gli elementi ReportLab (porta, tastiera, statistiche, note) per UN giocatore,
+    a partire dal suo sottoinsieme di tiri già filtrato (per partite/money-time/macro a monte)."""
+    elementi = []
+    goal, tot, pct = calcola_metriche_tiratori_gruppo(df_giocatore)
+    elementi.append(Paragraph(f"{nome_giocatore}", sezione_stile))
+    elementi.append(Paragraph(f"Total: {goal}/{tot} = {pct:.1f}%", stili['Normal']))
+    elementi.append(Spacer(1, 0.2 * cm))
+
+    tot_porta, goal_porta = costruisci_conteggi_porta(df_giocatore)
+    fig_porta = disegna_porta(tot_porta, goal_porta)
+    tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore)
+    fig_tast = disegna_tastiera(tot_tast, goal_tast)
+
+    img_porta = _immagine_da_figura_matplotlib(fig_porta, 11, 9)
+    img_tast = _immagine_da_figura_matplotlib(fig_tast, 13, 8.5)
+    tabella_immagini = Table([[img_porta, img_tast]], colWidths=[11.5 * cm, 13.5 * cm])
+    tabella_immagini.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+    elementi.append(tabella_immagini)
+    elementi.append(Spacer(1, 0.2 * cm))
+
+    df_macro = tabella_macro_tiratori(df_giocatore)
+    if not df_macro.empty:
+        elementi.append(Paragraph("By macro-zone", stili['Heading4']))
+        elementi.append(_df_to_reportlab_table(df_macro, font_size=7))
+        elementi.append(Spacer(1, 0.2 * cm))
+
+    if nota_html:
+        elementi.append(Paragraph("Coach notes", stili['Heading4']))
+        elementi.append(Paragraph(nota_html, stili['Normal']))
+
+    return elementi
+
+def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None):
+    """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con una sezione
+    per ciascun giocatore (porta, tastiera, macro-zone, note)."""
+    note_dict = note_dict or {}
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
+                             leftMargin=1.2 * cm, rightMargin=1.2 * cm)
+    stili = getSampleStyleSheet()
+    titolo_stile = ParagraphStyle('TitoloReportTir', parent=stili['Title'], fontSize=20,
+                                   textColor=COLORE_ACCENTO, spaceAfter=2)
+    sottotitolo_stile = ParagraphStyle('SottotitoloTir', parent=stili['Heading3'], fontSize=13,
+                                        textColor=colors.HexColor('#555555'))
+    sezione_stile = ParagraphStyle('SezioneTir', parent=stili['Heading2'], spaceBefore=4, spaceAfter=6,
+                                    textColor=COLORE_ACCENTO)
+    elementi = []
+
+    dimensione_logo_copertina = 2.6 * cm
+    blocco_titolo = Table(
+        [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo_copertina, height=dimensione_logo_copertina),
+          [Paragraph("SHOOTING TREND ANALYSIS", titolo_stile), Paragraph(titolo_report, sottotitolo_stile)]]],
+        colWidths=[dimensione_logo_copertina + 0.4 * cm, None]
+    )
+    blocco_titolo.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elementi.append(blocco_titolo)
+    elementi.append(Spacer(1, 0.5 * cm))
+
+    for nome_giocatore, df_g in dati_per_giocatore.items():
+        if df_g.empty:
+            continue
+        nota_html = note_markup_a_reportlab(note_dict.get(nome_giocatore, '')) if note_dict.get(nome_giocatore) else None
+        elementi.extend(_blocco_giocatore_pdf(nome_giocatore, df_g, stili, sezione_stile, nota_html))
+        elementi.append(_separatore())
+
+    doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def genera_pdf_trend_summary(titolo_report, note_dict):
+    """PDF riassuntivo con l'elenco dei giocatori selezionati e, accanto, le note scritte dal coach."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
+                             leftMargin=1.2 * cm, rightMargin=1.2 * cm)
+    stili = getSampleStyleSheet()
+    titolo_stile = ParagraphStyle('TitoloTrendSummary', parent=stili['Title'], fontSize=20,
+                                   textColor=COLORE_ACCENTO, spaceAfter=2)
+    sottotitolo_stile = ParagraphStyle('SottotitoloTrendSummary', parent=stili['Heading3'], fontSize=13,
+                                        textColor=colors.HexColor('#555555'))
+    elementi = []
+    dimensione_logo_copertina = 2.6 * cm
+    blocco_titolo = Table(
+        [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo_copertina, height=dimensione_logo_copertina),
+          [Paragraph("TREND SUMMARY", titolo_stile), Paragraph(titolo_report, sottotitolo_stile)]]],
+        colWidths=[dimensione_logo_copertina + 0.4 * cm, None]
+    )
+    blocco_titolo.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elementi.append(blocco_titolo)
+    elementi.append(Spacer(1, 0.5 * cm))
+
+    righe = [['Player', 'Coach Notes']]
+    for nome_giocatore, nota in note_dict.items():
+        righe.append([Paragraph(nome_giocatore, stili['Normal']),
+                      Paragraph(note_markup_a_reportlab(nota) if nota else '—', stili['Normal'])])
+    t = Table(righe, colWidths=[6 * cm, 19 * cm], repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f2f2f2')]),
+    ]))
+    elementi.append(t)
+
+    doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 st.sidebar.caption(f"📦 Matches in memory (season): {len(st.session_state['db'])}")
 if _google_sheets_configurato():
@@ -1005,7 +1627,7 @@ else:
     st.sidebar.caption("💻 Storage: local file")
     st.sidebar.caption(f"ℹ️ {_diagnosi_google_sheets()}")
 
-tab1, tab2, tab3 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report'])
+tab1, tab2, tab3, tab4 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis'])
 
 with tab1:
     st.header('Upload Game Data')
@@ -1080,7 +1702,9 @@ with tab1:
                         else: return '50-60'
                     df['Blocco_10m'] = df['Minuti_Gara'].apply(calcola_blocco_stringa)
                 
-                    pe.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df})
+                    sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
+                    pe.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df,
+                               'squadra_home': sq_home, 'squadra_away': sq_away})
                 except Exception as e:
                     st.error(f'Error processing file {f.name}: {e}')
                 
@@ -1174,14 +1798,25 @@ with tab1:
 
         st.markdown("---")
         st.subheader("⚠️ Reset Season")
-        st.caption(f"Matches currently saved in memory/season: **{len(st.session_state['db'])}**")
-        conferma_reset = st.checkbox("I confirm I want to delete ALL season data (this action is irreversible)")
-        if st.button("🔄 Reset Season", disabled=not conferma_reset):
+        st.caption("This resets the ENTIRE app season: goalkeepers AND shooters (Shooting Trend "
+                   "Analysis), including player notes. Use this only at the start of a new season.")
+        st.caption(f"Goalkeeper matches currently saved: **{len(st.session_state['db'])}**  |  "
+                   f"Shooter matches currently saved: **{len(st.session_state.get('db_tiratori', []))}**")
+        conferma_reset = st.checkbox("I confirm I want to delete ALL season data — goalkeepers and shooters — (this action is irreversible)")
+        if st.button("🔄 Reset Season (goalkeepers + shooters)", disabled=not conferma_reset):
             st.session_state['db'] = []
             salva_stagione_su_disco(st.session_state['db'])
             if os.path.exists(SEASON_FILE):
                 os.remove(SEASON_FILE)
-            st.success("Season reset. All data has been deleted.")
+            st.session_state['db_tiratori'] = []
+            salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+            if os.path.exists(SHOOTER_SEASON_FILE):
+                os.remove(SHOOTER_SEASON_FILE)
+            st.session_state['note_tiratori'] = {}
+            salva_note_su_disco(st.session_state['note_tiratori'])
+            if os.path.exists(SHOOTER_NOTES_FILE):
+                os.remove(SHOOTER_NOTES_FILE)
+            st.success("Season reset. All data (goalkeepers and shooters) has been deleted.")
             st.rerun()
 
 with tab2:
@@ -1534,6 +2169,28 @@ with tab3:
                 df_stagione_totale, dati_per_portiere = raccogli_stagione_per_squadra(st.session_state['db'], squadra_scelta)
                 titolo_report = f"Season — {squadra_scelta}"
 
+        # ------------------------------------------------------------
+        # SELETTORE GRUPPO PARTITE: tutta la stagione (default), una singola
+        # partita, oppure un gruppo a scelta (es. solo le partite in casa).
+        # ------------------------------------------------------------
+        if titolo_report and not df_stagione_totale.empty:
+            etichette_disponibili = sorted(
+                set(p['label'] for lista in dati_per_portiere.values() for p in lista),
+                key=lambda lbl: next(p['data'] for lista in dati_per_portiere.values() for p in lista if p['label'] == lbl)
+            )
+            selezione_match = st.multiselect(
+                "Filter matches (leave empty to use the whole season):",
+                etichette_disponibili, default=[]
+            )
+            if selezione_match:
+                df_stagione_totale = df_stagione_totale[df_stagione_totale['Match_Label'].isin(selezione_match)]
+                dati_per_portiere = {
+                    gk: [p for p in lista if p['label'] in selezione_match]
+                    for gk, lista in dati_per_portiere.items()
+                }
+                dati_per_portiere = {gk: lista for gk, lista in dati_per_portiere.items() if lista}
+                titolo_report = titolo_report + f" ({len(selezione_match)} selected match(es))"
+
         if titolo_report and df_stagione_totale.empty:
             st.info("No data available for the current selection: the selected goalkeeper/team has not yet faced any shots in the uploaded matches.")
         elif titolo_report:
@@ -1620,6 +2277,9 @@ with tab3:
 
                     st.markdown(f"**Money Time Performance:** {info['money_time_riassunto']}")
 
+                    split_casa = calcola_split_casa_trasferta(dati_per_portiere.get(gk, []), 'saves', 'tiri')
+                    st.markdown(f"**Home/Away Save %:** {formatta_riga_casa_trasferta(split_casa)}")
+
             st.markdown("---")
             st.subheader("⏱️ Performance by 10-Minute Blocks (season cumulative)")
             df_blocchi_stagione, fig_blocchi_stagione = costruisci_grafico_blocchi(df_stagione_totale)
@@ -1652,3 +2312,303 @@ with tab3:
                         st.success("PDF generated! Click the button above to download it.")
                     except Exception as e:
                         st.error(f"Error generating PDF: {e}")
+
+
+with tab4:
+    st.header("🎯 Shooting Trend Analysis")
+    st.caption("Reserved staff section — shooter shot maps, expected goals, money time and home/away trends.")
+
+    if 'staff_authorized' not in st.session_state:
+        st.session_state['staff_authorized'] = False
+
+    if not st.session_state['staff_authorized']:
+        st.info("🔒 This section is reserved for authorized staff.")
+        codice_staff = st.text_input("Access code", type="password", key="codice_staff")
+        if st.button("Unlock", key="unlock_staff"):
+            if codice_staff == STAFF_ACCESS_CODE:
+                st.session_state['staff_authorized'] = True
+                st.rerun()
+            else:
+                st.error("Incorrect code.")
+    else:
+        # ============================================================
+        # UPLOAD FILE TIRATORI
+        # ============================================================
+        st.subheader("📥 Upload Shooter Match Files")
+        st.caption("Excel files with columns TIRATORE, TIRO, GOAL SECTOR, RESULT, TIMELINE — one file per team.")
+        fc_tir = st.file_uploader('Drag and drop shooter Excel files here', type=['xlsx', 'xls'],
+                                   accept_multiple_files=True, key="upload_tiratori")
+
+        if fc_tir:
+            pe_tir = []
+            for idx, f in enumerate(fc_tir):
+                st.markdown(f"**File Configuration: {f.name}**")
+                col1, col2, col3 = st.columns(3)
+                with col1: nm = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'tn_{idx}')
+                with col2: dt = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"td_{idx}")
+                with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f'ts_{idx}')
+                try:
+                    df_raw = pd.read_excel(f)
+                    df_elaborato = elabora_file_tiratori(df_raw)
+                    sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
+                    pe_tir.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df_elaborato,
+                                    'squadra_home': sq_home, 'squadra_away': sq_away})
+                except Exception as e:
+                    st.error(f'Error processing file {f.name}: {e}')
+
+            if st.button('➕ Save & Process Matches (add to shooter season)'):
+                chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
+                aggiunte, duplicati = 0, 0
+                for match in pe_tir:
+                    chiave = (match['nome'], str(match['data']), match['squadra'])
+                    if chiave in chiavi_esistenti:
+                        duplicati += 1
+                        continue
+                    st.session_state['db_tiratori'].append(match)
+                    chiavi_esistenti.add(chiave)
+                    aggiunte += 1
+                salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+                if aggiunte:
+                    st.success(f'{aggiunte} match(es) added. Total shooter matches in memory: {len(st.session_state["db_tiratori"])}.')
+                if duplicati:
+                    st.warning(f'{duplicati} match(es) skipped because already present.')
+
+        st.markdown("---")
+        st.subheader("🗑️ Delete a Single Shooter Match")
+        if st.session_state['db_tiratori']:
+            opzioni_elimina_tir = [f"{p['nome']} ({p['data']}) - {p['squadra']}" for p in st.session_state['db_tiratori']]
+            partita_elimina_tir = st.selectbox("Select the match to delete:", opzioni_elimina_tir, key="elimina_tir_select")
+            idx_elimina_tir = opzioni_elimina_tir.index(partita_elimina_tir)
+            conferma_elimina_tir = st.checkbox("I confirm I want to delete this shooter match only (irreversible)", key="conferma_elimina_tir")
+            if st.button("🗑️ Delete This Shooter Match", disabled=not conferma_elimina_tir):
+                st.session_state['db_tiratori'].pop(idx_elimina_tir)
+                salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+                st.success(f"Match '{partita_elimina_tir}' deleted.")
+                st.rerun()
+        else:
+            st.caption("No shooter matches to delete yet.")
+        st.caption("To wipe the whole season (goalkeepers + shooters), use 'Reset Season' in the Upload Match Sheets tab.")
+
+        # ============================================================
+        # DASHBOARD
+        # ============================================================
+        st.markdown("---")
+        st.header("📊 Shooting Trend Dashboard")
+
+        if not st.session_state['db_tiratori']:
+            st.warning("No shooter matches uploaded yet.")
+        else:
+            db_tir = st.session_state['db_tiratori']
+            squadre_tir = sorted(set(m['squadra'] for m in db_tir))
+            giocatori_tir = sorted(set(
+                g for m in db_tir for g in m['dati']['TIRATORE_CLEAN'].dropna().unique()
+            ))
+
+            modalita_tir = st.radio("View by:", ["Team", "Player"], horizontal=True, key="modalita_tir")
+
+            if modalita_tir == "Team":
+                squadra_scelta_tir = st.selectbox("Select team:", squadre_tir, key="squadra_scelta_tir")
+                match_squadra = [m for m in db_tir if m['squadra'] == squadra_scelta_tir]
+                giocatori_da_mostrare = sorted(set(
+                    g for m in match_squadra for g in m['dati']['TIRATORE_CLEAN'].dropna().unique()
+                ))
+                match_rilevanti = match_squadra
+                titolo_dashboard = squadra_scelta_tir
+            else:
+                giocatore_scelto_tir = st.selectbox("Select player:", giocatori_tir, key="giocatore_scelto_tir")
+                giocatori_da_mostrare = [giocatore_scelto_tir]
+                match_rilevanti = [m for m in db_tir if giocatore_scelto_tir in m['dati']['TIRATORE_CLEAN'].values]
+                titolo_dashboard = giocatore_scelto_tir
+
+            # ---- Match group selector ----
+            match_rilevanti_ord = sorted(match_rilevanti, key=lambda m: m['data'])
+            etichette_match = [f"{m['nome']} ({m['data']})" for m in match_rilevanti_ord]
+            selezione_match_tir = st.multiselect(
+                "Filter matches (leave empty to use the whole season):",
+                etichette_match, default=[], key="selezione_match_tir"
+            )
+            match_filtrati = (
+                [m for m, lbl in zip(match_rilevanti_ord, etichette_match) if lbl in selezione_match_tir]
+                if selezione_match_tir else match_rilevanti_ord
+            )
+
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                solo_money_time = st.checkbox("Money Time only (from 50', score margin ±5)", key="mt_toggle_tir")
+            with col_b:
+                macro_scelto = st.selectbox(
+                    "Focus on a macro-zone (optional):",
+                    ["(All zones)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
+                    key="macro_scelto_tir"
+                )
+            with col_c:
+                tasto_scelto_label = st.selectbox(
+                    "Focus goal map on a field sector (optional):",
+                    ["(All sectors)"] + TUTTI_I_TASTI_TIRATORI, key="tasto_scelto_tir"
+                )
+            macro_key = None
+            if macro_scelto != "(All zones)":
+                macro_key = next(k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v == macro_scelto)
+            tasto_scelto = None if tasto_scelto_label == "(All sectors)" else tasto_scelto_label
+
+            if not match_filtrati:
+                st.info("No matches match the current selection.")
+            else:
+                # ---- Top 6 shooters (team view only) ----
+                if modalita_tir == "Team":
+                    df_squadra_tot = pd.concat([m['dati'] for m in match_filtrati], ignore_index=True)
+                    st.markdown("---")
+                    st.subheader(f"🔝 Top 6 Shooters — {titolo_dashboard}")
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
+                        st.markdown("**By total shot volume**")
+                        st.dataframe(top_n_tiratori(df_squadra_tot, 6), use_container_width=True, hide_index=True)
+                    with cc2:
+                        st.markdown("**By Money Time shot volume**")
+                        st.dataframe(top_n_tiratori(df_squadra_tot, 6, solo_money_time=True), use_container_width=True, hide_index=True)
+
+                st.markdown("---")
+                dati_pdf_giocatori = {}
+                for nome_giocatore in giocatori_da_mostrare:
+                    frammenti_g = []
+                    lista_partite_g = []
+                    for m in match_filtrati:
+                        df_g_match = m['dati'][m['dati']['TIRATORE_CLEAN'] == nome_giocatore]
+                        if df_g_match.empty:
+                            continue
+                        frammenti_g.append(df_g_match)
+                        g_, tot_, pct_ = calcola_metriche_tiratori_gruppo(df_g_match)
+                        df_g_mt = df_g_match[df_g_match['Is_Money_Time'] == True]
+                        g_mt, tot_mt, pct_mt = calcola_metriche_tiratori_gruppo(df_g_mt)
+                        lista_partite_g.append({
+                            'label': f"{m['nome']} ({m['data']})", 'goals': g_, 'shots': tot_,
+                            'money_time_goals': g_mt, 'money_time_shots': tot_mt,
+                            'casa_trasferta': determina_casa_trasferta(m['squadra'], m.get('squadra_home'), m.get('squadra_away')),
+                        })
+                    if not frammenti_g:
+                        continue
+                    df_giocatore = pd.concat(frammenti_g, ignore_index=True)
+                    if solo_money_time:
+                        df_giocatore = df_giocatore[df_giocatore['Is_Money_Time'] == True]
+                    if macro_key:
+                        df_giocatore_vista = df_giocatore[df_giocatore['macro_settore_tir'] == macro_key]
+                    else:
+                        df_giocatore_vista = df_giocatore
+
+                    with st.expander(f"🤾 {nome_giocatore}", expanded=(modalita_tir == "Player")):
+                        goal_tot, shots_tot, pct_tot = calcola_metriche_tiratori_gruppo(df_giocatore_vista)
+                        cA, cB, cC = st.columns(3)
+                        cA.metric("Shots", shots_tot)
+                        cB.metric("Goals", goal_tot)
+                        cC.metric("Goal %", f"{pct_tot:.1f}%")
+
+                        # ---- Porta ----
+                        if tasto_scelto:
+                            df_per_porta = df_giocatore[df_giocatore['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
+                            if macro_key:
+                                df_per_porta = df_per_porta[df_per_porta['macro_settore_tir'] == macro_key]
+                            g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_per_porta)
+                            expected_sel = ottieni_expected_goal_pct(tasto_scelto)
+                            colore_cornice = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
+                            tot_porta, goal_porta = costruisci_conteggi_porta(df_per_porta)
+                            fig_p = disegna_porta(tot_porta, goal_porta, colore_cornice=colore_cornice,
+                                                   titolo=f"Shots from {tasto_scelto}")
+                            expected_testo = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
+                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  "
+                                       f"Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})" if t_sel > 0 else
+                                       f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  No shots from this sector.")
+                        else:
+                            tot_porta, goal_porta = costruisci_conteggi_porta(df_giocatore_vista)
+                            fig_p = disegna_porta(tot_porta, goal_porta)
+
+                        tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore)
+                        fig_t = disegna_tastiera(tot_tast, goal_tast, tasto_selezionato=tasto_scelto)
+
+                        col_porta, col_tast = st.columns(2)
+                        with col_porta:
+                            st.pyplot(fig_p)
+                        with col_tast:
+                            st.pyplot(fig_t)
+
+                        # ---- Macro breakdown ----
+                        if macro_key:
+                            st.markdown(f"**Breakdown of macro-zone {ETICHETTA_MACRO_TIRATORI[macro_key]}**")
+                            df_macro_view = df_giocatore[df_giocatore['macro_settore_tir'] == macro_key]
+                            g_m, t_m, pct_m = calcola_metriche_tiratori_gruppo(df_macro_view)
+                            st.caption(f"Macro-zone total: {g_m}/{t_m} = {pct_m:.1f}%")
+                            st.dataframe(tabella_micro_di_un_macro(df_giocatore, macro_key), use_container_width=True, hide_index=True)
+                        else:
+                            st.markdown("**By macro-zone**")
+                            st.dataframe(tabella_macro_tiratori(df_giocatore), use_container_width=True, hide_index=True)
+
+                        # ---- Home/Away & Money Time summary ----
+                        split_casa_tir = calcola_split_casa_trasferta(lista_partite_g, 'goals', 'shots')
+                        st.markdown(f"**Home/Away Goal %:** {formatta_riga_casa_trasferta(split_casa_tir)}")
+
+                        tot_mt_g = sum(p['money_time_goals'] for p in lista_partite_g)
+                        tot_mt_s = sum(p['money_time_shots'] for p in lista_partite_g)
+                        if tot_mt_s > 0:
+                            st.markdown(f"**Money Time Performance:** {tot_mt_g}/{tot_mt_s} = {tot_mt_g/tot_mt_s*100:.1f}%")
+                        else:
+                            st.markdown("**Money Time Performance:** No shots in Money Time.")
+
+                        # ---- Coach notes ----
+                        st.markdown("**Coach notes** (use `**bold**`, `__underline__`, `==highlight==` — max 1000 characters)")
+                        nota_attuale = st.session_state['note_tiratori'].get(nome_giocatore, '')
+                        nota_nuova = st.text_area("Notes", value=nota_attuale, max_chars=1000,
+                                                   key=f"nota_{nome_giocatore}", label_visibility="collapsed")
+                        if nota_nuova != nota_attuale:
+                            st.session_state['note_tiratori'][nome_giocatore] = nota_nuova
+                            salva_note_su_disco(st.session_state['note_tiratori'])
+                        if nota_nuova.strip():
+                            st.markdown(note_markup_a_html_streamlit(nota_nuova), unsafe_allow_html=True)
+
+                        # ---- Single-player PDF ----
+                        if st.button(f"📄 Generate PDF — {nome_giocatore}", key=f"pdf_{nome_giocatore}"):
+                            with st.spinner("Generating PDF..."):
+                                try:
+                                    pdf_bytes_g = genera_pdf_tiratori(
+                                        f"{titolo_dashboard} — {nome_giocatore}",
+                                        {nome_giocatore: df_giocatore_vista},
+                                        {nome_giocatore: nota_nuova}
+                                    )
+                                    st.download_button(
+                                        label="⬇️ Download PDF", data=pdf_bytes_g,
+                                        file_name=f"Shooting_Report_{nome_giocatore}".replace(' ', '_') + ".pdf",
+                                        mime="application/pdf", key=f"dl_{nome_giocatore}"
+                                    )
+                                except Exception as e:
+                                    st.error(f"Error generating PDF: {e}")
+
+                        dati_pdf_giocatori[nome_giocatore] = df_giocatore_vista
+
+                # ---- Team / full-selection PDF ----
+                st.markdown("---")
+                st.subheader("📄 Export to PDF")
+                col_pdf1, col_pdf2 = st.columns(2)
+                with col_pdf1:
+                    if st.button("📄 Generate PDF for this selection"):
+                        with st.spinner("Generating PDF..."):
+                            try:
+                                note_selezione = {g: st.session_state['note_tiratori'].get(g, '') for g in dati_pdf_giocatori}
+                                pdf_bytes_sel = genera_pdf_tiratori(titolo_dashboard, dati_pdf_giocatori, note_selezione)
+                                st.download_button(
+                                    label="⬇️ Download PDF", data=pdf_bytes_sel,
+                                    file_name=f"Shooting_Report_{titolo_dashboard}".replace(' ', '_') + ".pdf",
+                                    mime="application/pdf", key="dl_selection"
+                                )
+                            except Exception as e:
+                                st.error(f"Error generating PDF: {e}")
+                with col_pdf2:
+                    if st.button("📄 Generate Trend Summary PDF (notes only)"):
+                        with st.spinner("Generating PDF..."):
+                            try:
+                                note_selezione = {g: st.session_state['note_tiratori'].get(g, '') for g in dati_pdf_giocatori}
+                                pdf_bytes_summary = genera_pdf_trend_summary(titolo_dashboard, note_selezione)
+                                st.download_button(
+                                    label="⬇️ Download Trend Summary", data=pdf_bytes_summary,
+                                    file_name=f"Trend_Summary_{titolo_dashboard}".replace(' ', '_') + ".pdf",
+                                    mime="application/pdf", key="dl_summary"
+                                )
+                            except Exception as e:
+                                st.error(f"Error generating PDF: {e}")
