@@ -7,6 +7,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import re
 import inspect
+import json
 import os
 import pickle
 import io
@@ -264,6 +265,39 @@ TUTTI_I_TASTI_TIRATORI = [t for riga in ORDINE_TASTIERA_TIRATORI for t in riga]
 # ============================================================
 _CONTAINER_KEY_SUPPORTATO = 'key' in inspect.signature(st.container).parameters
 
+# ============================================================
+# IDENTITÀ GIOCATORE: ignora il numero di maglia (che può cambiare nel tempo, tra club e
+# nazionale, ecc.) e il marcatore "[G]". "#15 - Muqolli A." e "#7 - Muqolli A." sono la stessa
+# identità ("Muqolli A."); "Panitti [G]" diventa "Panitti". Questa identità è la chiave usata
+# ovunque nell'app per raggruppare, filtrare, e agganciare foto/note ai giocatori.
+# ============================================================
+def estrai_numero_e_nome_base(nome_completo):
+    """Da '#15 - Muqolli A.' o 'Panitti [G]' o 'Angiolini' estrae (numero_maglia_o_None,
+    nome_base_senza_numero_e_senza_[G])."""
+    testo = str(nome_completo).strip()
+    testo_senza_gk = re.sub(r'\s*\[g\]\s*', '', testo, flags=re.IGNORECASE).strip()
+    m = re.match(r'^#?\s*(\d+)\s*-\s*(.+)$', testo_senza_gk)
+    if m:
+        return m.group(1), m.group(2).strip()
+    return None, testo_senza_gk
+
+def identita_giocatore(nome_completo):
+    """Chiave d'identità stabile per il giocatore, ignorando numero di maglia e '[G]'."""
+    _, nome_base = estrai_numero_e_nome_base(nome_completo)
+    return nome_base
+
+def numeri_maglia_visti(nomi_grezzi):
+    """Dato un elenco di nomi grezzi (con numero) di uno stesso giocatore in un certo
+    sottoinsieme di partite, restituisce una stringa con il/i numero/i di maglia usati:
+    un solo numero se sempre lo stesso, più numeri separati da '/' se sono cambiati,
+    stringa vuota se il giocatore non ha mai avuto un numero."""
+    numeri = []
+    for nome in nomi_grezzi:
+        numero, _ = estrai_numero_e_nome_base(nome)
+        if numero and numero not in numeri:
+            numeri.append(numero)
+    return '/'.join(f"#{n}" for n in numeri) if numeri else ''
+
 def _chiave_css_sicura(testo):
     """Rende una stringa sicura da usare sia come key di Streamlit sia come classe CSS
     (niente virgole, spazi o altri caratteri che romperebbero il selettore)."""
@@ -355,10 +389,12 @@ def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato,
     return cliccato
 
 # ============================================================
-# EXPECTED SAVES % (efficacia attesa per settore specifico)
-# Valori di riferimento basati sul database storico di migliaia di tiri.
+# EXPECTED SAVES % (efficacia attesa per settore specifico) — "S.P. Value"
+# Valore di riferimento di base: il lavoro storico di video-analisi di Sergio Palazzi.
+# Questo valore resta SEMPRE disponibile in memoria, qualunque sia il profilo attivo
+# selezionato altrove nell'app (vedi 'profili_expected_stato' in session_state).
 # ============================================================
-EXPECTED_SAVE_PCT = {
+SP_VALUE_DEFAULT = {
     'lw1': 46, 'lw2': 39,
     'rw1': 48, 'rw2': 36,
     '6m1': 30, '6m1,5': 30, '6m2': 29, '6m2,5': 24, '6m3': 24,
@@ -376,9 +412,18 @@ def _normalizza_zona(zona):
     return z
 
 def ottieni_expected_pct(zona):
-    """Restituisce il valore di Expected Saves % per un settore specifico, o None se non mappato
-    (es. settori scritti in modo non riconosciuto: in quel caso la riga non viene colorata)."""
-    return EXPECTED_SAVE_PCT.get(_normalizza_zona(zona))
+    """Restituisce il valore di Expected Saves % per un settore specifico, secondo il profilo
+    attualmente attivo (S.P. Value di default, oppure un profilo calcolato dai dati). Se il
+    profilo attivo non copre quel settore, ripiega su S.P. Value. Restituisce None se anche
+    S.P. Value non lo copre."""
+    z = _normalizza_zona(zona)
+    stato = st.session_state.get('profili_expected_stato')
+    if not stato:
+        return SP_VALUE_DEFAULT.get(z)
+    profilo_attivo = stato['profili'].get(stato['attivo'], {})
+    if z in profilo_attivo:
+        return profilo_attivo[z]
+    return stato['profili'].get('S.P. Value', SP_VALUE_DEFAULT).get(z)
 
 def ottieni_expected_goal_pct(zona):
     """Expected Goal % per i TIRATORI: è semplicemente il ribaltamento dell'Expected Save %
@@ -386,6 +431,24 @@ def ottieni_expected_goal_pct(zona):
     Goal % tiratore = 75%. Restituisce None se il settore non è mappato."""
     save_pct = ottieni_expected_pct(zona)
     return (100 - save_pct) if save_pct is not None else None
+
+def calcola_profilo_expected_da_dati(elenco_partite_gk):
+    """Calcola un profilo di Expected Save % settore per settore a partire dai dati REALI di un
+    insieme di partite portieri: per ciascun settore, Expected Save % = salvataggi reali /
+    (salvataggi + gol) in quel settore, su tutte le partite fornite. I settori senza tiri
+    registrati vengono omessi (chi legge il profilo ripiega su S.P. Value per quelli)."""
+    if not elenco_partite_gk:
+        return {}
+    frammenti = [m['dati'] for m in elenco_partite_gk]
+    df_tot = pd.concat(frammenti, ignore_index=True)
+    profilo = {}
+    for zona in SP_VALUE_DEFAULT.keys():
+        df_z = df_tot[df_tot['TIRO_CLEAN'].apply(_normalizza_zona) == zona]
+        s = len(df_z[df_z['RESULT_CLEAN'].isin(['save', 's'])])
+        g = len(df_z[df_z['RESULT_CLEAN'].isin(['goal', 'g'])])
+        if s + g > 0:
+            profilo[zona] = round(s / (s + g) * 100, 1)
+    return profilo
 
 def applica_colori_expected(df_settore):
     """Restituisce una versione 'stilizzata' della tabella per settore specifico, con lo sfondo
@@ -477,16 +540,17 @@ def calcola_metriche_gruppo(df_gruppo):
 # ============================================================
 # RACCOLTA DATI STAGIONALI (per portiere e per squadra)
 # ============================================================
-def raccogli_stagione_per_portiere(elenco_partite, nome_portiere):
-    """Scorre l'elenco di partite (in ordine cronologico) e raccoglie, per il portiere indicato,
-    solo le partite in cui ha effettivamente affrontato almeno un tiro. Le partite in cui non è
-    sceso in campo vengono escluse (non contano come 0)."""
+def raccogli_stagione_per_portiere(elenco_partite, identita_portiere):
+    """Scorre l'elenco di partite (in ordine cronologico) e raccoglie, per il portiere indicato
+    (per identità, ignorando eventuali numeri di maglia diversi), solo le partite in cui ha
+    effettivamente affrontato almeno un tiro. Le partite in cui non è sceso in campo vengono
+    escluse (non contano come 0)."""
     partite_ordinate = sorted(elenco_partite, key=lambda p: p['data'])
     frammenti = []
     lista_partite = []
     for match in partite_ordinate:
         df_m = match['dati']
-        df_gk = df_m[df_m['PORTIERE_CLEAN'] == nome_portiere].copy()
+        df_gk = df_m[df_m['PORTIERE_ID'] == identita_portiere].copy()
         if df_gk.empty:
             continue
         df_gk['Match_Label'] = f"{match['nome']} ({match['data']})"
@@ -508,25 +572,38 @@ def raccogli_stagione_per_portiere(elenco_partite, nome_portiere):
             'money_time_saves': s_mt,
             'money_time_pct': pct_mt,
             'casa_trasferta': determina_casa_trasferta(match['squadra'], match.get('squadra_home'), match.get('squadra_away')),
+            'numero_maglia': numeri_maglia_visti(df_gk['PORTIERE_CLEAN'].unique()),
         })
     df_aggregato = pd.concat(frammenti, ignore_index=True) if frammenti else pd.DataFrame()
     return df_aggregato, lista_partite
 
 def raccogli_stagione_per_squadra(elenco_partite, nome_squadra):
-    """Filtra le partite della squadra indicata e raccoglie, per ciascun portiere che vi ha giocato,
-    il proprio storico stagionale (stessa logica di raccogli_stagione_per_portiere)."""
+    """Filtra le partite della squadra indicata e raccoglie, per ciascuna identità di portiere
+    che vi ha giocato, il proprio storico stagionale (stessa logica di raccogli_stagione_per_portiere)."""
     partite_squadra = sorted([p for p in elenco_partite if p['squadra'] == nome_squadra], key=lambda p: p['data'])
     frammenti = [m['dati'] for m in partite_squadra]
     df_aggregato = pd.concat(frammenti, ignore_index=True) if frammenti else pd.DataFrame()
 
     portieri_unici = sorted(set(
-        gk for m in partite_squadra for gk in m['dati']['PORTIERE_CLEAN'].dropna().unique()
+        gk for m in partite_squadra for gk in m['dati']['PORTIERE_ID'].dropna().unique()
     ))
     dati_per_portiere = {}
     for gk in portieri_unici:
         _, lista_partite_gk = raccogli_stagione_per_portiere(partite_squadra, gk)
         dati_per_portiere[gk] = lista_partite_gk
     return df_aggregato, dati_per_portiere
+
+def combina_numeri_maglia(lista_partite):
+    """Combina i numeri di maglia visti su più partite (ciascuna con il proprio campo
+    'numero_maglia' già calcolato) in un'unica stringa, senza duplicati."""
+    numeri = []
+    for p in (lista_partite or []):
+        nm = p.get('numero_maglia', '')
+        if nm:
+            for singolo in nm.split('/'):
+                if singolo not in numeri:
+                    numeri.append(singolo)
+    return '/'.join(numeri)
 
 def calcola_media_money_time_per_partita(lista_partite):
     """Media dei GPI TOTALI di Money Time calcolati partita per partita (non media per singolo tiro).
@@ -957,6 +1034,7 @@ def elabora_file_portieri(df_raw):
 
     df = df_raw.copy()
     df['PORTIERE_CLEAN'] = df[c_gk].astype(str).str.strip()
+    df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
     df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
     df['RESULT_CLEAN'] = df[c_res].astype(str).str.lower().str.strip()
 
@@ -1022,6 +1100,7 @@ def elabora_file_tiratori(df_raw):
 
     df = df_raw.copy()
     df['TIRATORE_CLEAN'] = df[c_tiratore].astype(str).str.strip()
+    df['TIRATORE_ID'] = df['TIRATORE_CLEAN'].apply(identita_giocatore)
     df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
     df['GOAL_SECTOR_CLEAN'] = df[c_goalsector].astype(str).str.strip()
     df['RESULT_CLEAN'] = df[c_result].astype(str).str.lower().str.strip()
@@ -1150,6 +1229,8 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h = pd.DataFrame(righe_h2h)
         df_h2h['PORTIERE_CLEAN'] = df_h2h['PORTIERE'].astype(str).str.strip()
         df_h2h['TIRATORE_CLEAN'] = df_h2h['TIRATORE'].astype(str).str.strip()
+        df_h2h['PORTIERE_ID'] = df_h2h['PORTIERE_CLEAN'].apply(identita_giocatore)
+        df_h2h['TIRATORE_ID'] = df_h2h['TIRATORE_CLEAN'].apply(identita_giocatore)
         df_h2h['TIRO_CLEAN'] = df_h2h['TIRO'].astype(str).str.strip()
         df_h2h['RESULT_CLEAN'] = df_h2h['RESULT'].astype(str).str.lower().str.strip()
         minuti_list, scarti_list = [], []
@@ -1160,10 +1241,10 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h['Minuti_Gara'] = minuti_list
         df_h2h['Scarto_Punteggio'] = scarti_list
         df_h2h['Is_Money_Time'] = df_h2h.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
-        df_h2h = df_h2h[['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'Squadra_Portiere', 'Squadra_Tiratore',
+        df_h2h = df_h2h[['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
                           'TIRO_CLEAN', 'RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']]
     else:
-        df_h2h = pd.DataFrame(columns=['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'Squadra_Portiere', 'Squadra_Tiratore',
+        df_h2h = pd.DataFrame(columns=['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
                                         'TIRO_CLEAN', 'RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time'])
 
     return df_gk_home, df_gk_away, df_tir_home, df_tir_away, df_h2h
@@ -1202,7 +1283,7 @@ def classifica_tiratori_per_volume(df, solo_money_time=False, n=None):
     if d.empty:
         return pd.DataFrame({'Player': [], 'Shots': [], 'Goals': [], 'Goal %': []})
     righe = []
-    for giocatore, df_g in d.groupby('TIRATORE_CLEAN'):
+    for giocatore, df_g in d.groupby('TIRATORE_ID'):
         goal, tot, pct = calcola_metriche_tiratori_gruppo(df_g)
         righe.append({'Player': giocatore, 'Shots': tot, 'Goals': goal, 'Goal %': round(pct, 1)})
     df_classifica = pd.DataFrame(righe).sort_values('Shots', ascending=False).reset_index(drop=True)
@@ -1235,15 +1316,16 @@ def tabella_micro_di_un_macro(df, macro):
 # meno (ordinati dal portiere più "sofferto" al meno).
 # ============================================================
 def classifica_h2h(df_h2h, giocatore, e_portiere):
-    """df_h2h: dataframe con colonne PORTIERE_CLEAN/TIRATORE_CLEAN/RESULT_CLEAN/Squadra_*.
-    Restituisce una tabella con un avversario per riga, ordinata dal più al meno sofferto,
-    con Goals/Shots/Goal % di quel confronto diretto e la squadra dell'avversario."""
+    """df_h2h: dataframe con colonne PORTIERE_ID/TIRATORE_ID/RESULT_CLEAN/Squadra_*.
+    giocatore è un'identità (nome senza numero di maglia). Restituisce una tabella con un
+    avversario per riga, ordinata dal più al meno sofferto, con Goals/Shots/Goal % di quel
+    confronto diretto e la squadra dell'avversario."""
     if e_portiere:
-        df_g = df_h2h[df_h2h['PORTIERE_CLEAN'] == giocatore]
-        colonna_avversario, colonna_squadra_avv = 'TIRATORE_CLEAN', 'Squadra_Tiratore'
+        df_g = df_h2h[df_h2h['PORTIERE_ID'] == giocatore]
+        colonna_avversario, colonna_squadra_avv = 'TIRATORE_ID', 'Squadra_Tiratore'
     else:
-        df_g = df_h2h[df_h2h['TIRATORE_CLEAN'] == giocatore]
-        colonna_avversario, colonna_squadra_avv = 'PORTIERE_CLEAN', 'Squadra_Portiere'
+        df_g = df_h2h[df_h2h['TIRATORE_ID'] == giocatore]
+        colonna_avversario, colonna_squadra_avv = 'PORTIERE_ID', 'Squadra_Portiere'
 
     if df_g.empty:
         return pd.DataFrame({'Opponent': [], 'Team': [], 'Goals': [], 'Shots': [], 'Goal %': []})
@@ -1576,7 +1658,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
 
     # Detailed statistics per goalkeeper (season cumulative)
     for gk, lista in dati_portieri.items():
-        df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_CLEAN'] == gk]
+        df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_ID'] == gk]
         if df_gk_tot.empty:
             continue
         info = calcola_dettaglio_portiere(df_gk_tot, lista_partite=lista)
@@ -1833,13 +1915,21 @@ def carica_note_da_disco():
         try:
             worksheet = _ottieni_worksheet_note()
             valori = worksheet.get_all_values()
-            return {r[0]: r[1] for r in valori[1:] if r and r[0]}
+            grezzo = {r[0]: r[1] for r in valori[1:] if r and r[0]}
+            migrato = _migra_chiavi_a_identita(grezzo)
+            if migrato != grezzo:
+                salva_note_su_disco(migrato)
+            return migrato
         except Exception:
             return {}
     if os.path.exists(SHOOTER_NOTES_FILE):
         try:
             with open(SHOOTER_NOTES_FILE, 'rb') as f:
-                return pickle.load(f)
+                grezzo = pickle.load(f)
+            migrato = _migra_chiavi_a_identita(grezzo)
+            if migrato != grezzo:
+                salva_note_su_disco(migrato)
+            return migrato
         except Exception:
             return {}
     return {}
@@ -1895,18 +1985,35 @@ def _ottieni_worksheet_foto():
         worksheet.append_row(['giocatore', 'foto_base64'])
     return worksheet
 
+def _migra_chiavi_a_identita(diz):
+    """Rimappa le chiavi di un dizionario (foto o note) all'identità del giocatore (senza
+    numero di maglia né '[G]'), unendo eventuali doppioni derivanti da numeri diversi dello
+    stesso giocatore (in caso di collisione vince l'ultimo valore incontrato)."""
+    migrato = {}
+    for chiave, valore in diz.items():
+        migrato[identita_giocatore(chiave)] = valore
+    return migrato
+
 def carica_foto_da_disco():
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_foto()
             valori = worksheet.get_all_values()
-            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            grezzo = {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            migrato = _migra_chiavi_a_identita(grezzo)
+            if migrato != grezzo:
+                salva_foto_su_disco(migrato)
+            return migrato
         except Exception:
             return {}
     if os.path.exists(PLAYER_PHOTOS_FILE):
         try:
             with open(PLAYER_PHOTOS_FILE, 'rb') as f:
-                return pickle.load(f)
+                grezzo = pickle.load(f)
+            migrato = _migra_chiavi_a_identita(grezzo)
+            if migrato != grezzo:
+                salva_foto_su_disco(migrato)
+            return migrato
         except Exception:
             return {}
     return {}
@@ -1988,6 +2095,171 @@ def salva_h2h_su_disco(db):
     with open(H2H_FILE, 'wb') as f:
         pickle.dump(db, f)
 
+# ============================================================
+# CAMPIONATI: raggruppamenti di partite salvati con un nome, filtrabili per squadra e per
+# intervallo di date (con "Sine Die" = senza data di fine, si aggiornano da sole man mano che
+# carichi nuove partite). Disponibili sia nel Seasonal Report (portieri) sia in Shooting Trend
+# Analysis (tiratori/H2H), oltre al raggruppamento libero già esistente (multiselect partite).
+# ============================================================
+CHAMPIONSHIPS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "championships.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_campionati():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('Championships')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='Championships', rows=200, cols=4)
+        worksheet.append_row(['nome', 'squadre_json', 'data_inizio', 'data_fine'])
+    return worksheet
+
+def carica_campionati_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_campionati()
+            valori = worksheet.get_all_values()
+            campionati = []
+            for riga in valori[1:]:
+                if not riga or not riga[0]:
+                    continue
+                squadre = json.loads(riga[1]) if riga[1] else None
+                data_inizio = datetime.strptime(riga[2], '%Y-%m-%d').date()
+                data_fine = datetime.strptime(riga[3], '%Y-%m-%d').date() if len(riga) > 3 and riga[3] else None
+                campionati.append({'nome': riga[0], 'squadre': squadre, 'data_inizio': data_inizio, 'data_fine': data_fine})
+            return campionati
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load championships from Google Sheets: {e}")
+            return []
+    if os.path.exists(CHAMPIONSHIPS_FILE):
+        try:
+            with open(CHAMPIONSHIPS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_campionati_su_disco(lista_campionati):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_campionati()
+            worksheet.clear()
+            worksheet.append_row(['nome', 'squadre_json', 'data_inizio', 'data_fine'])
+            righe = [[
+                c['nome'],
+                json.dumps(c['squadre']) if c['squadre'] else '',
+                str(c['data_inizio']),
+                str(c['data_fine']) if c['data_fine'] else ''
+            ] for c in lista_campionati]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save championships to Google Sheets: {e}")
+    with open(CHAMPIONSHIPS_FILE, 'wb') as f:
+        pickle.dump(lista_campionati, f)
+
+def partite_in_campionato(elenco_partite, campionato):
+    """Filtra elenco_partite (lista di match-dict con 'squadra' e 'data') secondo i criteri del
+    campionato indicato: squadre (None = tutte), data_inizio, data_fine (None = Sine Die)."""
+    risultato = []
+    for m in elenco_partite:
+        if campionato['squadre'] and m['squadra'] not in campionato['squadre']:
+            continue
+        if m['data'] < campionato['data_inizio']:
+            continue
+        if campionato['data_fine'] and m['data'] > campionato['data_fine']:
+            continue
+        risultato.append(m)
+    return risultato
+
+def partite_h2h_in_campionato(elenco_partite_h2h, campionato):
+    """Come partite_in_campionato, ma per l'H2H: le voci non hanno un singolo campo 'squadra'
+    (coinvolgono sempre due squadre), quindi il filtro squadra passa se almeno una delle due
+    compare nelle righe della partita."""
+    risultato = []
+    for m in elenco_partite_h2h:
+        if m['data'] < campionato['data_inizio']:
+            continue
+        if campionato['data_fine'] and m['data'] > campionato['data_fine']:
+            continue
+        if campionato['squadre']:
+            squadre_partita = set(m['dati']['Squadra_Portiere'].unique()) | set(m['dati']['Squadra_Tiratore'].unique())
+            if not (squadre_partita & set(campionato['squadre'])):
+                continue
+        risultato.append(m)
+    return risultato
+
+# ============================================================
+# PROFILI EXPECTED VALUES: "S.P. Value" (baseline di Sergio Palazzi, sempre presente e
+# modificabile a mano) più eventuali profili calcolati dai dati (GPIA general data, campionati,
+# intervalli di date, o gruppi di partite ad hoc). Un solo profilo alla volta è "attivo" e
+# determina i valori usati in tutta l'app; S.P. Value non viene mai sovrascritto dal cambio
+# di profilo attivo, resta sempre disponibile.
+# ============================================================
+EXPECTED_PROFILES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "expected_profiles.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_expected():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('ExpectedProfiles')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='ExpectedProfiles', rows=10, cols=1)
+        worksheet.append_row(['dati_json'])
+    return worksheet
+
+def carica_profili_expected_da_disco():
+    default = {'profili': {'S.P. Value': dict(SP_VALUE_DEFAULT)}, 'attivo': 'S.P. Value'}
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_expected()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1 or not valori[1] or not valori[1][0]:
+                salva_profili_expected_su_disco(default)
+                return default
+            dati = json.loads(valori[1][0])
+            if 'S.P. Value' not in dati.get('profili', {}):
+                dati['profili']['S.P. Value'] = dict(SP_VALUE_DEFAULT)
+            return dati
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load Expected Values profiles from Google Sheets: {e}")
+            return default
+    if os.path.exists(EXPECTED_PROFILES_FILE):
+        try:
+            with open(EXPECTED_PROFILES_FILE, 'rb') as f:
+                dati = pickle.load(f)
+            if 'S.P. Value' not in dati.get('profili', {}):
+                dati['profili']['S.P. Value'] = dict(SP_VALUE_DEFAULT)
+            return dati
+        except Exception:
+            return default
+    return default
+
+def salva_profili_expected_su_disco(dati):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_expected()
+            worksheet.clear()
+            worksheet.append_row(['dati_json'])
+            worksheet.append_row([json.dumps(dati)])
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save Expected Values profiles to Google Sheets: {e}")
+    with open(EXPECTED_PROFILES_FILE, 'wb') as f:
+        pickle.dump(dati, f)
+
 def gestisci_foto_giocatore(nome_giocatore, key_prefix):
     """Widget riusabile: mostra la foto attuale (se presente) e un uploader per caricarne/
     sostituirne una. Ridimensiona e salva automaticamente al volo."""
@@ -2024,6 +2296,10 @@ if 'foto_giocatori' not in st.session_state:
     st.session_state['foto_giocatori'] = carica_foto_da_disco()
 if 'db_h2h' not in st.session_state:
     st.session_state['db_h2h'] = carica_h2h_da_disco()
+if 'campionati' not in st.session_state:
+    st.session_state['campionati'] = carica_campionati_da_disco()
+if 'profili_expected_stato' not in st.session_state:
+    st.session_state['profili_expected_stato'] = carica_profili_expected_da_disco()
 
 # ============================================================
 # NOTE DEL COACH: markup semplice **grassetto**, __sottolineato__, ==evidenziato==
@@ -2427,6 +2703,176 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     st.warning(f'{duplicati} match(es) skipped because already present (same name, date and team). Rename the "Game Name" if this is actually a different match.')
                 if not aggiunte and not duplicati:
                     st.info('No matches to add.')
+
+        st.markdown("---")
+        st.subheader("🏆 Championships")
+        st.caption("Save a named group of matches, filtered by team and by date range. Use "
+                   "'Sine Die' (no end date) to keep adding new matches automatically as you "
+                   "upload them, until you close it with a specific end date. Once created, a "
+                   "championship becomes selectable in Seasonal Report and Shooting Trend Analysis.")
+
+        with st.expander("➕ Create a new championship"):
+            nome_camp = st.text_input("Championship name (e.g. 'Serie A Gold 2026-27')", key="nuovo_camp_nome")
+            tutte_le_squadre_camp = sorted(set(
+                [m['squadra'] for m in st.session_state['db']] +
+                [m['squadra'] for m in st.session_state['db_tiratori']]
+            ))
+            squadre_camp = st.multiselect("Teams (leave empty to include all teams found)",
+                                           tutte_le_squadre_camp, key="nuovo_camp_squadre")
+            col_ci1, col_ci2 = st.columns(2)
+            with col_ci1:
+                data_inizio_camp = st.date_input("Start date", value=datetime.now(), key="nuovo_camp_inizio")
+            with col_ci2:
+                sine_die_camp = st.checkbox("Sine Die (no end date yet)", value=True, key="nuovo_camp_sine_die")
+                data_fine_camp = None if sine_die_camp else st.date_input("End date", value=datetime.now(), key="nuovo_camp_fine")
+            if st.button("➕ Create Championship"):
+                nome_pulito = nome_camp.strip()
+                if not nome_pulito:
+                    st.error("Give the championship a name.")
+                elif any(c['nome'] == nome_pulito for c in st.session_state['campionati']):
+                    st.error("A championship with this name already exists.")
+                else:
+                    st.session_state['campionati'].append({
+                        'nome': nome_pulito,
+                        'squadre': squadre_camp if squadre_camp else None,
+                        'data_inizio': data_inizio_camp,
+                        'data_fine': data_fine_camp,
+                    })
+                    salva_campionati_su_disco(st.session_state['campionati'])
+                    st.success(f"Championship '{nome_pulito}' created.")
+                    st.rerun()
+
+        if st.session_state['campionati']:
+            st.markdown("**Existing championships**")
+            for i, camp in enumerate(st.session_state['campionati']):
+                squadre_testo = ', '.join(camp['squadre']) if camp['squadre'] else 'All teams'
+                fine_testo = str(camp['data_fine']) if camp['data_fine'] else 'Sine Die (still open)'
+                with st.expander(f"🏆 {camp['nome']} — {squadre_testo} — {camp['data_inizio']} → {fine_testo}"):
+                    if camp['data_fine'] is None:
+                        nuova_fine_camp = st.date_input("Set an end date to close this championship",
+                                                         value=datetime.now(), key=f"fine_camp_{i}")
+                        if st.button("🔒 Close championship (set end date)", key=f"chiudi_camp_{i}"):
+                            st.session_state['campionati'][i]['data_fine'] = nuova_fine_camp
+                            salva_campionati_su_disco(st.session_state['campionati'])
+                            st.rerun()
+                    else:
+                        if st.button("🔓 Reopen (remove end date — back to Sine Die)", key=f"riapri_camp_{i}"):
+                            st.session_state['campionati'][i]['data_fine'] = None
+                            salva_campionati_su_disco(st.session_state['campionati'])
+                            st.rerun()
+                    if st.button("🗑️ Delete this championship", key=f"del_camp_{i}"):
+                        st.session_state['campionati'].pop(i)
+                        salva_campionati_su_disco(st.session_state['campionati'])
+                        st.success(f"Championship '{camp['nome']}' deleted (matches themselves are untouched).")
+                        st.rerun()
+        else:
+            st.caption("No championships created yet.")
+
+        st.markdown("---")
+        st.subheader("🎯 Expected Values (S.P. Value)")
+        st.caption("'S.P. Value' is the baseline reference — Sergio Palazzi's video-analysis "
+                   "work — and it always stays available, no matter which profile you switch to "
+                   "below. You can also compute Expected Save % / Expected Goal % straight from "
+                   "the data stored in this app: from everything ('GPIA general data'), from a "
+                   "specific championship, a date range, or an ad-hoc group of matches.")
+
+        stato_expected = st.session_state['profili_expected_stato']
+        nomi_profili_expected = list(stato_expected['profili'].keys())
+        if 'S.P. Value' in nomi_profili_expected:
+            nomi_profili_expected.remove('S.P. Value')
+        nomi_profili_expected = ['S.P. Value'] + nomi_profili_expected
+
+        indice_attivo = nomi_profili_expected.index(stato_expected['attivo']) if stato_expected['attivo'] in nomi_profili_expected else 0
+        profilo_scelto_attivo = st.selectbox(
+            "Active profile (used everywhere in the app for Expected Save % / Expected Goal % comparisons):",
+            nomi_profili_expected, index=indice_attivo, key="selettore_profilo_expected"
+        )
+        if profilo_scelto_attivo != stato_expected['attivo']:
+            st.session_state['profili_expected_stato']['attivo'] = profilo_scelto_attivo
+            salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
+            st.rerun()
+
+        with st.expander("✏️ Edit S.P. Value manually"):
+            st.caption("Change these only if Sergio Palazzi communicates updated reference values.")
+            valori_sp_attuali = stato_expected['profili']['S.P. Value']
+            nuovi_valori_sp = {}
+            colonne_sp = st.columns(3)
+            for i, zona in enumerate(SP_VALUE_DEFAULT.keys()):
+                with colonne_sp[i % 3]:
+                    nuovi_valori_sp[zona] = st.number_input(
+                        zona, min_value=0, max_value=100,
+                        value=int(round(valori_sp_attuali.get(zona, SP_VALUE_DEFAULT[zona]))),
+                        key=f"sp_val_{zona}"
+                    )
+            if st.button("💾 Save S.P. Value changes"):
+                st.session_state['profili_expected_stato']['profili']['S.P. Value'] = nuovi_valori_sp
+                salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
+                st.success("S.P. Value updated.")
+                st.rerun()
+
+        if st.button("🔄 Update to GPIA general data"):
+            nuovo_profilo_gpia = calcola_profilo_expected_da_dati(st.session_state['db'])
+            if nuovo_profilo_gpia:
+                st.session_state['profili_expected_stato']['profili']['GPIA General Data'] = nuovo_profilo_gpia
+                salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
+                st.success(f"'GPIA General Data' computed from {len(st.session_state['db'])} goalkeeper match record(s) and saved. "
+                           f"Select it above to make it the active profile.")
+                st.rerun()
+            else:
+                st.warning("No goalkeeper data available yet to compute this from.")
+
+        with st.expander("➕ Create a custom Expected Values profile"):
+            nome_profilo_custom = st.text_input("Profile name", key="nuovo_profilo_expected_nome")
+            origine_profilo = st.radio("Compute it from:", ["A championship", "A date range", "Specific matches"],
+                                        key="origine_profilo_expected", horizontal=True)
+            partite_sorgente_expected = []
+            if origine_profilo == "A championship":
+                if st.session_state['campionati']:
+                    camp_scelto_expected = st.selectbox(
+                        "Championship:", [c['nome'] for c in st.session_state['campionati']], key="camp_per_expected")
+                    camp_obj_expected = next(c for c in st.session_state['campionati'] if c['nome'] == camp_scelto_expected)
+                    partite_sorgente_expected = partite_in_campionato(st.session_state['db'], camp_obj_expected)
+                else:
+                    st.caption("No championships created yet — create one above first, or pick a different source.")
+            elif origine_profilo == "A date range":
+                col_ed1, col_ed2 = st.columns(2)
+                with col_ed1:
+                    data_i_expected = st.date_input("From:", value=datetime.now(), key="expected_data_i")
+                with col_ed2:
+                    data_f_expected = st.date_input("To:", value=datetime.now(), key="expected_data_f")
+                partite_sorgente_expected = [m for m in st.session_state['db'] if data_i_expected <= m['data'] <= data_f_expected]
+            else:
+                opzioni_match_expected = [f"{m['nome']} ({m['data']}) - {m['squadra']}" for m in st.session_state['db']]
+                scelte_match_expected = st.multiselect("Select matches:", opzioni_match_expected, key="match_per_expected")
+                partite_sorgente_expected = [m for m, lbl in zip(st.session_state['db'], opzioni_match_expected) if lbl in scelte_match_expected]
+
+            if st.button("➕ Compute and save this profile"):
+                nome_pulito_expected = nome_profilo_custom.strip()
+                if not nome_pulito_expected:
+                    st.error("Give the profile a name.")
+                elif nome_pulito_expected == 'S.P. Value':
+                    st.error("This name is reserved for the baseline profile.")
+                elif not partite_sorgente_expected:
+                    st.error("No matches match this selection.")
+                else:
+                    nuovo_profilo_custom = calcola_profilo_expected_da_dati(partite_sorgente_expected)
+                    st.session_state['profili_expected_stato']['profili'][nome_pulito_expected] = nuovo_profilo_custom
+                    salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
+                    st.success(f"Profile '{nome_pulito_expected}' computed from {len(partite_sorgente_expected)} match record(s) and saved.")
+                    st.rerun()
+
+        profili_cancellabili_expected = [n for n in nomi_profili_expected if n != 'S.P. Value']
+        if profili_cancellabili_expected:
+            with st.expander("🗑️ Delete a computed profile"):
+                profilo_da_cancellare_expected = st.selectbox(
+                    "Profile to delete:", profili_cancellabili_expected, key="profilo_da_cancellare_expected")
+                if st.button("🗑️ Delete this profile"):
+                    del st.session_state['profili_expected_stato']['profili'][profilo_da_cancellare_expected]
+                    if st.session_state['profili_expected_stato']['attivo'] == profilo_da_cancellare_expected:
+                        st.session_state['profili_expected_stato']['attivo'] = 'S.P. Value'
+                    salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
+                    st.success(f"Profile '{profilo_da_cancellare_expected}' deleted. S.P. Value is unaffected.")
+                    st.rerun()
 
         st.markdown("---")
         st.subheader("💾 Season Backup")
@@ -2905,30 +3351,40 @@ with tab3:
             horizontal=True
         )
 
+        opzioni_campionato_gk = ["All Data & All Time"] + [c['nome'] for c in st.session_state['campionati']]
+        campionato_scelto_gk = st.selectbox("🏆 Championship:", opzioni_campionato_gk, key="campionato_gk")
+        if campionato_scelto_gk != "All Data & All Time":
+            campionato_obj_gk = next(c for c in st.session_state['campionati'] if c['nome'] == campionato_scelto_gk)
+            db_gk_filtrato = partite_in_campionato(st.session_state['db'], campionato_obj_gk)
+        else:
+            db_gk_filtrato = st.session_state['db']
+
         portieri_stagione = sorted(set(
-            gk for match in st.session_state['db'] for gk in match['dati']['PORTIERE_CLEAN'].dropna().unique()
+            gk for match in db_gk_filtrato for gk in match['dati']['PORTIERE_ID'].dropna().unique()
         ))
-        squadre_stagione = sorted(set(match['squadra'] for match in st.session_state['db']))
+        squadre_stagione = sorted(set(match['squadra'] for match in db_gk_filtrato))
 
         df_stagione_totale = pd.DataFrame()
         dati_per_portiere = {}
         titolo_report = ""
 
-        if modalita == "Goalkeeper":
+        if not db_gk_filtrato:
+            st.info("No matches fall within this championship's team/date filters.")
+        elif modalita == "Goalkeeper":
             if not portieri_stagione:
                 st.info("No goalkeepers found in the uploaded data.")
             else:
                 portiere_scelto = st.selectbox("Select goalkeeper:", portieri_stagione)
-                df_stagione_totale, lista_partite = raccogli_stagione_per_portiere(st.session_state['db'], portiere_scelto)
+                df_stagione_totale, lista_partite = raccogli_stagione_per_portiere(db_gk_filtrato, portiere_scelto)
                 dati_per_portiere = {portiere_scelto: lista_partite}
-                titolo_report = f"Season — {portiere_scelto}"
+                titolo_report = f"{campionato_scelto_gk} — {portiere_scelto}"
         else:
             if not squadre_stagione:
                 st.info("No teams found in the uploaded data.")
             else:
                 squadra_scelta = st.selectbox("Select team:", squadre_stagione)
-                df_stagione_totale, dati_per_portiere = raccogli_stagione_per_squadra(st.session_state['db'], squadra_scelta)
-                titolo_report = f"Season — {squadra_scelta}"
+                df_stagione_totale, dati_per_portiere = raccogli_stagione_per_squadra(db_gk_filtrato, squadra_scelta)
+                titolo_report = f"{campionato_scelto_gk} — {squadra_scelta}"
 
         # ------------------------------------------------------------
         # SELETTORE GRUPPO PARTITE: tutta la stagione (default), una singola
@@ -2974,9 +3430,10 @@ with tab3:
             st.subheader("🥅 Total Season GPI per Goalkeeper")
             righe_gpi_stagione = []
             for gk, lista in dati_per_portiere.items():
-                df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_CLEAN'] == gk]
+                df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_ID'] == gk]
                 righe_gpi_stagione.append({
                     'Goalkeeper': gk,
+                    'Number': combina_numeri_maglia(lista),
                     'Total Season GPI': round(df_gk_tot['GPI_Tiro'].sum(), 1),
                     'Matches Played': len(lista),
                     'Shots Faced': len(df_gk_tot)
@@ -3017,12 +3474,14 @@ with tab3:
             st.subheader("🧤 Detailed Season Statistics per Goalkeeper")
             dati_pdf_portieri_stagione = {}
             for gk, lista in dati_per_portiere.items():
-                df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_CLEAN'] == gk]
+                df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_ID'] == gk]
                 if df_gk_tot.empty:
                     continue
                 info = calcola_dettaglio_portiere(df_gk_tot, lista_partite=lista)
                 dati_pdf_portieri_stagione[gk] = info
-                with st.expander(f"{gk} — Total Season GPI: {info['gpi_totale']:+.1f}", expanded=True):
+                numero_gk = combina_numeri_maglia(lista)
+                etichetta_numero = f" ({numero_gk})" if numero_gk else ""
+                with st.expander(f"{gk}{etichetta_numero} — Total Season GPI: {info['gpi_totale']:+.1f}", expanded=True):
                     gestisci_foto_giocatore(gk, key_prefix="gk")
                     cA, cB, cC, cD, cE = st.columns(5)
                     cA.metric("Total GPI", f"{info['gpi_totale']:+.1f}")
@@ -3107,11 +3566,38 @@ with tab4:
         if not st.session_state['db_tiratori']:
             st.warning("No shooter matches uploaded yet.")
         else:
-            db_tir = st.session_state['db_tiratori']
+            opzioni_campionato_tir = ["All Data & All Time"] + [c['nome'] for c in st.session_state['campionati']]
+            campionato_scelto_tir = st.selectbox("🏆 Championship:", opzioni_campionato_tir, key="campionato_tir")
+            if campionato_scelto_tir != "All Data & All Time":
+                campionato_obj_tir = next(c for c in st.session_state['campionati'] if c['nome'] == campionato_scelto_tir)
+                db_tir = partite_in_campionato(st.session_state['db_tiratori'], campionato_obj_tir)
+            else:
+                db_tir = st.session_state['db_tiratori']
+
+            if not db_tir:
+                st.warning("No matches fall within this championship's team/date filters — showing All Data & All Time instead.")
+                db_tir = st.session_state['db_tiratori']
+
             squadre_tir = sorted(set(m['squadra'] for m in db_tir))
             giocatori_tir = sorted(set(
-                g for m in db_tir for g in m['dati']['TIRATORE_CLEAN'].dropna().unique()
+                g for m in db_tir for g in m['dati']['TIRATORE_ID'].dropna().unique()
             ))
+
+            with st.expander(f"🌍 League Totals — {campionato_scelto_tir} (all teams, all shots)"):
+                df_lega_totale = pd.concat([m['dati'] for m in db_tir], ignore_index=True)
+                goal_lega, tot_lega, pct_lega = calcola_metriche_tiratori_gruppo(df_lega_totale)
+                st.caption(f"Overall: {goal_lega}/{tot_lega} = {pct_lega:.1f}%  —  "
+                           f"{len(squadre_tir)} team(s), {len(giocatori_tir)} player(s), {len(db_tir)} match record(s).")
+                st.markdown("**By macro-zone**")
+                st.dataframe(tabella_macro_tiratori(df_lega_totale), use_container_width=True, hide_index=True)
+                macro_lega_scelto = st.selectbox(
+                    "Break down a macro-zone into micro-zones (optional):",
+                    ["(none)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
+                    key="macro_lega_tir"
+                )
+                if macro_lega_scelto != "(none)":
+                    macro_lega_key = next(k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v == macro_lega_scelto)
+                    st.dataframe(tabella_micro_di_un_macro(df_lega_totale, macro_lega_key), use_container_width=True, hide_index=True)
 
             modalita_tir = st.radio("View by:", ["Team", "Player"], horizontal=True, key="modalita_tir")
 
@@ -3119,14 +3605,14 @@ with tab4:
                 squadra_scelta_tir = st.selectbox("Select team:", squadre_tir, key="squadra_scelta_tir")
                 match_squadra = [m for m in db_tir if m['squadra'] == squadra_scelta_tir]
                 giocatori_da_mostrare = sorted(set(
-                    g for m in match_squadra for g in m['dati']['TIRATORE_CLEAN'].dropna().unique()
+                    g for m in match_squadra for g in m['dati']['TIRATORE_ID'].dropna().unique()
                 ))
                 match_rilevanti = match_squadra
                 titolo_dashboard = squadra_scelta_tir
             else:
                 giocatore_scelto_tir = st.selectbox("Select player:", giocatori_tir, key="giocatore_scelto_tir")
                 giocatori_da_mostrare = [giocatore_scelto_tir]
-                match_rilevanti = [m for m in db_tir if giocatore_scelto_tir in m['dati']['TIRATORE_CLEAN'].values]
+                match_rilevanti = [m for m in db_tir if giocatore_scelto_tir in m['dati']['TIRATORE_ID'].values]
                 titolo_dashboard = giocatore_scelto_tir
 
             # ---- Match group selector ----
@@ -3160,7 +3646,7 @@ with tab4:
                 # ---- Aggregato dell'attuale selezione (squadra o giocatore singolo, filtrata) ----
                 frammenti_sel = []
                 for m in match_filtrati:
-                    d = m['dati'][m['dati']['TIRATORE_CLEAN'].isin(giocatori_da_mostrare)]
+                    d = m['dati'][m['dati']['TIRATORE_ID'].isin(giocatori_da_mostrare)]
                     if not d.empty:
                         frammenti_sel.append(d)
                 df_selezione = pd.concat(frammenti_sel, ignore_index=True) if frammenti_sel else m['dati'].iloc[0:0]
@@ -3241,7 +3727,7 @@ with tab4:
                     frammenti_g = []
                     lista_partite_g = []
                     for m in match_filtrati:
-                        df_g_match = m['dati'][m['dati']['TIRATORE_CLEAN'] == nome_giocatore]
+                        df_g_match = m['dati'][m['dati']['TIRATORE_ID'] == nome_giocatore]
                         if df_g_match.empty:
                             continue
                         frammenti_g.append(df_g_match)
@@ -3409,9 +3895,21 @@ with tab4:
         if not st.session_state['db_h2h']:
             st.info("No head-to-head data yet — upload at least one match using the unified format above.")
         else:
-            df_h2h_tot = pd.concat([m['dati'] for m in st.session_state['db_h2h']], ignore_index=True)
-            portieri_h2h = sorted(df_h2h_tot['PORTIERE_CLEAN'].unique())
-            tiratori_h2h = sorted(df_h2h_tot['TIRATORE_CLEAN'].unique())
+            opzioni_campionato_h2h = ["All Data & All Time"] + [c['nome'] for c in st.session_state['campionati']]
+            campionato_scelto_h2h = st.selectbox("🏆 Championship:", opzioni_campionato_h2h, key="campionato_h2h")
+            if campionato_scelto_h2h != "All Data & All Time":
+                campionato_obj_h2h = next(c for c in st.session_state['campionati'] if c['nome'] == campionato_scelto_h2h)
+                db_h2h_filtrato = partite_h2h_in_campionato(st.session_state['db_h2h'], campionato_obj_h2h)
+            else:
+                db_h2h_filtrato = st.session_state['db_h2h']
+
+            if not db_h2h_filtrato:
+                st.warning("No head-to-head matches fall within this championship's team/date filters — showing All Data & All Time instead.")
+                db_h2h_filtrato = st.session_state['db_h2h']
+
+            df_h2h_tot = pd.concat([m['dati'] for m in db_h2h_filtrato], ignore_index=True)
+            portieri_h2h = sorted(df_h2h_tot['PORTIERE_ID'].unique())
+            tiratori_h2h = sorted(df_h2h_tot['TIRATORE_ID'].unique())
             tutti_giocatori_h2h = sorted(set(portieri_h2h) | set(tiratori_h2h))
 
             giocatore_h2h = st.selectbox("Select player (goalkeeper or shooter):", tutti_giocatori_h2h, key="giocatore_h2h")
