@@ -679,8 +679,30 @@ def _colore_expected(reale_pct, expected_pct):
     else:
         return '#b5231a'
 
+def _colori_heatmap_porta(conteggi):
+    """Heat map a 4 toni di blu per i 9 settori della porta, in base alla frequenza dei tiri:
+    blu scuro = settori più frequentati, blu medio = un po' meno, azzurro = ancora meno,
+    colore di sfondo = nessun tiro. Stessa logica quantile di _colori_heatmap_frequenza."""
+    valori = sorted(set(v for v in conteggi.values() if v > 0), reverse=True)
+    colori = {}
+    if not valori:
+        return {k: '#e9edf3' for k in conteggi}
+    for k, v in conteggi.items():
+        if v <= 0:
+            colori[k] = '#e9edf3'
+        else:
+            rank_pct = 1 - (sorted(valori, reverse=True).index(v) / max(1, len(valori) - 1)) if len(valori) > 1 else 1
+            if rank_pct >= 0.66:
+                colori[k] = '#0b3d68'
+            elif rank_pct >= 0.33:
+                colori[k] = '#2f6fa8'
+            else:
+                colori[k] = '#7fb8e0'
+    return colori
+
 def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=None):
     """Disegna la porta con i 9 settori (T1-T9): sotto ogni settore, 'goal/totale = pct%'.
+    Ogni settore è colorato con una heat map a 4 toni di blu in base alla frequenza dei tiri.
     colore_cornice: se fornito ('#rrggbb'), colora il bordo esterno (usato quando è selezionato
     un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
     fig, ax = plt.subplots(figsize=(5.2, 4.4), dpi=150)
@@ -693,6 +715,7 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
     fig.patch.set_facecolor('white')
     ax.add_patch(plt.Rectangle((-0.12, -0.12), 3.24, 3.24, facecolor=bordo, edgecolor='none', zorder=0))
 
+    colori_heat = _colori_heatmap_porta(conteggi_totali)
     for r, riga in enumerate(ORDINE_PORTA):
         for c, sett in enumerate(riga):
             x0 = c
@@ -700,12 +723,14 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
             tot = conteggi_totali.get(sett, 0)
             goal = conteggi_goal.get(sett, 0)
             pct = (goal / tot * 100) if tot > 0 else None
-            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor='#4a6da3', edgecolor='white', linewidth=2.5, zorder=1))
+            colore_cella = colori_heat.get(sett, '#e9edf3')
+            testo_colore = '#1a1a1a' if colore_cella in ('#7fb8e0', '#e9edf3') else 'white'
+            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor=colore_cella, edgecolor='white', linewidth=2.5, zorder=1))
             ax.text(x0 + 0.5, y0 + 0.62, sett, ha='center', va='center', fontsize=11,
-                    color='white', fontweight='bold', zorder=2)
+                    color=testo_colore, fontweight='bold', zorder=2)
             testo_val = f"{goal}/{tot} = {pct:.0f}%" if tot > 0 else "0/0"
             ax.text(x0 + 0.5, y0 + 0.32, testo_val, ha='center', va='center', fontsize=10.5,
-                    color='white', zorder=2)
+                    color=testo_colore, zorder=2)
     if titolo:
         ax.set_title(titolo, fontsize=11, color='#15304f', pad=10)
     fig.tight_layout()
@@ -2432,7 +2457,7 @@ with tab4:
                 if selezione_match_tir else match_rilevanti_ord
             )
 
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b = st.columns(2)
             with col_a:
                 solo_money_time = st.checkbox("Money Time only (from 50', score margin ±5)", key="mt_toggle_tir")
             with col_b:
@@ -2441,31 +2466,96 @@ with tab4:
                     ["(All zones)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
                     key="macro_scelto_tir"
                 )
-            with col_c:
-                tasto_scelto_label = st.selectbox(
-                    "Focus goal map on a field sector (optional):",
-                    ["(All sectors)"] + TUTTI_I_TASTI_TIRATORI, key="tasto_scelto_tir"
-                )
             macro_key = None
             if macro_scelto != "(All zones)":
                 macro_key = next(k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v == macro_scelto)
-            tasto_scelto = None if tasto_scelto_label == "(All sectors)" else tasto_scelto_label
 
             if not match_filtrati:
                 st.info("No matches match the current selection.")
             else:
-                # ---- Top 6 shooters (team view only) ----
+                # ---- Aggregato dell'attuale selezione (squadra o giocatore singolo, filtrata) ----
+                frammenti_sel = []
+                for m in match_filtrati:
+                    d = m['dati'][m['dati']['TIRATORE_CLEAN'].isin(giocatori_da_mostrare)]
+                    if not d.empty:
+                        frammenti_sel.append(d)
+                df_selezione = pd.concat(frammenti_sel, ignore_index=True) if frammenti_sel else m['dati'].iloc[0:0]
+                if solo_money_time and not df_selezione.empty:
+                    df_selezione = df_selezione[df_selezione['Is_Money_Time'] == True]
+
+                # ---- Tastiera dei settori di campo: veri pulsanti cliccabili ----
+                st.markdown("---")
+                st.markdown("**Field sector map** (tap a sector with shots to focus the goal map on it)")
+                if 'tasto_focus_shared' not in st.session_state:
+                    st.session_state['tasto_focus_shared'] = None
+                tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione)
+                if st.session_state['tasto_focus_shared'] not in TUTTI_I_TASTI_TIRATORI:
+                    st.session_state['tasto_focus_shared'] = None
+                if st.button("↺ Reset — show all sectors", key="reset_tasto_focus",
+                             disabled=(st.session_state['tasto_focus_shared'] is None)):
+                    st.session_state['tasto_focus_shared'] = None
+                    st.rerun()
+                for riga in ORDINE_TASTIERA_TIRATORI:
+                    cols_tastiera = st.columns(len(riga))
+                    for col_tasto, tasto in zip(cols_tastiera, riga):
+                        tot_b = tot_tast_sel.get(tasto, 0)
+                        goal_b = goal_tast_sel.get(tasto, 0)
+                        pct_b = f"{goal_b/tot_b*100:.0f}%" if tot_b > 0 else "—"
+                        etichetta_btn = f"{tasto} · {goal_b}/{tot_b} ({pct_b})"
+                        selezionato = (st.session_state['tasto_focus_shared'] == tasto)
+                        with col_tasto:
+                            if st.button(etichetta_btn, key=f"tasto_btn_{tasto}", disabled=(tot_b == 0),
+                                         type=("primary" if selezionato else "secondary"), use_container_width=True):
+                                st.session_state['tasto_focus_shared'] = tasto
+                                st.rerun()
+                tasto_scelto = st.session_state['tasto_focus_shared']
+                if tasto_scelto:
+                    st.caption(f"🎯 Focused on field sector: **{tasto_scelto}**")
+
+                # ---- Top 6 shooters + General Shot Map (team view only) ----
                 if modalita_tir == "Team":
-                    df_squadra_tot = pd.concat([m['dati'] for m in match_filtrati], ignore_index=True)
                     st.markdown("---")
                     st.subheader(f"🔝 Top 6 Shooters — {titolo_dashboard}")
                     cc1, cc2 = st.columns(2)
                     with cc1:
                         st.markdown("**By total shot volume**")
-                        st.dataframe(top_n_tiratori(df_squadra_tot, 6), use_container_width=True, hide_index=True)
+                        st.dataframe(top_n_tiratori(df_selezione, 6), use_container_width=True, hide_index=True)
                     with cc2:
                         st.markdown("**By Money Time shot volume**")
-                        st.dataframe(top_n_tiratori(df_squadra_tot, 6, solo_money_time=True), use_container_width=True, hide_index=True)
+                        st.dataframe(top_n_tiratori(df_selezione, 6, solo_money_time=True), use_container_width=True, hide_index=True)
+
+                    st.markdown("---")
+                    st.subheader(f"🥅 General Shot Map — {titolo_dashboard}")
+                    if tasto_scelto:
+                        df_porta_squadra = df_selezione[df_selezione['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
+                        if macro_key:
+                            df_porta_squadra = df_porta_squadra[df_porta_squadra['macro_settore_tir'] == macro_key]
+                        g_sq, t_sq, pct_sq = calcola_metriche_tiratori_gruppo(df_porta_squadra)
+                        expected_sq = ottieni_expected_goal_pct(tasto_scelto)
+                        colore_cornice_sq = _colore_expected(pct_sq if t_sq > 0 else None, expected_sq)
+                        expected_testo_sq = f"{expected_sq:.0f}%" if expected_sq is not None else "n/a"
+                        if t_sq > 0:
+                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sq}**  |  Real: **{pct_sq:.1f}%** ({g_sq}/{t_sq})")
+                        else:
+                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sq}**  |  No shots from this sector.")
+                    else:
+                        df_porta_squadra = df_selezione if not macro_key else df_selezione[df_selezione['macro_settore_tir'] == macro_key]
+                        colore_cornice_sq = None
+                    tot_p_sq, goal_p_sq = costruisci_conteggi_porta(df_porta_squadra)
+                    fig_p_sq = disegna_porta(tot_p_sq, goal_p_sq, colore_cornice=colore_cornice_sq)
+                    tot_t_sq, goal_t_sq = costruisci_conteggi_tastiera(df_selezione)
+                    fig_t_sq = disegna_tastiera(tot_t_sq, goal_t_sq, tasto_selezionato=tasto_scelto)
+                    col_p_sq, col_t_sq = st.columns(2)
+                    with col_p_sq: st.pyplot(fig_p_sq)
+                    with col_t_sq: st.pyplot(fig_t_sq)
+                    if macro_key:
+                        st.markdown(f"**Breakdown of macro-zone {ETICHETTA_MACRO_TIRATORI[macro_key]}**")
+                        g_msq, t_msq, pct_msq = calcola_metriche_tiratori_gruppo(df_selezione[df_selezione['macro_settore_tir'] == macro_key])
+                        st.caption(f"Macro-zone total: {g_msq}/{t_msq} = {pct_msq:.1f}%")
+                        st.dataframe(tabella_micro_di_un_macro(df_selezione, macro_key), use_container_width=True, hide_index=True)
+                    else:
+                        st.markdown("**By macro-zone**")
+                        st.dataframe(tabella_macro_tiratori(df_selezione), use_container_width=True, hide_index=True)
 
                 st.markdown("---")
                 dati_pdf_giocatori = {}
