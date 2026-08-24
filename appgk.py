@@ -1374,7 +1374,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
 # ============================================================
 SEASON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_data.pkl")
 GOOGLE_SHEETS_SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-GOOGLE_SHEETS_HEADER = ['nome', 'data', 'squadra', 'dati_json']
+GOOGLE_SHEETS_HEADER = ['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json']
 
 def _google_sheets_configurato():
     try:
@@ -1411,17 +1411,27 @@ def _ottieni_worksheet_stagione():
     try:
         worksheet = foglio.worksheet('SeasonData')
     except Exception:
-        worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=4)
+        worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=6)
         worksheet.append_row(GOOGLE_SHEETS_HEADER)
     return worksheet
 
 def _match_a_riga_sheet(match):
     return [match['nome'], str(match['data']), match['squadra'],
+            match.get('squadra_home') or '', match.get('squadra_away') or '',
             match['dati'].to_json(orient='split', date_format='iso')]
 
 def _riga_sheet_a_match(riga):
     from datetime import datetime as _dt
-    nome, data_str, squadra, dati_json = riga[0], riga[1], riga[2], riga[3]
+    nome, data_str, squadra = riga[0], riga[1], riga[2]
+    if len(riga) >= 6:
+        squadra_home = riga[3] or None
+        squadra_away = riga[4] or None
+        dati_json = riga[5]
+    else:
+        # Formato vecchio (senza colonne home/away), per compatibilità con righe già salvate
+        squadra_home = None
+        squadra_away = None
+        dati_json = riga[3]
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'GPI_Tiro' in df.columns:
         df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
@@ -1431,7 +1441,8 @@ def _riga_sheet_a_match(riga):
         data_valore = _dt.strptime(data_str, '%Y-%m-%d').date()
     except Exception:
         data_valore = data_str
-    return {'nome': nome, 'data': data_valore, 'squadra': squadra, 'dati': df}
+    return {'nome': nome, 'data': data_valore, 'squadra': squadra,
+            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df}
 
 def carica_stagione_da_disco():
     if _google_sheets_configurato():
