@@ -1060,31 +1060,50 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
     for _, r in df_raw.iterrows():
         val_home = str(r[c_home]).strip() if pd.notna(r[c_home]) else ''
         val_away = str(r[c_away]).strip() if pd.notna(r[c_away]) else ''
-        home_e_gk = _e_portiere(val_home)
-        away_e_gk = _e_portiere(val_away)
-        if home_e_gk == away_e_gk:
-            continue  # riga ambigua (nessun "[G]" o due "[G]"): scartata
+        home_ha_nome = bool(val_home)
+        away_ha_nome = bool(val_away)
+        if not home_ha_nome and not away_ha_nome:
+            continue  # riga vuota: niente da registrare
+
+        home_e_gk = home_ha_nome and _e_portiere(val_home)
+        away_e_gk = away_ha_nome and _e_portiere(val_away)
+
+        # Regola generale: chi ha "[G]" è il portiere, chi non ce l'ha è il tiratore — vale sia
+        # quando sono compilate entrambe le colonne (coppia portiere-vs-tiratore sulla stessa
+        # riga, utile anche per il testa a testa) sia quando ne è compilata solo una (tagging
+        # "di una sola squadra": in quel caso manca il nome dell'altro attore, ma la riga resta
+        # comunque valida per chi È stato taggato).
+        if home_ha_nome and away_ha_nome and (home_e_gk == away_e_gk):
+            continue  # entrambe compilate ma ambigue (nessuna o entrambe con "[G]"): scartata
+
+        portiere = tiratore = None
+        squadra_portiere = squadra_tiratore = None
+        if home_ha_nome:
+            if home_e_gk:
+                portiere, squadra_portiere = val_home, 'home'
+            else:
+                tiratore, squadra_tiratore = val_home, 'home'
+        if away_ha_nome:
+            if away_e_gk:
+                portiere, squadra_portiere = val_away, 'away'
+            else:
+                tiratore, squadra_tiratore = val_away, 'away'
 
         tiro = r[c_tiro]
         result = r[c_result]
         timeline = r[c_time]
         goal_sector = r[c_goalsector] if c_goalsector is not None else None
 
-        if home_e_gk:
-            portiere, squadra_portiere = val_home, 'home'
-            tiratore, squadra_tiratore = (val_away, 'away') if val_away else (None, None)
-        else:
-            portiere, squadra_portiere = val_away, 'away'
-            tiratore, squadra_tiratore = (val_home, 'home') if val_home else (None, None)
-
-        riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline}
-        (righe_gk_home if squadra_portiere == 'home' else righe_gk_away).append(riga_gk)
+        if portiere:
+            riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline}
+            (righe_gk_home if squadra_portiere == 'home' else righe_gk_away).append(riga_gk)
 
         if tiratore:
             riga_tir = {'TIRATORE': tiratore, 'TIRO': tiro, 'GOAL SECTOR': goal_sector,
                         'RESULT': result, 'TIMELINE': timeline}
             (righe_tir_home if squadra_tiratore == 'home' else righe_tir_away).append(riga_tir)
 
+        if portiere and tiratore:
             righe_h2h.append({
                 'PORTIERE': portiere, 'TIRATORE': tiratore, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline,
                 'Squadra_Portiere': squadra_home if squadra_portiere == 'home' else squadra_away,
@@ -2394,24 +2413,41 @@ with tab1:
 
         st.markdown("---")
         st.subheader("🗑️ Delete a Single Match")
-        st.caption("Remove one specific match from the season (e.g. a friendly you only needed a one-off "
-                   "report for) without touching any of the other matches.")
-        if st.session_state['db']:
-            opzioni_partite_elimina = [
-                f"{p['nome']} ({p['data']}) - {p['squadra']}" for p in st.session_state['db']
-            ]
-            partita_da_eliminare = st.selectbox(
-                "Select the match to delete:", opzioni_partite_elimina, key="elimina_partita_select"
+        st.caption("Remove one specific match from the season — goalkeeper data, shooter data and "
+                   "head-to-head data all at once, since a single unified file feeds all three.")
+        chiavi_match = sorted(set(
+            [(p['nome'], str(p['data'])) for p in st.session_state['db']] +
+            [(p['nome'], str(p['data'])) for p in st.session_state['db_tiratori']] +
+            [(p['nome'], str(p['data'])) for p in st.session_state.get('db_h2h', [])]
+        ), key=lambda k: k[1])
+        if chiavi_match:
+            etichette_match_elimina = [f"{nome} ({data})" for nome, data in chiavi_match]
+            match_da_eliminare = st.selectbox(
+                "Select the match to delete:", etichette_match_elimina, key="elimina_partita_select"
             )
-            idx_da_eliminare = opzioni_partite_elimina.index(partita_da_eliminare)
+            nome_sel, data_sel = chiavi_match[etichette_match_elimina.index(match_da_eliminare)]
+            n_gk = sum(1 for p in st.session_state['db'] if p['nome'] == nome_sel and str(p['data']) == data_sel)
+            n_tir = sum(1 for p in st.session_state['db_tiratori'] if p['nome'] == nome_sel and str(p['data']) == data_sel)
+            n_h2h = sum(1 for p in st.session_state.get('db_h2h', []) if p['nome'] == nome_sel and str(p['data']) == data_sel)
+            st.caption(f"Will remove: {n_gk} goalkeeper record(s), {n_tir} shooter record(s), {n_h2h} head-to-head match(es).")
             conferma_elimina_singola = st.checkbox(
                 "I confirm I want to delete this match only (this action is irreversible)",
                 key="conferma_elimina_singola"
             )
             if st.button("🗑️ Delete This Match", disabled=not conferma_elimina_singola):
-                st.session_state['db'].pop(idx_da_eliminare)
+                st.session_state['db'] = [p for p in st.session_state['db']
+                                           if not (p['nome'] == nome_sel and str(p['data']) == data_sel)]
+                st.session_state['db_tiratori'] = [p for p in st.session_state['db_tiratori']
+                                                    if not (p['nome'] == nome_sel and str(p['data']) == data_sel)]
+                st.session_state['db_h2h'] = [p for p in st.session_state.get('db_h2h', [])
+                                               if not (p['nome'] == nome_sel and str(p['data']) == data_sel)]
                 salva_stagione_su_disco(st.session_state['db'])
-                st.success(f"Match '{partita_da_eliminare}' deleted. Remaining matches: {len(st.session_state['db'])}.")
+                salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+                salva_h2h_su_disco(st.session_state['db_h2h'])
+                st.success(f"Match '{match_da_eliminare}' deleted (all data). "
+                           f"Remaining: {len(st.session_state['db'])} goalkeeper record(s), "
+                           f"{len(st.session_state['db_tiratori'])} shooter record(s), "
+                           f"{len(st.session_state['db_h2h'])} head-to-head match(es).")
                 st.rerun()
         else:
             st.caption("No matches to delete yet.")
@@ -2958,80 +2994,8 @@ with tab4:
             else:
                 st.error("Incorrect code.")
     else:
-        # ============================================================
-        # UPLOAD FILE TIRATORI (formato a 5 colonne, alternativa al file unificato)
-        # ============================================================
-        st.info("📌 Match uploads (unified format, goalkeepers + shooters + head-to-head) now "
-                "live in **📥 Upload Match Sheets**. Use the panel below only if you want to add "
-                "shooter data on its own, without a full unified file.")
-        with st.expander("📥 Shooter-only upload (5-column format)"):
-            st.caption("Excel files with columns TIRATORE, TIRO, GOAL SECTOR, RESULT, TIMELINE — one file per team.")
-            fc_tir = st.file_uploader('Drag and drop shooter Excel files here', type=['xlsx', 'xls'],
-                                       accept_multiple_files=True, key="upload_tiratori")
-
-            if fc_tir:
-                pe_tir = []
-                for idx, f in enumerate(fc_tir):
-                    st.markdown(f"**File Configuration: {f.name}**")
-                    col1, col2, col3 = st.columns(3)
-                    with col1: nm = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'tn_{idx}')
-                    with col2: dt = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"td_{idx}")
-                    with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f'ts_{idx}')
-                    try:
-                        df_raw = pd.read_excel(f)
-                        df_elaborato = elabora_file_tiratori(df_raw)
-                        sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
-                        pe_tir.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df_elaborato,
-                                        'squadra_home': sq_home, 'squadra_away': sq_away})
-                    except Exception as e:
-                        st.error(f'Error processing file {f.name}: {e}')
-
-                if st.button('➕ Save & Process Matches (add to shooter season)'):
-                    chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
-                    aggiunte, duplicati = 0, 0
-                    for match in pe_tir:
-                        chiave = (match['nome'], str(match['data']), match['squadra'])
-                        if chiave in chiavi_esistenti:
-                            duplicati += 1
-                            continue
-                        st.session_state['db_tiratori'].append(match)
-                        chiavi_esistenti.add(chiave)
-                        aggiunte += 1
-                    salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
-                    if aggiunte:
-                        st.success(f'{aggiunte} match(es) added. Total shooter matches in memory: {len(st.session_state["db_tiratori"])}.')
-                    if duplicati:
-                        st.warning(f'{duplicati} match(es) skipped because already present.')
-
-        st.markdown("---")
-        st.subheader("🗑️ Delete a Single Shooter Match")
-        if st.session_state['db_tiratori']:
-            opzioni_elimina_tir = [f"{p['nome']} ({p['data']}) - {p['squadra']}" for p in st.session_state['db_tiratori']]
-            partita_elimina_tir = st.selectbox("Select the match to delete:", opzioni_elimina_tir, key="elimina_tir_select")
-            idx_elimina_tir = opzioni_elimina_tir.index(partita_elimina_tir)
-            conferma_elimina_tir = st.checkbox("I confirm I want to delete this shooter match only (irreversible)", key="conferma_elimina_tir")
-            if st.button("🗑️ Delete This Shooter Match", disabled=not conferma_elimina_tir):
-                st.session_state['db_tiratori'].pop(idx_elimina_tir)
-                salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
-                st.success(f"Match '{partita_elimina_tir}' deleted.")
-                st.rerun()
-        else:
-            st.caption("No shooter matches to delete yet.")
-
-        st.subheader("🗑️ Delete a Single Head-to-Head Match")
-        if st.session_state['db_h2h']:
-            opzioni_elimina_h2h = [f"{p['nome']} ({p['data']})" for p in st.session_state['db_h2h']]
-            partita_elimina_h2h = st.selectbox("Select the match to delete:", opzioni_elimina_h2h, key="elimina_h2h_select")
-            idx_elimina_h2h = opzioni_elimina_h2h.index(partita_elimina_h2h)
-            conferma_elimina_h2h = st.checkbox("I confirm I want to delete this head-to-head match only (irreversible)", key="conferma_elimina_h2h")
-            if st.button("🗑️ Delete This Head-to-Head Match", disabled=not conferma_elimina_h2h):
-                st.session_state['db_h2h'].pop(idx_elimina_h2h)
-                salva_h2h_su_disco(st.session_state['db_h2h'])
-                st.success(f"Match '{partita_elimina_h2h}' deleted.")
-                st.rerun()
-        else:
-            st.caption("No head-to-head matches to delete yet.")
-        st.caption("To wipe the whole season (goalkeepers + shooters + head-to-head), use 'Reset Season' in the Upload Match Sheets tab.")
+        st.caption("To delete a specific match (goalkeeper + shooter + head-to-head data together) "
+                   "or to wipe the whole season, use 📥 Upload Match Sheets.")
 
         # ============================================================
         # DASHBOARD
