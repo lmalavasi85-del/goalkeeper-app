@@ -1772,6 +1772,8 @@ def _riga_sheet_a_match(riga):
         df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
     if 'Is_Stress_Test' in df.columns:
         df['Is_Stress_Test'] = df['Is_Stress_Test'].astype(bool)
+    if 'PORTIERE_ID' not in df.columns and 'PORTIERE_CLEAN' in df.columns:
+        df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
     try:
         data_valore = _dt.strptime(data_str, '%Y-%m-%d').date()
     except Exception:
@@ -1793,7 +1795,11 @@ def carica_stagione_da_disco():
     if os.path.exists(SEASON_FILE):
         try:
             with open(SEASON_FILE, 'rb') as f:
-                return pickle.load(f)
+                db = pickle.load(f)
+            for m in db:
+                if 'PORTIERE_ID' not in m['dati'].columns and 'PORTIERE_CLEAN' in m['dati'].columns:
+                    m['dati']['PORTIERE_ID'] = m['dati']['PORTIERE_CLEAN'].apply(identita_giocatore)
+            return db
         except Exception:
             return []
     return []
@@ -1853,6 +1859,10 @@ def _riga_sheet_a_match_tiratori(riga):
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'Is_Money_Time' in df.columns:
         df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
+    if 'TIRATORE_ID' not in df.columns and 'TIRATORE_CLEAN' in df.columns:
+        df['TIRATORE_ID'] = df['TIRATORE_CLEAN'].apply(identita_giocatore)
+    if 'macro_settore_tir' in df.columns and 'TIRO_CLEAN' in df.columns:
+        df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
     try:
         data_valore = _dt.strptime(data_str, '%Y-%m-%d').date()
     except Exception:
@@ -1874,7 +1884,13 @@ def carica_stagione_tiratori_da_disco():
     if os.path.exists(SHOOTER_SEASON_FILE):
         try:
             with open(SHOOTER_SEASON_FILE, 'rb') as f:
-                return pickle.load(f)
+                db = pickle.load(f)
+            for m in db:
+                if 'TIRATORE_ID' not in m['dati'].columns and 'TIRATORE_CLEAN' in m['dati'].columns:
+                    m['dati']['TIRATORE_ID'] = m['dati']['TIRATORE_CLEAN'].apply(identita_giocatore)
+                if 'macro_settore_tir' in m['dati'].columns and 'TIRO_CLEAN' in m['dati'].columns:
+                    m['dati']['macro_settore_tir'] = m['dati']['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+            return db
         except Exception:
             return []
     return []
@@ -2055,6 +2071,13 @@ def _ottieni_worksheet_h2h():
         worksheet.append_row(['nome', 'data', 'dati_json'])
     return worksheet
 
+def _backfill_id_h2h(df):
+    if 'PORTIERE_ID' not in df.columns and 'PORTIERE_CLEAN' in df.columns:
+        df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
+    if 'TIRATORE_ID' not in df.columns and 'TIRATORE_CLEAN' in df.columns:
+        df['TIRATORE_ID'] = df['TIRATORE_CLEAN'].apply(identita_giocatore)
+    return df
+
 def carica_h2h_da_disco():
     if _google_sheets_configurato():
         try:
@@ -2067,6 +2090,7 @@ def carica_h2h_da_disco():
                 df = pd.read_json(io.StringIO(riga[2]), orient='split')
                 if 'Is_Money_Time' in df.columns:
                     df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
+                df = _backfill_id_h2h(df)
                 partite.append({'nome': riga[0], 'data': riga[1], 'dati': df})
             return partite
         except Exception as e:
@@ -2075,7 +2099,10 @@ def carica_h2h_da_disco():
     if os.path.exists(H2H_FILE):
         try:
             with open(H2H_FILE, 'rb') as f:
-                return pickle.load(f)
+                partite = pickle.load(f)
+            for m in partite:
+                m['dati'] = _backfill_id_h2h(m['dati'])
+            return partite
         except Exception:
             return []
     return []
