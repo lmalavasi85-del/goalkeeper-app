@@ -286,6 +286,20 @@ def identita_giocatore(nome_completo):
     _, nome_base = estrai_numero_e_nome_base(nome_completo)
     return nome_base
 
+def assicura_colonna_id(df, colonna_clean, colonna_id):
+    """Rete di sicurezza: garantisce che 'df' abbia la colonna_id (PORTIERE_ID/TIRATORE_ID),
+    calcolandola al volo da colonna_clean se manca (dati salvati prima che l'identità
+    giocatore esistesse). Se manca anche colonna_clean, crea una colonna_id vuota per evitare
+    KeyError altrove. Non modifica df in place."""
+    if colonna_id in df.columns:
+        return df
+    df = df.copy()
+    if colonna_clean in df.columns:
+        df[colonna_id] = df[colonna_clean].apply(identita_giocatore)
+    else:
+        df[colonna_id] = pd.Series(dtype=object)
+    return df
+
 def numeri_maglia_visti(nomi_grezzi):
     """Dato un elenco di nomi grezzi (con numero) di uno stesso giocatore in un certo
     sottoinsieme di partite, restituisce una stringa con il/i numero/i di maglia usati:
@@ -2315,14 +2329,21 @@ def gestisci_foto_giocatore(nome_giocatore, key_prefix):
 
 if 'db' not in st.session_state:
     st.session_state['db'] = carica_stagione_da_disco()
+    for _m in st.session_state['db']:
+        _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
 if 'db_tiratori' not in st.session_state:
     st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
+    for _m in st.session_state['db_tiratori']:
+        _m['dati'] = assicura_colonna_id(_m['dati'], 'TIRATORE_CLEAN', 'TIRATORE_ID')
 if 'note_tiratori' not in st.session_state:
     st.session_state['note_tiratori'] = carica_note_da_disco()
 if 'foto_giocatori' not in st.session_state:
     st.session_state['foto_giocatori'] = carica_foto_da_disco()
 if 'db_h2h' not in st.session_state:
     st.session_state['db_h2h'] = carica_h2h_da_disco()
+    for _m in st.session_state['db_h2h']:
+        _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
+        _m['dati'] = assicura_colonna_id(_m['dati'], 'TIRATORE_CLEAN', 'TIRATORE_ID')
 if 'campionati' not in st.session_state:
     st.session_state['campionati'] = carica_campionati_da_disco()
 if 'profili_expected_stato' not in st.session_state:
@@ -2902,24 +2923,33 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     st.rerun()
 
         st.markdown("---")
-        st.subheader("💾 Season Backup")
-        st.caption("Download a backup file of the whole season (goalkeepers + shooters + head-to-head) "
-                   "anytime and keep it on your computer. If anything ever goes wrong with the online "
-                   "app, or before a Reset Season, you can restore everything from this file. Player "
-                   "photos and notes are not affected by Reset Season, so they are not included here.")
+        st.subheader("💾 Full Backup")
+        st.caption("Download a backup file of everything in this app — matches (goalkeepers + "
+                   "shooters + head-to-head), player photos, coach notes, championships, and "
+                   "Expected Values profiles — anytime, and keep it on your computer. If anything "
+                   "ever goes wrong with the online app, or before a Reset Season, you can restore "
+                   "everything from this file.")
 
         col_backup1, col_backup2 = st.columns(2)
         with col_backup1:
             st.markdown("**Download backup**")
-            if st.session_state['db'] or st.session_state['db_tiratori'] or st.session_state['db_h2h']:
+            esiste_qualcosa_da_salvare = (
+                st.session_state['db'] or st.session_state['db_tiratori'] or st.session_state['db_h2h']
+                or st.session_state['foto_giocatori'] or st.session_state['note_tiratori']
+            )
+            if esiste_qualcosa_da_salvare:
                 backup_bytes = pickle.dumps({
                     'db': st.session_state['db'],
                     'db_tiratori': st.session_state['db_tiratori'],
                     'db_h2h': st.session_state['db_h2h'],
+                    'foto_giocatori': st.session_state['foto_giocatori'],
+                    'note_tiratori': st.session_state['note_tiratori'],
+                    'campionati': st.session_state['campionati'],
+                    'profili_expected_stato': st.session_state['profili_expected_stato'],
                 })
-                nome_backup = f"season_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pkl"
+                nome_backup = f"full_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pkl"
                 st.download_button(
-                    label="⬇️ Download Season Backup",
+                    label="⬇️ Download Full Backup",
                     data=backup_bytes,
                     file_name=nome_backup,
                     mime="application/octet-stream"
@@ -2931,7 +2961,7 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
             st.markdown("**Restore from backup**")
             file_backup = st.file_uploader("Upload a .pkl backup file", type=['pkl'], key="restore_backup")
             if file_backup is not None:
-                if st.button("♻️ Restore backup (merge into current season)"):
+                if st.button("♻️ Restore backup (merge into current data)"):
                     try:
                         contenuto_backup = pickle.loads(file_backup.read())
                         # Retrocompatibilità: i backup vecchi erano una semplice lista (solo portieri)
@@ -2939,10 +2969,18 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                             db_gk_ripristinato = contenuto_backup.get('db', [])
                             db_tir_ripristinato = contenuto_backup.get('db_tiratori', [])
                             db_h2h_ripristinato = contenuto_backup.get('db_h2h', [])
+                            foto_ripristinate = contenuto_backup.get('foto_giocatori', {})
+                            note_ripristinate = contenuto_backup.get('note_tiratori', {})
+                            campionati_ripristinati = contenuto_backup.get('campionati', [])
+                            profili_expected_ripristinati = contenuto_backup.get('profili_expected_stato', None)
                         else:
                             db_gk_ripristinato = contenuto_backup
                             db_tir_ripristinato = []
                             db_h2h_ripristinato = []
+                            foto_ripristinate = {}
+                            note_ripristinate = {}
+                            campionati_ripristinati = []
+                            profili_expected_ripristinati = None
 
                         chiavi_gk = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
                         agg_gk = 0
@@ -2974,11 +3012,46 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                             chiavi_h2h.add(chiave)
                             agg_h2h += 1
 
+                        agg_foto = 0
+                        for nome_g, foto_b64 in foto_ripristinate.items():
+                            if nome_g not in st.session_state['foto_giocatori']:
+                                st.session_state['foto_giocatori'][nome_g] = foto_b64
+                                agg_foto += 1
+
+                        agg_note = 0
+                        for nome_g, nota in note_ripristinate.items():
+                            if nome_g not in st.session_state['note_tiratori']:
+                                st.session_state['note_tiratori'][nome_g] = nota
+                                agg_note += 1
+
+                        nomi_campionati_esistenti = {c['nome'] for c in st.session_state['campionati']}
+                        agg_camp = 0
+                        for camp in campionati_ripristinati:
+                            if camp['nome'] not in nomi_campionati_esistenti:
+                                st.session_state['campionati'].append(camp)
+                                nomi_campionati_esistenti.add(camp['nome'])
+                                agg_camp += 1
+
+                        agg_profili = 0
+                        if profili_expected_ripristinati:
+                            for nome_p, valori_p in profili_expected_ripristinati.get('profili', {}).items():
+                                if nome_p not in st.session_state['profili_expected_stato']['profili']:
+                                    st.session_state['profili_expected_stato']['profili'][nome_p] = valori_p
+                                    agg_profili += 1
+                                elif nome_p == 'S.P. Value':
+                                    # S.P. Value: il backup non sovrascrive mai la versione attuale automaticamente
+                                    pass
+
                         salva_stagione_su_disco(st.session_state['db'])
                         salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
                         salva_h2h_su_disco(st.session_state['db_h2h'])
+                        salva_foto_su_disco(st.session_state['foto_giocatori'])
+                        salva_note_su_disco(st.session_state['note_tiratori'])
+                        salva_campionati_su_disco(st.session_state['campionati'])
+                        salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
                         st.success(f"Restored {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
-                                   f"{agg_h2h} head-to-head match(es) from the backup file.")
+                                   f"{agg_h2h} head-to-head match(es), {agg_foto} photo(s), {agg_note} note(s), "
+                                   f"{agg_camp} championship(s), {agg_profili} Expected Values profile(s) from the backup file.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Could not read this backup file: {e}")
