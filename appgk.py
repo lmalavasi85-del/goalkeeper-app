@@ -194,17 +194,17 @@ def formatta_riga_casa_trasferta(split):
 # per "fascia" numerica orizzontale tra 6m/bt/9m, non per riga radiale)
 # lw -> lw1+lw2 | rw -> rw1+rw2 | fb -> fb1+fb2+fb3
 # settore 1 -> 6m1+bt1+9m1 | settore 1,5 -> 6m1,5+bt1,5+9m1,5 | ... | settore 3 -> 6m3+bt3+9m3
-# 7m ed eg sono sia macro che micro (singoli)
+# 7m è sia macro che micro (singolo)
 # ============================================================
-ORDINE_MACRO_TIRATORI = ['7m', 'eg', 'lw', 'rw', '1', '1,5', '2', '2,5', '3', 'fb']
+ORDINE_MACRO_TIRATORI = ['7m', 'lw', 'rw', '1', '1,5', '2', '2,5', '3', 'fb']
 ETICHETTA_MACRO_TIRATORI = {
-    '7m': '7m', 'eg': 'EG', 'lw': 'LW', 'rw': 'RW', 'fb': 'FB',
+    '7m': '7m', 'lw': 'LW', 'rw': 'RW', 'fb': 'FB',
     '1': 'Sector 1', '1,5': 'Sector 1.5', '2': 'Sector 2', '2,5': 'Sector 2.5', '3': 'Sector 3',
 }
 
 def mappa_macro_settore_tiratori(zona):
     z = _normalizza_zona(zona)
-    if z in ('7m', 'eg'):
+    if z == '7m':
         return z
     if z.startswith('lw'):
         return 'lw'
@@ -219,7 +219,7 @@ def mappa_macro_settore_tiratori(zona):
 
 # Ordine "naturale" dei tasti della tastiera dei settori di campo (come da immagine allegata)
 ORDINE_TASTIERA_TIRATORI = [
-    ['7m', 'eg'],
+    ['7m'],
     ['lw1', 'lw2', 'rw2', 'rw1'],
     ['6m1', '6m1,5', '6m2', '6m2,5', '6m3'],
     ['bt1', 'bt1,5', 'bt2', 'bt2,5', 'bt3'],
@@ -345,7 +345,6 @@ EXPECTED_SAVE_PCT = {
     '9m1': 60, '9m1,5': 60, '9m2': 52, '9m2,5': 55, '9m3': 55,
     '7m': 25,
     'fb1': 22, 'fb2': 22, 'fb3': 22,
-    'eg': 5,  # empty goal (porta vuota): expected save % molto basso di default, modificabile
 }
 
 def _normalizza_zona(zona):
@@ -911,6 +910,68 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None):
     return fig
 
 # ============================================================
+# PORTIERI: PARSING FILE (stessa identica logica prima incorporata nel loop di upload,
+# ora estratta in una funzione riusabile anche dal nuovo file unificato)
+# ============================================================
+def elabora_file_portieri(df_raw):
+    """Prende il DataFrame grezzo (colonne tipo PORTIERE/GK, TIRO, RESULT, TIMELINE) e
+    restituisce il DataFrame arricchito con tutte le colonne calcolate (GPI, Money Time, ecc.).
+    Solleva ValueError se manca una colonna essenziale."""
+    def _trova_colonna(parole_chiave):
+        for c in df_raw.columns:
+            c_low = str(c).lower()
+            if any(p in c_low for p in parole_chiave):
+                return c
+        return None
+
+    c_gk = _trova_colonna(['gk', 'portiere', 'porter'])
+    c_tiro = _trova_colonna(['tiro', 'shot'])
+    c_res = _trova_colonna(['result', 'esito', 'risultato'])
+    c_time = _trova_colonna(['timeline', 'tempo', 'minut'])
+
+    mancanti = [nome for nome, val in [('PORTIERE/GK', c_gk), ('TIRO', c_tiro),
+                ('RESULT', c_res), ('TIMELINE', c_time)] if val is None]
+    if mancanti:
+        raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
+
+    df = df_raw.copy()
+    df['PORTIERE_CLEAN'] = df[c_gk].astype(str).str.strip()
+    df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
+    df['RESULT_CLEAN'] = df[c_res].astype(str).str.lower().str.strip()
+
+    minuti_list, tempo_list, scarti_list, punteggi_list = [], [], [], []
+    for val in df[c_time]:
+        m_tot, t_s, sc, pt = analizza_timeline(val)
+        minuti_list.append(m_tot)
+        tempo_list.append(t_s)
+        scarti_list.append(sc)
+        punteggi_list.append(pt)
+    df['Minuti_Gara'] = minuti_list
+    df['Tempo_Visuale'] = tempo_list
+    df['Scarto_Punteggio'] = scarti_list
+    df['Punteggio_Live'] = punteggi_list
+
+    df['macro_settore'] = df['TIRO_CLEAN'].apply(mappa_macro_settore)
+
+    gpi_list, stress_list = [], []
+    for _, row in df.iterrows():
+        gp_val, str_bool = calcola_gpi_riga(row['macro_settore'], row['RESULT_CLEAN'], row['Minuti_Gara'], row['Scarto_Punteggio'])
+        gpi_list.append(gp_val)
+        stress_list.append(str_bool)
+    df['GPI_Tiro'] = gpi_list
+    df['Is_Stress_Test'] = stress_list
+
+    def _calcola_blocco_stringa(m):
+        if m < 10: return '0-10'
+        elif m < 20: return '10-20'
+        elif m < 30: return '20-30'
+        elif m < 40: return '30-40'
+        elif m < 50: return '40-50'
+        else: return '50-60'
+    df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
+    return df
+
+# ============================================================
 # TIRATORI: PARSING FILE, METRICHE, TOP SCORERS, MACRO-SETTORI
 # ============================================================
 def calcola_money_time_flag(minuti, scarto):
@@ -956,6 +1017,116 @@ def elabora_file_tiratori(df_raw):
     df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
     df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
     return df
+
+# ============================================================
+# FILE UNIFICATO (formato unico HOME/AWAY): una sola tabella per l'intera gara, con il portiere
+# che difende marcato con "[G]" in una delle due colonne squadra, e l'avversario che tira
+# nell'altra. Da qui si ricavano SEPARATAMENTE i 4 dataframe "storici" (portiere-casa,
+# portiere-trasferta, tiratori-casa, tiratori-trasferta, riusando le stesse identiche funzioni di
+# elaborazione già in uso) più il dataframe "testa a testa" per l'analisi incrociata.
+# ============================================================
+def _e_portiere(valore):
+    return isinstance(valore, str) and '[g]' in valore.lower()
+
+def elabora_file_unificato(df_raw, squadra_home, squadra_away):
+    """Restituisce (df_gk_home, df_gk_away, df_tir_home, df_tir_away, df_h2h). Ognuno dei 4
+    dataframe principali è già nello stesso formato prodotto da elabora_file_portieri /
+    elabora_file_tiratori (stesse colonne calcolate), pronto per essere salvato come al solito.
+    df_h2h porta anche il nome reale delle due squadre, necessario per il filtro squadra
+    dell'analisi testa a testa."""
+    def _trova_colonna(parole_chiave):
+        for c in df_raw.columns:
+            c_low = str(c).lower()
+            if any(p in c_low for p in parole_chiave):
+                return c
+        return None
+
+    c_home = _trova_colonna(['home'])
+    c_away = _trova_colonna(['away'])
+    c_tiro = _trova_colonna(['tiro', 'shot'])
+    c_result = _trova_colonna(['result', 'esito', 'risultato'])
+    c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
+    c_time = _trova_colonna(['timeline', 'tempo', 'minut'])
+
+    mancanti = [nome for nome, val in [('HOME', c_home), ('AWAY', c_away), ('TIRO', c_tiro),
+                ('RESULT', c_result), ('TIMELINE', c_time)] if val is None]
+    if mancanti:
+        raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
+
+    righe_gk_home, righe_gk_away = [], []
+    righe_tir_home, righe_tir_away = [], []
+    righe_h2h = []
+
+    for _, r in df_raw.iterrows():
+        val_home = str(r[c_home]).strip() if pd.notna(r[c_home]) else ''
+        val_away = str(r[c_away]).strip() if pd.notna(r[c_away]) else ''
+        home_e_gk = _e_portiere(val_home)
+        away_e_gk = _e_portiere(val_away)
+        if home_e_gk == away_e_gk:
+            continue  # riga ambigua (nessun "[G]" o due "[G]"): scartata
+
+        tiro = r[c_tiro]
+        result = r[c_result]
+        timeline = r[c_time]
+        goal_sector = r[c_goalsector] if c_goalsector is not None else None
+
+        if home_e_gk:
+            portiere, squadra_portiere = val_home, 'home'
+            tiratore, squadra_tiratore = (val_away, 'away') if val_away else (None, None)
+        else:
+            portiere, squadra_portiere = val_away, 'away'
+            tiratore, squadra_tiratore = (val_home, 'home') if val_home else (None, None)
+
+        riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline}
+        (righe_gk_home if squadra_portiere == 'home' else righe_gk_away).append(riga_gk)
+
+        if tiratore:
+            riga_tir = {'TIRATORE': tiratore, 'TIRO': tiro, 'GOAL SECTOR': goal_sector,
+                        'RESULT': result, 'TIMELINE': timeline}
+            (righe_tir_home if squadra_tiratore == 'home' else righe_tir_away).append(riga_tir)
+
+            righe_h2h.append({
+                'PORTIERE': portiere, 'TIRATORE': tiratore, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline,
+                'Squadra_Portiere': squadra_home if squadra_portiere == 'home' else squadra_away,
+                'Squadra_Tiratore': squadra_home if squadra_tiratore == 'home' else squadra_away,
+            })
+
+    def _elabora_o_vuoto_gk(righe):
+        if not righe:
+            return pd.DataFrame()
+        return elabora_file_portieri(pd.DataFrame(righe))
+
+    def _elabora_o_vuoto_tir(righe):
+        if not righe:
+            return pd.DataFrame()
+        return elabora_file_tiratori(pd.DataFrame(righe))
+
+    df_gk_home = _elabora_o_vuoto_gk(righe_gk_home)
+    df_gk_away = _elabora_o_vuoto_gk(righe_gk_away)
+    df_tir_home = _elabora_o_vuoto_tir(righe_tir_home)
+    df_tir_away = _elabora_o_vuoto_tir(righe_tir_away)
+
+    if righe_h2h:
+        df_h2h = pd.DataFrame(righe_h2h)
+        df_h2h['PORTIERE_CLEAN'] = df_h2h['PORTIERE'].astype(str).str.strip()
+        df_h2h['TIRATORE_CLEAN'] = df_h2h['TIRATORE'].astype(str).str.strip()
+        df_h2h['TIRO_CLEAN'] = df_h2h['TIRO'].astype(str).str.strip()
+        df_h2h['RESULT_CLEAN'] = df_h2h['RESULT'].astype(str).str.lower().str.strip()
+        minuti_list, scarti_list = [], []
+        for val in df_h2h['TIMELINE']:
+            m_tot, _, sc, _ = analizza_timeline(val)
+            minuti_list.append(m_tot)
+            scarti_list.append(sc)
+        df_h2h['Minuti_Gara'] = minuti_list
+        df_h2h['Scarto_Punteggio'] = scarti_list
+        df_h2h['Is_Money_Time'] = df_h2h.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
+        df_h2h = df_h2h[['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'Squadra_Portiere', 'Squadra_Tiratore',
+                          'TIRO_CLEAN', 'RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']]
+    else:
+        df_h2h = pd.DataFrame(columns=['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'Squadra_Portiere', 'Squadra_Tiratore',
+                                        'TIRO_CLEAN', 'RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time'])
+
+    return df_gk_home, df_gk_away, df_tir_home, df_tir_away, df_h2h
 
 def calcola_metriche_tiratori_gruppo(df):
     """(goal, totale, pct realizzazione) per un qualsiasi sottoinsieme di tiri di tiratori."""
@@ -1017,6 +1188,37 @@ def tabella_micro_di_un_macro(df, macro):
         goal, tot, pct = calcola_metriche_tiratori_gruppo(df_z)
         righe.append({'Zone': zona, 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
     return pd.DataFrame(righe) if righe else pd.DataFrame({'Zone': [], 'Goals': [], 'Shots': [], 'Goal %': []})
+
+# ============================================================
+# TESTA A TESTA (H2H): "chi soffre chi" — per un portiere, quali tiratori segnano di più contro
+# di lui (ordinati dal più al meno "sofferto"); per un tiratore, contro quali portieri segna di
+# meno (ordinati dal portiere più "sofferto" al meno).
+# ============================================================
+def classifica_h2h(df_h2h, giocatore, e_portiere):
+    """df_h2h: dataframe con colonne PORTIERE_CLEAN/TIRATORE_CLEAN/RESULT_CLEAN/Squadra_*.
+    Restituisce una tabella con un avversario per riga, ordinata dal più al meno sofferto,
+    con Goals/Shots/Goal % di quel confronto diretto e la squadra dell'avversario."""
+    if e_portiere:
+        df_g = df_h2h[df_h2h['PORTIERE_CLEAN'] == giocatore]
+        colonna_avversario, colonna_squadra_avv = 'TIRATORE_CLEAN', 'Squadra_Tiratore'
+    else:
+        df_g = df_h2h[df_h2h['TIRATORE_CLEAN'] == giocatore]
+        colonna_avversario, colonna_squadra_avv = 'PORTIERE_CLEAN', 'Squadra_Portiere'
+
+    if df_g.empty:
+        return pd.DataFrame({'Opponent': [], 'Team': [], 'Goals': [], 'Shots': [], 'Goal %': []})
+
+    righe = []
+    for avversario, df_a in df_g.groupby(colonna_avversario):
+        tot = len(df_a)
+        goal = len(df_a[df_a['RESULT_CLEAN'] == 'goal'])
+        pct = (goal / tot * 100) if tot > 0 else 0.0
+        squadra_avv = df_a[colonna_squadra_avv].iloc[0]
+        righe.append({'Opponent': avversario, 'Team': squadra_avv, 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
+    df_classifica = pd.DataFrame(righe)
+    # Portiere: più sofferto = tiratore che gli segna più spesso (Goal % decrescente)
+    # Tiratore: più sofferto = portiere contro cui segna meno spesso (Goal % crescente)
+    return df_classifica.sort_values('Goal %', ascending=(not e_portiere)).reset_index(drop=True)
 
 COLORE_ACCENTO = colors.HexColor('#15304f')
 COLORE_TESTATA_TABELLE = colors.HexColor('#1b3a63')
@@ -1613,12 +1815,171 @@ def salva_note_su_disco(note_dict):
     with open(SHOOTER_NOTES_FILE, 'wb') as f:
         pickle.dump(note_dict, f)
 
+# ============================================================
+# FOTO GIOCATORI (mezzo busto, jpg/png) — condivise tra portieri e tiratori, indicizzate per
+# nome. Ogni foto viene ridimensionata e compressa PRIMA di essere salvata, così pesa pochi KB
+# indipendentemente da quanto è pesante il file originale caricato dall'utente.
+# ============================================================
+PLAYER_PHOTOS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_photos.pkl")
+
+def elabora_foto_giocatore(file_caricato, lato_max=220, qualita_jpeg=78):
+    """Ridimensiona (mantenendo le proporzioni, lato massimo lato_max px) e comprime in JPEG
+    la foto caricata, poi la restituisce codificata in base64 (stringa), pronta da salvare."""
+    immagine = PILImage.open(file_caricato)
+    immagine = immagine.convert('RGB')
+    immagine.thumbnail((lato_max, lato_max))
+    buffer_foto = io.BytesIO()
+    immagine.save(buffer_foto, format='JPEG', quality=qualita_jpeg, optimize=True)
+    return base64.b64encode(buffer_foto.getvalue()).decode('utf-8')
+
+def foto_base64_a_bytes(foto_b64):
+    return base64.b64decode(foto_b64)
+
+@st.cache_resource
+def _ottieni_worksheet_foto():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('PlayerPhotos')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='PlayerPhotos', rows=500, cols=2)
+        worksheet.append_row(['giocatore', 'foto_base64'])
+    return worksheet
+
+def carica_foto_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_foto()
+            valori = worksheet.get_all_values()
+            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            return {}
+    if os.path.exists(PLAYER_PHOTOS_FILE):
+        try:
+            with open(PLAYER_PHOTOS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_foto_su_disco(foto_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_foto()
+            worksheet.clear()
+            worksheet.append_row(['giocatore', 'foto_base64'])
+            righe = [[g, f] for g, f in foto_dict.items()]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save player photos to Google Sheets: {e}")
+    with open(PLAYER_PHOTOS_FILE, 'wb') as f:
+        pickle.dump(foto_dict, f)
+
+# ============================================================
+# TESTA A TESTA (H2H): eventi tiratore-vs-portiere raccolti dal file unificato, usati per
+# l'analisi "chi soffre chi". Salvati per partita, come per portieri/tiratori.
+# ============================================================
+H2H_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_data_h2h.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_h2h():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('H2HData')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='H2HData', rows=2000, cols=4)
+        worksheet.append_row(['nome', 'data', 'dati_json'])
+    return worksheet
+
+def carica_h2h_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_h2h()
+            valori = worksheet.get_all_values()
+            partite = []
+            for riga in valori[1:]:
+                if not riga or not riga[0]:
+                    continue
+                df = pd.read_json(io.StringIO(riga[2]), orient='split')
+                if 'Is_Money_Time' in df.columns:
+                    df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
+                partite.append({'nome': riga[0], 'data': riga[1], 'dati': df})
+            return partite
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load head-to-head data from Google Sheets: {e}")
+            return []
+    if os.path.exists(H2H_FILE):
+        try:
+            with open(H2H_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_h2h_su_disco(db):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_h2h()
+            worksheet.clear()
+            worksheet.append_row(['nome', 'data', 'dati_json'])
+            righe = [[m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')] for m in db]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save head-to-head data to Google Sheets: {e}")
+    with open(H2H_FILE, 'wb') as f:
+        pickle.dump(db, f)
+
+def gestisci_foto_giocatore(nome_giocatore, key_prefix):
+    """Widget riusabile: mostra la foto attuale (se presente) e un uploader per caricarne/
+    sostituirne una. Ridimensiona e salva automaticamente al volo."""
+    chiave_sicura = _chiave_css_sicura(nome_giocatore)
+    key_uploader = f"{key_prefix}_foto_{chiave_sicura}"
+    key_marcatore = f"_processata_{key_uploader}"
+    col_foto, col_upload = st.columns([1, 4])
+    with col_upload:
+        nuovo_file = st.file_uploader("Photo (optional, jpg/png)", type=['jpg', 'jpeg', 'png'],
+                                       key=key_uploader, label_visibility="collapsed")
+        if nuovo_file is not None:
+            marcatore_attuale = f"{nuovo_file.name}-{nuovo_file.size}"
+            if st.session_state.get(key_marcatore) != marcatore_attuale:
+                st.session_state['foto_giocatori'][nome_giocatore] = elabora_foto_giocatore(nuovo_file)
+                salva_foto_su_disco(st.session_state['foto_giocatori'])
+                st.session_state[key_marcatore] = marcatore_attuale
+                st.rerun()
+    with col_foto:
+        foto_b64 = st.session_state['foto_giocatori'].get(nome_giocatore)
+        if foto_b64:
+            st.image(foto_base64_a_bytes(foto_b64), width=80)
+            if st.button("🗑️", key=f"rimuovi_{key_uploader}", help="Remove photo"):
+                del st.session_state['foto_giocatori'][nome_giocatore]
+                salva_foto_su_disco(st.session_state['foto_giocatori'])
+                st.rerun()
+
 if 'db' not in st.session_state:
     st.session_state['db'] = carica_stagione_da_disco()
 if 'db_tiratori' not in st.session_state:
     st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
 if 'note_tiratori' not in st.session_state:
     st.session_state['note_tiratori'] = carica_note_da_disco()
+if 'foto_giocatori' not in st.session_state:
+    st.session_state['foto_giocatori'] = carica_foto_da_disco()
+if 'db_h2h' not in st.session_state:
+    st.session_state['db_h2h'] = carica_h2h_da_disco()
 
 # ============================================================
 # NOTE DEL COACH: markup semplice **grassetto**, __sottolineato__, ==evidenziato==
@@ -1657,8 +2018,22 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     a monte). Porta, tastiera e tabella macro-zone stanno tutte sulla stessa riga."""
     elementi = []
     goal, tot, pct = calcola_metriche_tiratori_gruppo(df_giocatore)
-    elementi.append(Paragraph(f"{nome_giocatore}", sezione_stile))
-    elementi.append(Paragraph(f"Total: {goal}/{tot} = {pct:.1f}%", stili['Normal']))
+    foto_b64 = st.session_state.get('foto_giocatori', {}).get(nome_giocatore)
+    if foto_b64:
+        intestazione = Table(
+            [[RLImage(io.BytesIO(foto_base64_a_bytes(foto_b64)), width=1.8 * cm, height=1.8 * cm),
+              [Paragraph(f"{nome_giocatore}", sezione_stile), Paragraph(f"Total: {goal}/{tot} = {pct:.1f}%", stili['Normal'])]]],
+            colWidths=[2.1 * cm, None]
+        )
+        intestazione.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        elementi.append(intestazione)
+    else:
+        elementi.append(Paragraph(f"{nome_giocatore}", sezione_stile))
+        elementi.append(Paragraph(f"Total: {goal}/{tot} = {pct:.1f}%", stili['Normal']))
     elementi.append(Spacer(1, 0.2 * cm))
 
     tot_porta, goal_porta = costruisci_conteggi_porta(df_giocatore)
@@ -1863,51 +2238,8 @@ with tab1:
                 with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f's_{idx}')
             
                 try:
-                    df = pd.read_excel(f)
-                
-                    # 📌 INDIVIDUAZIONE INTELLIGENTE DELLE COLONNE: Evita qualsiasi KeyError a prescindere dal testo maiuscolo/minuscolo
-                    c_gk = [c for c in df.columns if 'gk' in str(c).lower() or 'portiere' in str(c).lower() or 'porter' in str(c).lower()][0]
-                    c_tiro = [c for c in df.columns if 'tiro' in str(c).lower() or 'shot' in str(c).lower()][0]
-                    c_res = [c for c in df.columns if 'result' in str(c).lower() or 'esito' in str(c).lower() or 'risultato' in str(c).lower()][0]
-                    c_time = [c for c in df.columns if 'timeline' in str(c).lower() or 'tempo' in str(c).lower() or 'minut' in str(c).lower()][0]
-                
-                    df['PORTIERE_CLEAN'] = df[c_gk].astype(str).str.strip()
-                    df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
-                    df['RESULT_CLEAN'] = df[c_res].astype(str).str.lower().str.strip()
-                
-                    minuti_list, tempo_list, scarti_list, punteggi_list = [], [], [], []
-                    for val in df[c_time]:
-                        m_tot, t_s, sc, pt = analizza_timeline(val)
-                        minuti_list.append(m_tot)
-                        tempo_list.append(t_s)
-                        scarti_list.append(sc)
-                        punteggi_list.append(pt)
-                    
-                    df['Minuti_Gara'] = minuti_list
-                    df['Tempo_Visuale'] = tempo_list
-                    df['Scarto_Punteggio'] = scarti_list
-                    df['Punteggio_Live'] = punteggi_list
-                
-                    df['macro_settore'] = df['TIRO_CLEAN'].apply(mappa_macro_settore)
-                
-                    gpi_list, stress_list = [], []
-                    for _, row in df.iterrows():
-                        gp_val, str_bool = calcola_gpi_riga(row['macro_settore'], row['RESULT_CLEAN'], row['Minuti_Gara'], row['Scarto_Punteggio'])
-                        gpi_list.append(gp_val)
-                        stress_list.append(str_bool)
-                    
-                    df['GPI_Tiro'] = gpi_list
-                    df['Is_Stress_Test'] = stress_list
-                
-                    def calcola_blocco_stringa(m):
-                        if m < 10: return '0-10'
-                        elif m < 20: return '10-20'
-                        elif m < 30: return '20-30'
-                        elif m < 40: return '30-40'
-                        elif m < 50: return '40-50'
-                        else: return '50-60'
-                    df['Blocco_10m'] = df['Minuti_Gara'].apply(calcola_blocco_stringa)
-                
+                    df_raw = pd.read_excel(f)
+                    df = elabora_file_portieri(df_raw)
                     sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
                     pe.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df,
                                'squadra_home': sq_home, 'squadra_away': sq_away})
@@ -2022,6 +2354,10 @@ with tab1:
             salva_note_su_disco(st.session_state['note_tiratori'])
             if os.path.exists(SHOOTER_NOTES_FILE):
                 os.remove(SHOOTER_NOTES_FILE)
+            st.session_state['db_h2h'] = []
+            salva_h2h_su_disco(st.session_state['db_h2h'])
+            if os.path.exists(H2H_FILE):
+                os.remove(H2H_FILE)
             st.success("Season reset. All data (goalkeepers and shooters) has been deleted.")
             st.rerun()
 
@@ -2468,6 +2804,7 @@ with tab3:
                 info = calcola_dettaglio_portiere(df_gk_tot, lista_partite=lista)
                 dati_pdf_portieri_stagione[gk] = info
                 with st.expander(f"{gk} — Total Season GPI: {info['gpi_totale']:+.1f}", expanded=True):
+                    gestisci_foto_giocatore(gk, key_prefix="gk")
                     cA, cB, cC, cD, cE = st.columns(5)
                     cA.metric("Total GPI", f"{info['gpi_totale']:+.1f}")
                     cB.metric("Saves", info['parate'])
@@ -2540,46 +2877,127 @@ with tab4:
                 st.error("Incorrect code.")
     else:
         # ============================================================
-        # UPLOAD FILE TIRATORI
+        # UPLOAD FILE UNIFICATO (formato unico HOME/AWAY, un solo file per l'intera gara)
         # ============================================================
-        st.subheader("📥 Upload Shooter Match Files")
-        st.caption("Excel files with columns TIRATORE, TIRO, GOAL SECTOR, RESULT, TIMELINE — one file per team.")
-        fc_tir = st.file_uploader('Drag and drop shooter Excel files here', type=['xlsx', 'xls'],
-                                   accept_multiple_files=True, key="upload_tiratori")
+        st.subheader("📥 Upload Match (unified format — recommended)")
+        st.caption("A single Excel file for the whole match, columns: HOME, AWAY, TIRO, RESULT, "
+                   "GOAL SECTOR, TIMELINE. The goalkeeper on duty is marked with \"[G]\" in the "
+                   "HOME or AWAY cell; the other cell holds the shooter facing them. Team names "
+                   "are read automatically from the file name (e.g. \"Merano-Brixen 23-8-2026.xlsx\" "
+                   "→ Merano home, Brixen away) — no need to type them in.")
+        fc_uni = st.file_uploader('Drag and drop the unified match file(s) here', type=['xlsx', 'xls'],
+                                   accept_multiple_files=True, key="upload_unificato")
 
-        if fc_tir:
-            pe_tir = []
-            for idx, f in enumerate(fc_tir):
+        if fc_uni:
+            pe_gk_uni, pe_tir_uni, pe_h2h_uni = [], [], []
+            for idx, f in enumerate(fc_uni):
                 st.markdown(f"**File Configuration: {f.name}**")
-                col1, col2, col3 = st.columns(3)
-                with col1: nm = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'tn_{idx}')
-                with col2: dt = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"td_{idx}")
-                with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f'ts_{idx}')
+                col1, col2 = st.columns(2)
+                with col1: nm_u = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'un_{idx}')
+                with col2: dt_u = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"ud_{idx}")
+                sq_home_u, sq_away_u = estrai_home_away_da_nome_file(f.name)
+                if not sq_home_u or not sq_away_u:
+                    st.error(f"Could not read the two team names from the file name '{f.name}'. "
+                             f"Rename it as \"TeamHome-TeamAway date.xlsx\" and re-upload.")
+                    continue
+                st.caption(f"Home: **{sq_home_u}**  |  Away: **{sq_away_u}**")
                 try:
-                    df_raw = pd.read_excel(f)
-                    df_elaborato = elabora_file_tiratori(df_raw)
-                    sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
-                    pe_tir.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df_elaborato,
-                                    'squadra_home': sq_home, 'squadra_away': sq_away})
+                    df_raw_u = pd.read_excel(f)
+                    df_gk_h, df_gk_a, df_tir_h, df_tir_a, df_h2h_u = elabora_file_unificato(df_raw_u, sq_home_u, sq_away_u)
+                    if not df_gk_h.empty:
+                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_gk_a.empty:
+                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_tir_h.empty:
+                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_tir_a.empty:
+                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                    if not df_h2h_u.empty:
+                        pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
+                    st.caption(f"Parsed: {len(df_gk_h)} GK-home rows, {len(df_gk_a)} GK-away rows, "
+                               f"{len(df_tir_h)} shooter-home rows, {len(df_tir_a)} shooter-away rows, "
+                               f"{len(df_h2h_u)} head-to-head events.")
                 except Exception as e:
                     st.error(f'Error processing file {f.name}: {e}')
 
-            if st.button('➕ Save & Process Matches (add to shooter season)'):
-                chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
-                aggiunte, duplicati = 0, 0
-                for match in pe_tir:
+            if st.button('➕ Save & Process Match (unified)'):
+                chiavi_gk = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
+                chiavi_tir = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
+                chiavi_h2h = {(p['nome'], str(p['data'])) for p in st.session_state['db_h2h']}
+                agg_gk = agg_tir = agg_h2h = 0
+                for match in pe_gk_uni:
                     chiave = (match['nome'], str(match['data']), match['squadra'])
-                    if chiave in chiavi_esistenti:
-                        duplicati += 1
-                        continue
-                    st.session_state['db_tiratori'].append(match)
-                    chiavi_esistenti.add(chiave)
-                    aggiunte += 1
+                    if chiave not in chiavi_gk:
+                        st.session_state['db'].append(match)
+                        chiavi_gk.add(chiave)
+                        agg_gk += 1
+                for match in pe_tir_uni:
+                    chiave = (match['nome'], str(match['data']), match['squadra'])
+                    if chiave not in chiavi_tir:
+                        st.session_state['db_tiratori'].append(match)
+                        chiavi_tir.add(chiave)
+                        agg_tir += 1
+                for match in pe_h2h_uni:
+                    chiave = (match['nome'], str(match['data']))
+                    if chiave not in chiavi_h2h:
+                        st.session_state['db_h2h'].append(match)
+                        chiavi_h2h.add(chiave)
+                        agg_h2h += 1
+                salva_stagione_su_disco(st.session_state['db'])
                 salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
-                if aggiunte:
-                    st.success(f'{aggiunte} match(es) added. Total shooter matches in memory: {len(st.session_state["db_tiratori"])}.')
-                if duplicati:
-                    st.warning(f'{duplicati} match(es) skipped because already present.')
+                salva_h2h_su_disco(st.session_state['db_h2h'])
+                st.success(f"Saved: {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
+                           f"{agg_h2h} head-to-head match(es) added.")
+
+        st.caption("Prefer the old 4-file workflow for a specific match? You can still use "
+                   "'Upload Match Sheets' (goalkeepers) and the legacy shooter uploader below.")
+
+        st.markdown("---")
+        # ============================================================
+        # UPLOAD FILE TIRATORI (formato legacy, un file per squadra — ancora supportato)
+        # ============================================================
+        with st.expander("📥 Legacy shooter-only upload (old 5-column format)"):
+            st.caption("Excel files with columns TIRATORE, TIRO, GOAL SECTOR, RESULT, TIMELINE — one file per team.")
+            fc_tir = st.file_uploader('Drag and drop shooter Excel files here', type=['xlsx', 'xls'],
+                                       accept_multiple_files=True, key="upload_tiratori")
+
+            if fc_tir:
+                pe_tir = []
+                for idx, f in enumerate(fc_tir):
+                    st.markdown(f"**File Configuration: {f.name}**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1: nm = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'tn_{idx}')
+                    with col2: dt = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"td_{idx}")
+                    with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f'ts_{idx}')
+                    try:
+                        df_raw = pd.read_excel(f)
+                        df_elaborato = elabora_file_tiratori(df_raw)
+                        sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
+                        pe_tir.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df_elaborato,
+                                        'squadra_home': sq_home, 'squadra_away': sq_away})
+                    except Exception as e:
+                        st.error(f'Error processing file {f.name}: {e}')
+
+                if st.button('➕ Save & Process Matches (add to shooter season)'):
+                    chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
+                    aggiunte, duplicati = 0, 0
+                    for match in pe_tir:
+                        chiave = (match['nome'], str(match['data']), match['squadra'])
+                        if chiave in chiavi_esistenti:
+                            duplicati += 1
+                            continue
+                        st.session_state['db_tiratori'].append(match)
+                        chiavi_esistenti.add(chiave)
+                        aggiunte += 1
+                    salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+                    if aggiunte:
+                        st.success(f'{aggiunte} match(es) added. Total shooter matches in memory: {len(st.session_state["db_tiratori"])}.')
+                    if duplicati:
+                        st.warning(f'{duplicati} match(es) skipped because already present.')
 
         st.markdown("---")
         st.subheader("🗑️ Delete a Single Shooter Match")
@@ -2595,7 +3013,21 @@ with tab4:
                 st.rerun()
         else:
             st.caption("No shooter matches to delete yet.")
-        st.caption("To wipe the whole season (goalkeepers + shooters), use 'Reset Season' in the Upload Match Sheets tab.")
+
+        st.subheader("🗑️ Delete a Single Head-to-Head Match")
+        if st.session_state['db_h2h']:
+            opzioni_elimina_h2h = [f"{p['nome']} ({p['data']})" for p in st.session_state['db_h2h']]
+            partita_elimina_h2h = st.selectbox("Select the match to delete:", opzioni_elimina_h2h, key="elimina_h2h_select")
+            idx_elimina_h2h = opzioni_elimina_h2h.index(partita_elimina_h2h)
+            conferma_elimina_h2h = st.checkbox("I confirm I want to delete this head-to-head match only (irreversible)", key="conferma_elimina_h2h")
+            if st.button("🗑️ Delete This Head-to-Head Match", disabled=not conferma_elimina_h2h):
+                st.session_state['db_h2h'].pop(idx_elimina_h2h)
+                salva_h2h_su_disco(st.session_state['db_h2h'])
+                st.success(f"Match '{partita_elimina_h2h}' deleted.")
+                st.rerun()
+        else:
+            st.caption("No head-to-head matches to delete yet.")
+        st.caption("To wipe the whole season (goalkeepers + shooters + head-to-head), use 'Reset Season' in the Upload Match Sheets tab.")
 
         # ============================================================
         # DASHBOARD
@@ -2763,6 +3195,7 @@ with tab4:
                         df_giocatore_vista = df_giocatore
 
                     with st.expander(f"🤾 {nome_giocatore}", expanded=(modalita_tir == "Player")):
+                        gestisci_foto_giocatore(nome_giocatore, key_prefix="tir")
                         goal_tot, shots_tot, pct_tot = calcola_metriche_tiratori_gruppo(df_giocatore_vista)
                         cA, cB, cC = st.columns(3)
                         cA.metric("Shots", shots_tot)
@@ -2896,3 +3329,38 @@ with tab4:
                                 )
                             except Exception as e:
                                 st.error(f"Error generating PDF: {e}")
+
+        # ============================================================
+        # TESTA A TESTA: "chi soffre chi"
+        # ============================================================
+        st.markdown("---")
+        st.header("🥊 Head-to-Head — Who Suffers Whom")
+        st.caption("Available only for matches uploaded with the unified format (HOME/AWAY, single file).")
+
+        if not st.session_state['db_h2h']:
+            st.info("No head-to-head data yet — upload at least one match using the unified format above.")
+        else:
+            df_h2h_tot = pd.concat([m['dati'] for m in st.session_state['db_h2h']], ignore_index=True)
+            portieri_h2h = sorted(df_h2h_tot['PORTIERE_CLEAN'].unique())
+            tiratori_h2h = sorted(df_h2h_tot['TIRATORE_CLEAN'].unique())
+            tutti_giocatori_h2h = sorted(set(portieri_h2h) | set(tiratori_h2h))
+
+            giocatore_h2h = st.selectbox("Select player (goalkeeper or shooter):", tutti_giocatori_h2h, key="giocatore_h2h")
+            e_portiere_h2h = giocatore_h2h in portieri_h2h
+
+            classifica_completa = classifica_h2h(df_h2h_tot, giocatore_h2h, e_portiere_h2h)
+            squadre_avversarie_disponibili = sorted(classifica_completa['Team'].dropna().unique())
+            squadre_scelte_h2h = st.multiselect(
+                "Filter by opponent team (leave empty to include all teams faced):",
+                squadre_avversarie_disponibili, default=[], key="squadre_h2h"
+            )
+            if squadre_scelte_h2h:
+                classifica_finale = classifica_completa[classifica_completa['Team'].isin(squadre_scelte_h2h)].reset_index(drop=True)
+            else:
+                classifica_finale = classifica_completa
+
+            etichetta_ruolo = "Goalkeeper" if e_portiere_h2h else "Shooter"
+            etichetta_avv = "Shooters" if e_portiere_h2h else "Goalkeepers"
+            st.markdown(f"**{giocatore_h2h}** ({etichetta_ruolo}) — {etichetta_avv} ranked from most to least suffered:")
+            classifica_finale_vis = classifica_finale.rename(columns={'Opponent': etichetta_avv[:-1] if etichetta_avv.endswith('s') else etichetta_avv})
+            st.dataframe(classifica_finale_vis, use_container_width=True, hide_index=True)
