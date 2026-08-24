@@ -977,9 +977,9 @@ def costruisci_conteggi_tastiera(df):
         goal[tasto] = len(df_s[df_s['RESULT_CLEAN'].isin(['goal', 'g'])])
     return tot, goal
 
-def top_n_tiratori(df, n=6, solo_money_time=False):
-    """Restituisce i primi n giocatori per NUMERO di tiri presi (non per %), con relativa % di
-    realizzazione, in ordine decrescente di volume."""
+def classifica_tiratori_per_volume(df, solo_money_time=False, n=None):
+    """Restituisce TUTTI i giocatori (o i primi n se specificato) ordinati per NUMERO di tiri
+    presi (non per %), in ordine decrescente di volume, con relativa % di realizzazione."""
     d = df[df['Is_Money_Time'] == True] if solo_money_time else df
     if d.empty:
         return pd.DataFrame({'Player': [], 'Shots': [], 'Goals': [], 'Goal %': []})
@@ -987,8 +987,8 @@ def top_n_tiratori(df, n=6, solo_money_time=False):
     for giocatore, df_g in d.groupby('TIRATORE_CLEAN'):
         goal, tot, pct = calcola_metriche_tiratori_gruppo(df_g)
         righe.append({'Player': giocatore, 'Shots': tot, 'Goals': goal, 'Goal %': round(pct, 1)})
-    df_top = pd.DataFrame(righe).sort_values('Shots', ascending=False).head(n).reset_index(drop=True)
-    return df_top
+    df_classifica = pd.DataFrame(righe).sort_values('Shots', ascending=False).reset_index(drop=True)
+    return df_classifica.head(n) if n else df_classifica
 
 def tabella_macro_tiratori(df):
     """Tabella con il totale per ciascun macro-settore (LW, RW, FB, Sector 1...3, 7m, EG)."""
@@ -2589,17 +2589,17 @@ with tab4:
                 if solo_money_time and not df_selezione.empty:
                     df_selezione = df_selezione[df_selezione['Is_Money_Time'] == True]
 
-                # ---- Top 6 shooters (team view only) ----
+                # ---- Shooters ranked by shot volume (team view only) ----
                 if modalita_tir == "Team":
                     st.markdown("---")
-                    st.subheader(f"🔝 Top 6 Shooters — {titolo_dashboard}")
+                    st.subheader(f"🔝 Shooters by Shot Volume — {titolo_dashboard}")
                     cc1, cc2 = st.columns(2)
                     with cc1:
                         st.markdown("**By total shot volume**")
-                        st.dataframe(top_n_tiratori(df_selezione, 6), use_container_width=True, hide_index=True)
+                        st.dataframe(classifica_tiratori_per_volume(df_selezione), use_container_width=True, hide_index=True)
                     with cc2:
                         st.markdown("**By Money Time shot volume**")
-                        st.dataframe(top_n_tiratori(df_selezione, 6, solo_money_time=True), use_container_width=True, hide_index=True)
+                        st.dataframe(classifica_tiratori_per_volume(df_selezione, solo_money_time=True), use_container_width=True, hide_index=True)
 
                 # ---- Shot Map: porta e pulsantiera affiancate ----
                 st.markdown("---")
@@ -2692,8 +2692,9 @@ with tab4:
                         cB.metric("Goals", goal_tot)
                         cC.metric("Goal %", f"{pct_tot:.1f}%")
 
-                        # ---- Porta e tastiera individuali (solo in vista Team: in vista Player
-                        # sono già mostrate, identiche e interattive, nella Shot Map qui sopra) ----
+                        # ---- Porta e tastiera individuali (stessa identica grafica e funzionalità
+                        # della pulsantiera condivisa qui sopra; solo in vista Team — in vista Player
+                        # sono già mostrate, identiche, nella Shot Map in cima alla pagina) ----
                         if modalita_tir == "Team":
                             if tasto_scelto:
                                 df_per_porta = df_giocatore[df_giocatore['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
@@ -2703,24 +2704,35 @@ with tab4:
                                 expected_sel = ottieni_expected_goal_pct(tasto_scelto)
                                 colore_cornice = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
                                 tot_porta, goal_porta = costruisci_conteggi_porta(df_per_porta)
-                                fig_p = disegna_porta(tot_porta, goal_porta, colore_cornice=colore_cornice,
-                                                       titolo=f"Shots from {tasto_scelto}")
-                                expected_testo = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
-                                st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  "
-                                           f"Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})" if t_sel > 0 else
-                                           f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  No shots from this sector.")
                             else:
                                 tot_porta, goal_porta = costruisci_conteggi_porta(df_giocatore_vista)
-                                fig_p = disegna_porta(tot_porta, goal_porta)
-
+                                colore_cornice = None
+                            fig_p = disegna_porta(tot_porta, goal_porta, colore_cornice=colore_cornice)
                             tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore)
-                            fig_t = disegna_tastiera(tot_tast, goal_tast, tasto_selezionato=tasto_scelto)
 
+                            chiave_giocatore = _chiave_css_sicura(nome_giocatore)
                             col_porta, col_tast = st.columns([1, 2])
                             with col_porta:
                                 st.pyplot(fig_p)
+                                if tasto_scelto:
+                                    expected_testo = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
+                                    if t_sel > 0:
+                                        st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})")
+                                    else:
+                                        st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  No shots from this sector.")
                             with col_tast:
-                                st.pyplot(fig_t)
+                                tasto_cliccato_p = pulsantiera_settori_campo(
+                                    tot_tast, goal_tast, tasto_scelto, key_prefix=f"pulsantiera_{chiave_giocatore}"
+                                )
+                                if tasto_cliccato_p:
+                                    st.session_state['tasto_focus_shared'] = (
+                                        None if tasto_cliccato_p == tasto_scelto else tasto_cliccato_p
+                                    )
+                                    st.rerun()
+                                if tasto_scelto:
+                                    if st.button("↺ Reset — show all sectors", key=f"reset_tasto_focus_{chiave_giocatore}"):
+                                        st.session_state['tasto_focus_shared'] = None
+                                        st.rerun()
 
                         # ---- Macro breakdown ----
                         if macro_key:
