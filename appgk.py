@@ -869,38 +869,43 @@ def _colori_heatmap_frequenza(conteggi):
     return colori
 
 def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None):
-    """Disegna la tastiera dei settori di campo con heat map a 4 colori (frequenza tiri) e,
-    sotto ogni tasto, 'goal/totale = pct%'. Il tasto eventualmente selezionato viene evidenziato
-    con un bordo nero spesso."""
+    """Disegna la tastiera dei settori di campo per i PDF, con lo stesso stile 'a barre larghe'
+    della pulsantiera interattiva a schermo (una riga per fascia, celle rettangolari a piena
+    larghezza): più leggibile della vecchia griglia quadrata, che non aveva spazio per le
+    percentuali più lunghe. Heat map a 4 colori (frequenza tiri); il tasto eventualmente
+    selezionato viene evidenziato con un bordo nero spesso."""
     colori_heat = _colori_heatmap_frequenza(conteggi_totali)
     n_righe = len(ORDINE_TASTIERA_TIRATORI)
-    n_col_max = max(len(r) for r in ORDINE_TASTIERA_TIRATORI)
+    larghezza_totale = 10  # unità arbitrarie: ogni riga occupa sempre l'intera larghezza
+    altezza_cella = 0.62
+    spazio_riga = 1.0
 
-    fig, ax = plt.subplots(figsize=(7.1, 4.6), dpi=150)
-    ax.set_xlim(0, n_col_max)
-    ax.set_ylim(0, n_righe)
-    ax.set_aspect('equal')
+    fig, ax = plt.subplots(figsize=(9.5, 5.6), dpi=150)
+    ax.set_xlim(0, larghezza_totale)
+    ax.set_ylim(0, n_righe * spazio_riga)
     ax.axis('off')
     fig.patch.set_facecolor('white')
 
     for r, riga in enumerate(ORDINE_TASTIERA_TIRATORI):
-        offset = (n_col_max - len(riga)) / 2
+        larghezza_cella = larghezza_totale / len(riga)
+        y0 = (n_righe - 1 - r) * spazio_riga + (spazio_riga - altezza_cella) / 2
         for c, tasto in enumerate(riga):
-            x0 = offset + c
-            y0 = n_righe - 1 - r
+            x0 = c * larghezza_cella
             tot = conteggi_totali.get(tasto, 0)
             goal = conteggi_goal.get(tasto, 0)
             pct = (goal / tot * 100) if tot > 0 else None
             colore = colori_heat.get(tasto, '#e9edf3')
-            bordo_larghezza = 3.2 if tasto == tasto_selezionato else 1.2
+            bordo_larghezza = 2.6 if tasto == tasto_selezionato else 1.2
             colore_bordo = 'black' if tasto == tasto_selezionato else 'white'
-            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor=colore, edgecolor=colore_bordo,
-                                        linewidth=bordo_larghezza, zorder=1))
-            testo_colore = '#222222' if colore == '#f2d24b' or colore == '#e9edf3' else 'white'
-            ax.text(x0 + 0.5, y0 + 0.62, tasto, ha='center', va='center', fontsize=10.5,
+            margine = larghezza_cella * 0.04
+            ax.add_patch(plt.Rectangle((x0 + margine, y0), larghezza_cella - 2 * margine, altezza_cella,
+                                        facecolor=colore, edgecolor=colore_bordo, linewidth=bordo_larghezza, zorder=1))
+            testo_colore = '#222222' if colore in ('#f2d24b', '#e9edf3') else 'white'
+            centro_x = x0 + larghezza_cella / 2
+            testo_val = f"{goal}/{tot}={pct:.0f}%" if tot > 0 else "0/0"
+            ax.text(centro_x, y0 + altezza_cella * 0.66, tasto, ha='center', va='center', fontsize=10,
                     color=testo_colore, fontweight='bold', zorder=2)
-            testo_val = f"{goal}/{tot} = {pct:.0f}%" if tot > 0 else "0/0"
-            ax.text(x0 + 0.5, y0 + 0.32, testo_val, ha='center', va='center', fontsize=9,
+            ax.text(centro_x, y0 + altezza_cella * 0.27, testo_val, ha='center', va='center', fontsize=9,
                     color=testo_colore, zorder=2)
     fig.tight_layout()
     return fig
