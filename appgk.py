@@ -812,14 +812,16 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
     colore_cornice: se fornito ('#rrggbb'), colora il bordo esterno (usato quando è selezionato
     un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
     fig, ax = plt.subplots(figsize=(2.9, 2.5), dpi=150)
-    ax.set_xlim(0, 3)
-    ax.set_ylim(0, 3)
+    margine_cornice = 0.22
+    ax.set_xlim(-margine_cornice, 3 + margine_cornice)
+    ax.set_ylim(-margine_cornice, 3 + margine_cornice)
     ax.set_aspect('equal')
     ax.axis('off')
 
     bordo = colore_cornice if colore_cornice else '#2c4a6e'
     fig.patch.set_facecolor('white')
-    ax.add_patch(plt.Rectangle((-0.12, -0.12), 3.24, 3.24, facecolor=bordo, edgecolor='none', zorder=0))
+    ax.add_patch(plt.Rectangle((-margine_cornice, -margine_cornice), 3 + 2 * margine_cornice, 3 + 2 * margine_cornice,
+                                facecolor=bordo, edgecolor='none', zorder=0))
 
     colori_heat = _colori_heatmap_porta(conteggi_totali)
     for r, riga in enumerate(ORDINE_PORTA):
