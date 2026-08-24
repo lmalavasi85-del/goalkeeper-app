@@ -2274,13 +2274,43 @@ with tab1:
         # UPLOAD FILE UNIFICATO (formato unico HOME/AWAY, un solo file per l'intera gara)
         # ============================================================
         st.subheader("📥 Upload Match (unified format — recommended)")
-        st.caption("A single Excel file for the whole match, columns: HOME, AWAY, TIRO, RESULT, "
-                   "GOAL SECTOR, TIMELINE. The goalkeeper on duty is marked with \"[G]\" in the "
-                   "HOME or AWAY cell; the other cell holds the shooter facing them. Team names "
-                   "are read automatically from the file name (e.g. \"Merano-Brixen 23-8-2026.xlsx\" "
-                   "→ Merano home, Brixen away) — no need to type them in. This single upload "
-                   "feeds goalkeepers, shooters (Shooting Trend Analysis) and the Head-to-Head "
-                   "analysis all at once.")
+        st.caption("A single Excel file for the whole match — see the file format rules below.")
+
+        with st.expander("📋 File format rules (read this if you're tagging matches for the team)"):
+            st.markdown("""
+**File name**
+
+Format: `Home-Away Date (day-month-year).xlsx`
+
+Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away team **Brixen**, played on **23 August 2026**.
+
+- The **first** name (before the dash) is always the home team, the **second** (after the dash) is always the away team.
+- The date after that is read as **day-month-year** (not month-day-year).
+- The Game Name and Event Date fields are filled in automatically from this — you shouldn't need to type them by hand.
+
+**Columns** (any order, any capitalization — the app finds them by name)
+
+| Column | What goes in it |
+|---|---|
+| `HOME` | Whoever is involved on the home team's side of that shot: either the home goalkeeper (if the home team is defending) or the home shooter (if the home team is attacking) |
+| `AWAY` | Same, for the away team |
+| `TIRO` | The shot zone: `7m`, `6m1`, `6m1,5`, `6m2`, `6m2,5`, `6m3`, `bt1`...`bt3`, `9m1`...`9m3`, `lw1`, `lw2`, `rw1`, `rw2`, `fb1`, `fb2`, `fb3` |
+| `GOAL SECTOR` | Which of the 9 net zones (`T1`...`T9`) the shot went to — only relevant if a shooter is tagged on that row |
+| `RESULT` | `goal`, `save`, or `miss` |
+| `TIMELINE` | Match clock and score, e.g. `23'45'' - 6-4`. For friendlies you're not timing, just leave it blank or use a simple sequence |
+
+**The `[G]` rule** — this is the key thing to get right:
+- Whichever of `HOME`/`AWAY` has **`[G]`** in the name (e.g. `Panitti [G]`, `#1 - Kabashi [G]`) is read as the **goalkeeper** defending that shot.
+- The other cell, if filled, is the **shooter** facing him.
+- A cell **without** `[G]` is always treated as a shooter — never as a goalkeeper.
+
+**Tagging only part of a match is fine** — leave a cell empty for whatever you're not tracking:
+- Only tracking your own goalkeeper's saves? Tag the `[G]` cell, leave the shooter's cell empty.
+- Only tracking your own shooters, don't care who the opposing goalkeeper is? Tag the shooter's cell, leave the other cell empty (no `[G]` needed anywhere on that row).
+- Tagging both (goalkeeper *and* shooter on the same row)? That's what feeds the Head-to-Head "who suffers whom" analysis — worth doing whenever you can.
+- A row with **both** cells empty, or with `[G]` on **both** sides, doesn't make sense and gets skipped automatically.
+            """)
+
         fc_uni = st.file_uploader('Drag and drop the unified match file(s) here', type=['xlsx', 'xls'],
                                    accept_multiple_files=True, key="upload_unificato")
 
