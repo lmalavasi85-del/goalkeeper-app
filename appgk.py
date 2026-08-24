@@ -1779,8 +1779,10 @@ with tab1:
 
     if not st.session_state['upload_authorized']:
         st.info("🔒 This section is reserved for authorized staff. Everyone else can freely view the Single Game Analysis and Seasonal Report tabs.")
-        codice_inserito = st.text_input("Access code", type="password", key="codice_upload")
-        if st.button("Unlock"):
+        with st.form(key="form_upload_access", clear_on_submit=True):
+            codice_inserito = st.text_input("Access code", type="password", key="codice_upload")
+            sbloccato = st.form_submit_button("Unlock")
+        if sbloccato:
             if codice_inserito == UPLOAD_ACCESS_CODE:
                 st.session_state['upload_authorized'] = True
                 st.rerun()
@@ -2465,8 +2467,10 @@ with tab4:
 
     if not st.session_state['staff_authorized']:
         st.info("🔒 This section is reserved for authorized staff.")
-        codice_staff = st.text_input("Access code", type="password", key="codice_staff")
-        if st.button("Unlock", key="unlock_staff"):
+        with st.form(key="form_staff_access", clear_on_submit=True):
+            codice_staff = st.text_input("Access code", type="password", key="codice_staff")
+            sbloccato_staff = st.form_submit_button("Unlock")
+        if sbloccato_staff:
             if codice_staff == STAFF_ACCESS_CODE:
                 st.session_state['staff_authorized'] = True
                 st.rerun()
