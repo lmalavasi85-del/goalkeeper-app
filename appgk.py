@@ -22,12 +22,6 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak, KeepTogether, HRFlowable
 
-try:
-    from streamlit_extras.stylable_container import stylable_container
-    _STYLABLE_CONTAINER_DISPONIBILE = True
-except Exception:
-    _STYLABLE_CONTAINER_DISPONIBILE = False
-
 # Logo dell'associazione, incorporato direttamente nel codice (base64) cosicche' non
 # serva gestire un file immagine separato: appare su ogni pagina dei PDF esportati.
 LOGO_BASE64 = (
@@ -237,40 +231,47 @@ TUTTI_I_TASTI_TIRATORI = [t for riga in ORDINE_TASTIERA_TIRATORI for t in riga]
 # PULSANTIERA INTERATTIVA (la tastiera dei settori di campo, come vera pulsantiera cliccabile,
 # colorata con la stessa heat map a 4 colori usata nell'immagine statica/PDF)
 # ============================================================
+# ============================================================
+# PULSANTIERA INTERATTIVA (la tastiera dei settori di campo, come vera pulsantiera cliccabile,
+# colorata con la stessa heat map a 4 colori usata nell'immagine statica/PDF). Ogni pulsante
+# viene colorato individualmente con puro CSS (nessuna dipendenza esterna): un piccolo marcatore
+# invisibile viene inserito subito prima del pulsante e il CSS lo colora tramite selettore "+"
+# (fratello immediatamente successivo nel DOM), tecnica standard e stabile in Streamlit.
+# ============================================================
 def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key):
-    """Renderizza un singolo pulsante Streamlit colorato (via streamlit-extras stylable_container,
-    se disponibile). Restituisce True se il pulsante è stato premuto in questo rerun."""
+    """Renderizza un singolo pulsante Streamlit colorato in modo puntuale via CSS.
+    Restituisce True se il pulsante è stato premuto in questo rerun."""
     colore_testo = '#1a1a1a' if colore_sfondo in ('#f2d24b', '#e9edf3') else 'white'
-    bordo = '3px solid #111111' if selezionato else '1px solid white'
-    if _STYLABLE_CONTAINER_DISPONIBILE:
-        css = f"""
-        button {{
-            background-color: {colore_sfondo} !important;
-            color: {colore_testo} !important;
-            border: {bordo} !important;
-            font-weight: 700;
-            white-space: pre-line;
-            line-height: 1.15;
-            height: 52px;
-            padding: 2px 4px;
-        }}
-        button:disabled {{
-            background-color: {colore_sfondo} !important;
-            color: {colore_testo} !important;
-            opacity: 0.55;
-        }}
-        """
-        with stylable_container(key=f"style_{key}", css_styles=css):
-            return st.button(etichetta, key=key, disabled=disabilitato, use_container_width=True)
+    bordo = '3px solid #111111' if selezionato else f'1px solid {colore_sfondo}'
+    marcatore = f"btnmark-{key}"
+    st.markdown(
+        f'<span class="{marcatore}"></span>'
+        f'<style>'
+        f'.{marcatore} + div button {{'
+        f'    background-color: {colore_sfondo} !important;'
+        f'    color: {colore_testo} !important;'
+        f'    border: {bordo} !important;'
+        f'    font-weight: 700;'
+        f'    white-space: pre-line;'
+        f'    line-height: 1.2;'
+        f'    height: 54px;'
+        f'    padding: 2px 4px;'
+        f'}}'
+        f'.{marcatore} + div button:disabled {{'
+        f'    background-color: {colore_sfondo} !important;'
+        f'    color: {colore_testo} !important;'
+        f'    opacity: 0.55;'
+        f'    border: 1px solid {colore_sfondo} !important;'
+        f'}}'
+        f'</style>',
+        unsafe_allow_html=True
+    )
     return st.button(etichetta, key=key, disabled=disabilitato, use_container_width=True)
 
 def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix):
     """Disegna l'intera tastiera dei settori di campo come griglia di pulsanti cliccabili veri
     (stesso layout piramidale e stessa heat map a 4 colori dell'immagine statica). Restituisce
     il nome del tasto appena cliccato in questo rerun, o None."""
-    if not _STYLABLE_CONTAINER_DISPONIBILE:
-        st.caption("ℹ️ Add `streamlit-extras` to requirements.txt to get fully color-coded buttons "
-                   "(the buttons still work without it, just without the heat-map colors).")
     colori_heat = _colori_heatmap_frequenza(conteggi_totali)
     n_col_max = max(len(r) for r in ORDINE_TASTIERA_TIRATORI)
     cliccato = None
