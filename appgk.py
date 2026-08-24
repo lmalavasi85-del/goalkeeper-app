@@ -239,10 +239,11 @@ TUTTI_I_TASTI_TIRATORI = [t for riga in ORDINE_TASTIERA_TIRATORI for t in riga]
 # (fratello immediatamente successivo nel DOM), tecnica standard e stabile in Streamlit.
 # ============================================================
 def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key):
-    """Renderizza un singolo pulsante Streamlit colorato in modo puntuale via CSS.
+    """Renderizza un singolo pulsante Streamlit colorato in modo puntuale via CSS, con un look
+    'a tessera' (bordi squadrati, nessuna ombra) che replica la grafica della heat map originale.
     Restituisce True se il pulsante è stato premuto in questo rerun."""
     colore_testo = '#1a1a1a' if colore_sfondo in ('#f2d24b', '#e9edf3') else 'white'
-    bordo = '3px solid #111111' if selezionato else f'1px solid {colore_sfondo}'
+    bordo = '3px solid #111111' if selezionato else f'2px solid {colore_sfondo}'
     marcatore = f"btnmark-{key}"
     st.markdown(
         f'<span class="{marcatore}"></span>'
@@ -251,11 +252,16 @@ def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key)
         f'    background-color: {colore_sfondo} !important;'
         f'    color: {colore_testo} !important;'
         f'    border: {bordo} !important;'
+        f'    border-radius: 3px !important;'
+        f'    box-shadow: none !important;'
         f'    font-weight: 700;'
+        f'    font-size: 0.78rem;'
         f'    white-space: pre-line;'
-        f'    line-height: 1.2;'
-        f'    height: 54px;'
-        f'    padding: 2px 4px;'
+        f'    line-height: 1.15;'
+        f'    height: 38px;'
+        f'    min-height: 38px;'
+        f'    padding: 0px 2px;'
+        f'    margin: 0px;'
         f'}}'
         f'.{marcatore} + div button:disabled {{'
         f'    background-color: {colore_sfondo} !important;'
@@ -263,6 +269,7 @@ def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key)
         f'    opacity: 0.55;'
         f'    border: 1px solid {colore_sfondo} !important;'
         f'}}'
+        f'.{marcatore} + div {{ margin-bottom: -8px; }}'
         f'</style>',
         unsafe_allow_html=True
     )
@@ -270,31 +277,35 @@ def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key)
 
 def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix):
     """Disegna l'intera tastiera dei settori di campo come griglia di pulsanti cliccabili veri
-    (stesso layout piramidale e stessa heat map a 4 colori dell'immagine statica). Restituisce
-    il nome del tasto appena cliccato in questo rerun, o None."""
+    (stesso layout piramidale e stessa heat map a 4 colori dell'immagine statica), pensata per
+    stare affiancata alla porta in una colonna stretta. Restituisce il nome del tasto appena
+    cliccato in questo rerun, o None."""
+    st.markdown(
+        "<style>div[data-testid='stHorizontalBlock']{gap:0.3rem;}"
+        "div[data-testid='column']{padding:0px 1px;}</style>",
+        unsafe_allow_html=True
+    )
     colori_heat = _colori_heatmap_frequenza(conteggi_totali)
     n_col_max = max(len(r) for r in ORDINE_TASTIERA_TIRATORI)
     cliccato = None
-    col_centro = st.columns([1, 6, 1])[1]
-    with col_centro:
-        for r, riga in enumerate(ORDINE_TASTIERA_TIRATORI):
-            spazio = (n_col_max - len(riga)) / 2
-            larghezze = ([spazio] if spazio > 0 else []) + [1] * len(riga) + ([spazio] if spazio > 0 else [])
-            colonne = st.columns(larghezze)
-            colonne_tasti = colonne[1:-1] if spazio > 0 else colonne
-            for col_tasto, tasto in zip(colonne_tasti, riga):
-                tot = conteggi_totali.get(tasto, 0)
-                goal = conteggi_goal.get(tasto, 0)
-                pct_testo = f"{goal}/{tot} = {goal/tot*100:.0f}%" if tot > 0 else "0/0"
-                etichetta = f"{tasto}\n{pct_testo}"
-                colore = colori_heat.get(tasto, '#e9edf3')
-                with col_tasto:
-                    premuto = _pulsante_colorato(
-                        etichetta, colore, disabilitato=(tot == 0),
-                        selezionato=(tasto == tasto_selezionato), key=f"{key_prefix}_{tasto}"
-                    )
-                if premuto:
-                    cliccato = tasto
+    for r, riga in enumerate(ORDINE_TASTIERA_TIRATORI):
+        spazio = (n_col_max - len(riga)) / 2
+        larghezze = ([spazio] if spazio > 0 else []) + [1] * len(riga) + ([spazio] if spazio > 0 else [])
+        colonne = st.columns(larghezze)
+        colonne_tasti = colonne[1:-1] if spazio > 0 else colonne
+        for col_tasto, tasto in zip(colonne_tasti, riga):
+            tot = conteggi_totali.get(tasto, 0)
+            goal = conteggi_goal.get(tasto, 0)
+            pct_testo = f"{goal}/{tot}={goal/tot*100:.0f}%" if tot > 0 else "0/0"
+            etichetta = f"{tasto}\n{pct_testo}"
+            colore = colori_heat.get(tasto, '#e9edf3')
+            with col_tasto:
+                premuto = _pulsante_colorato(
+                    etichetta, colore, disabilitato=(tot == 0),
+                    selezionato=(tasto == tasto_selezionato), key=f"{key_prefix}_{tasto}"
+                )
+            if premuto:
+                cliccato = tasto
     return cliccato
 
 # ============================================================
@@ -775,7 +786,7 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
     Ogni settore è colorato con una heat map a 4 toni di blu in base alla frequenza dei tiri.
     colore_cornice: se fornito ('#rrggbb'), colora il bordo esterno (usato quando è selezionato
     un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
-    fig, ax = plt.subplots(figsize=(3.9, 3.3), dpi=150)
+    fig, ax = plt.subplots(figsize=(2.9, 2.5), dpi=150)
     ax.set_xlim(0, 3)
     ax.set_ylim(0, 3)
     ax.set_aspect('equal')
@@ -795,11 +806,11 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
             pct = (goal / tot * 100) if tot > 0 else None
             colore_cella = colori_heat.get(sett, '#e9edf3')
             testo_colore = '#1a1a1a' if colore_cella in ('#7fb8e0', '#e9edf3') else 'white'
-            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor=colore_cella, edgecolor='white', linewidth=2.5, zorder=1))
-            ax.text(x0 + 0.5, y0 + 0.62, sett, ha='center', va='center', fontsize=11,
+            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor=colore_cella, edgecolor='white', linewidth=1.5, zorder=1))
+            ax.text(x0 + 0.5, y0 + 0.62, sett, ha='center', va='center', fontsize=8.5,
                     color=testo_colore, fontweight='bold', zorder=2)
-            testo_val = f"{goal}/{tot} = {pct:.0f}%" if tot > 0 else "0/0"
-            ax.text(x0 + 0.5, y0 + 0.32, testo_val, ha='center', va='center', fontsize=10.5,
+            testo_val = f"{goal}/{tot}={pct:.0f}%" if tot > 0 else "0/0"
+            ax.text(x0 + 0.5, y0 + 0.30, testo_val, ha='center', va='center', fontsize=7.3,
                     color=testo_colore, zorder=2)
     if titolo:
         ax.set_title(titolo, fontsize=11, color='#15304f', pad=10)
@@ -2553,32 +2564,7 @@ with tab4:
                 if solo_money_time and not df_selezione.empty:
                     df_selezione = df_selezione[df_selezione['Is_Money_Time'] == True]
 
-                # ---- Tastiera dei settori di campo: vera pulsantiera colorata e cliccabile ----
-                st.markdown("---")
-                st.markdown("**Field sector map** (tap a colored sector with shots to focus the goal map on it)")
-                if 'tasto_focus_shared' not in st.session_state:
-                    st.session_state['tasto_focus_shared'] = None
-                tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione)
-                if st.session_state['tasto_focus_shared'] not in TUTTI_I_TASTI_TIRATORI:
-                    st.session_state['tasto_focus_shared'] = None
-                tasto_cliccato = pulsantiera_settori_campo(
-                    tot_tast_sel, goal_tast_sel, st.session_state['tasto_focus_shared'], key_prefix="pulsantiera"
-                )
-                if tasto_cliccato:
-                    st.session_state['tasto_focus_shared'] = (
-                        None if tasto_cliccato == st.session_state['tasto_focus_shared'] else tasto_cliccato
-                    )
-                    st.rerun()
-                if st.session_state['tasto_focus_shared']:
-                    if st.button("↺ Reset — show all sectors", key="reset_tasto_focus"):
-                        st.session_state['tasto_focus_shared'] = None
-                        st.rerun()
-                tasto_scelto = st.session_state['tasto_focus_shared']
-                if tasto_scelto:
-                    st.caption(f"🎯 Focused on field sector: **{tasto_scelto}** (tap it again, or Reset, to clear)")
-
-
-                # ---- Top 6 shooters + General Shot Map (team view only) ----
+                # ---- Top 6 shooters (team view only) ----
                 if modalita_tir == "Team":
                     st.markdown("---")
                     st.subheader(f"🔝 Top 6 Shooters — {titolo_dashboard}")
@@ -2590,28 +2576,53 @@ with tab4:
                         st.markdown("**By Money Time shot volume**")
                         st.dataframe(top_n_tiratori(df_selezione, 6, solo_money_time=True), use_container_width=True, hide_index=True)
 
-                    st.markdown("---")
-                    st.subheader(f"🥅 General Shot Map — {titolo_dashboard}")
+                # ---- Shot Map: porta e pulsantiera affiancate ----
+                st.markdown("---")
+                st.subheader(f"🥅 Shot Map — {titolo_dashboard}")
+                if 'tasto_focus_shared' not in st.session_state:
+                    st.session_state['tasto_focus_shared'] = None
+                tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione)
+                if st.session_state['tasto_focus_shared'] not in TUTTI_I_TASTI_TIRATORI:
+                    st.session_state['tasto_focus_shared'] = None
+                tasto_scelto = st.session_state['tasto_focus_shared']
+
+                if tasto_scelto:
+                    df_porta_sel = df_selezione[df_selezione['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
+                    if macro_key:
+                        df_porta_sel = df_porta_sel[df_porta_sel['macro_settore_tir'] == macro_key]
+                    g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_porta_sel)
+                    expected_sel = ottieni_expected_goal_pct(tasto_scelto)
+                    colore_cornice_sel = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
+                else:
+                    df_porta_sel = df_selezione if not macro_key else df_selezione[df_selezione['macro_settore_tir'] == macro_key]
+                    colore_cornice_sel = None
+                tot_p_sel, goal_p_sel = costruisci_conteggi_porta(df_porta_sel)
+                fig_p_sel = disegna_porta(tot_p_sel, goal_p_sel, colore_cornice=colore_cornice_sel)
+
+                col_porta_sel, col_tast_sel = st.columns([1, 2])
+                with col_porta_sel:
+                    st.pyplot(fig_p_sel)
                     if tasto_scelto:
-                        df_porta_squadra = df_selezione[df_selezione['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
-                        if macro_key:
-                            df_porta_squadra = df_porta_squadra[df_porta_squadra['macro_settore_tir'] == macro_key]
-                        g_sq, t_sq, pct_sq = calcola_metriche_tiratori_gruppo(df_porta_squadra)
-                        expected_sq = ottieni_expected_goal_pct(tasto_scelto)
-                        colore_cornice_sq = _colore_expected(pct_sq if t_sq > 0 else None, expected_sq)
-                        expected_testo_sq = f"{expected_sq:.0f}%" if expected_sq is not None else "n/a"
-                        if t_sq > 0:
-                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sq}**  |  Real: **{pct_sq:.1f}%** ({g_sq}/{t_sq})")
+                        expected_testo_sel = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
+                        if t_sel > 0:
+                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sel}**  |  Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})")
                         else:
-                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sq}**  |  No shots from this sector.")
-                    else:
-                        df_porta_squadra = df_selezione if not macro_key else df_selezione[df_selezione['macro_settore_tir'] == macro_key]
-                        colore_cornice_sq = None
-                    tot_p_sq, goal_p_sq = costruisci_conteggi_porta(df_porta_squadra)
-                    fig_p_sq = disegna_porta(tot_p_sq, goal_p_sq, colore_cornice=colore_cornice_sq)
-                    col_p_sq = st.columns([1, 2, 1])[1]
-                    with col_p_sq:
-                        st.pyplot(fig_p_sq)
+                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sel}**  |  No shots from this sector.")
+                with col_tast_sel:
+                    tasto_cliccato = pulsantiera_settori_campo(
+                        tot_tast_sel, goal_tast_sel, tasto_scelto, key_prefix="pulsantiera"
+                    )
+                    if tasto_cliccato:
+                        st.session_state['tasto_focus_shared'] = (
+                            None if tasto_cliccato == st.session_state['tasto_focus_shared'] else tasto_cliccato
+                        )
+                        st.rerun()
+                    if tasto_scelto:
+                        if st.button("↺ Reset — show all sectors", key="reset_tasto_focus"):
+                            st.session_state['tasto_focus_shared'] = None
+                            st.rerun()
+
+                if modalita_tir == "Team":
                     if macro_key:
                         st.markdown(f"**Breakdown of macro-zone {ETICHETTA_MACRO_TIRATORI[macro_key]}**")
                         g_msq, t_msq, pct_msq = calcola_metriche_tiratori_gruppo(df_selezione[df_selezione['macro_settore_tir'] == macro_key])
@@ -2678,7 +2689,7 @@ with tab4:
                         tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore)
                         fig_t = disegna_tastiera(tot_tast, goal_tast, tasto_selezionato=tasto_scelto)
 
-                        col_porta, col_tast = st.columns(2)
+                        col_porta, col_tast = st.columns([1, 2])
                         with col_porta:
                             st.pyplot(fig_p)
                         with col_tast:
