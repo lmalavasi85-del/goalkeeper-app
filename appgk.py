@@ -22,6 +22,12 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak, KeepTogether, HRFlowable
 
+try:
+    from streamlit_extras.stylable_container import stylable_container
+    _STYLABLE_CONTAINER_DISPONIBILE = True
+except Exception:
+    _STYLABLE_CONTAINER_DISPONIBILE = False
+
 # Logo dell'associazione, incorporato direttamente nel codice (base64) cosicche' non
 # serva gestire un file immagine separato: appare su ogni pagina dei PDF esportati.
 LOGO_BASE64 = (
@@ -226,6 +232,69 @@ ORDINE_TASTIERA_TIRATORI = [
     ['fb1', 'fb2', 'fb3'],
 ]
 TUTTI_I_TASTI_TIRATORI = [t for riga in ORDINE_TASTIERA_TIRATORI for t in riga]
+
+# ============================================================
+# PULSANTIERA INTERATTIVA (la tastiera dei settori di campo, come vera pulsantiera cliccabile,
+# colorata con la stessa heat map a 4 colori usata nell'immagine statica/PDF)
+# ============================================================
+def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key):
+    """Renderizza un singolo pulsante Streamlit colorato (via streamlit-extras stylable_container,
+    se disponibile). Restituisce True se il pulsante è stato premuto in questo rerun."""
+    colore_testo = '#1a1a1a' if colore_sfondo in ('#f2d24b', '#e9edf3') else 'white'
+    bordo = '3px solid #111111' if selezionato else '1px solid white'
+    if _STYLABLE_CONTAINER_DISPONIBILE:
+        css = f"""
+        button {{
+            background-color: {colore_sfondo} !important;
+            color: {colore_testo} !important;
+            border: {bordo} !important;
+            font-weight: 700;
+            white-space: pre-line;
+            line-height: 1.15;
+            height: 52px;
+            padding: 2px 4px;
+        }}
+        button:disabled {{
+            background-color: {colore_sfondo} !important;
+            color: {colore_testo} !important;
+            opacity: 0.55;
+        }}
+        """
+        with stylable_container(key=f"style_{key}", css_styles=css):
+            return st.button(etichetta, key=key, disabled=disabilitato, use_container_width=True)
+    return st.button(etichetta, key=key, disabled=disabilitato, use_container_width=True)
+
+def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix):
+    """Disegna l'intera tastiera dei settori di campo come griglia di pulsanti cliccabili veri
+    (stesso layout piramidale e stessa heat map a 4 colori dell'immagine statica). Restituisce
+    il nome del tasto appena cliccato in questo rerun, o None."""
+    if not _STYLABLE_CONTAINER_DISPONIBILE:
+        st.caption("ℹ️ Add `streamlit-extras` to requirements.txt to get fully color-coded buttons "
+                   "(the buttons still work without it, just without the heat-map colors).")
+    colori_heat = _colori_heatmap_frequenza(conteggi_totali)
+    n_col_max = max(len(r) for r in ORDINE_TASTIERA_TIRATORI)
+    cliccato = None
+    col_centro = st.columns([1, 6, 1])[1]
+    with col_centro:
+        for r, riga in enumerate(ORDINE_TASTIERA_TIRATORI):
+            spazio = (n_col_max - len(riga)) / 2
+            larghezze = ([spazio] if spazio > 0 else []) + [1] * len(riga) + ([spazio] if spazio > 0 else [])
+            colonne = st.columns(larghezze)
+            colonne_tasti = colonne[1:-1] if spazio > 0 else colonne
+            for col_tasto, tasto in zip(colonne_tasti, riga):
+                tot = conteggi_totali.get(tasto, 0)
+                goal = conteggi_goal.get(tasto, 0)
+                pct_testo = f"{goal}/{tot} = {goal/tot*100:.0f}%" if tot > 0 else "0/0"
+                etichetta = f"{tasto}\n{pct_testo}"
+                colore = colori_heat.get(tasto, '#e9edf3')
+                with col_tasto:
+                    premuto = _pulsante_colorato(
+                        etichetta, colore, disabilitato=(tot == 0),
+                        selezionato=(tasto == tasto_selezionato), key=f"{key_prefix}_{tasto}"
+                    )
+                if premuto:
+                    cliccato = tasto
+    return cliccato
 
 # ============================================================
 # EXPECTED SAVES % (efficacia attesa per settore specifico)
@@ -705,7 +774,7 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
     Ogni settore è colorato con una heat map a 4 toni di blu in base alla frequenza dei tiri.
     colore_cornice: se fornito ('#rrggbb'), colora il bordo esterno (usato quando è selezionato
     un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
-    fig, ax = plt.subplots(figsize=(5.2, 4.4), dpi=150)
+    fig, ax = plt.subplots(figsize=(3.9, 3.3), dpi=150)
     ax.set_xlim(0, 3)
     ax.set_ylim(0, 3)
     ax.set_aspect('equal')
@@ -768,7 +837,7 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None):
     n_righe = len(ORDINE_TASTIERA_TIRATORI)
     n_col_max = max(len(r) for r in ORDINE_TASTIERA_TIRATORI)
 
-    fig, ax = plt.subplots(figsize=(9.5, 6.2), dpi=150)
+    fig, ax = plt.subplots(figsize=(7.1, 4.6), dpi=150)
     ax.set_xlim(0, n_col_max)
     ax.set_ylim(0, n_righe)
     ax.set_aspect('equal')
@@ -2483,34 +2552,30 @@ with tab4:
                 if solo_money_time and not df_selezione.empty:
                     df_selezione = df_selezione[df_selezione['Is_Money_Time'] == True]
 
-                # ---- Tastiera dei settori di campo: veri pulsanti cliccabili ----
+                # ---- Tastiera dei settori di campo: vera pulsantiera colorata e cliccabile ----
                 st.markdown("---")
-                st.markdown("**Field sector map** (tap a sector with shots to focus the goal map on it)")
+                st.markdown("**Field sector map** (tap a colored sector with shots to focus the goal map on it)")
                 if 'tasto_focus_shared' not in st.session_state:
                     st.session_state['tasto_focus_shared'] = None
                 tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione)
                 if st.session_state['tasto_focus_shared'] not in TUTTI_I_TASTI_TIRATORI:
                     st.session_state['tasto_focus_shared'] = None
-                if st.button("↺ Reset — show all sectors", key="reset_tasto_focus",
-                             disabled=(st.session_state['tasto_focus_shared'] is None)):
-                    st.session_state['tasto_focus_shared'] = None
+                tasto_cliccato = pulsantiera_settori_campo(
+                    tot_tast_sel, goal_tast_sel, st.session_state['tasto_focus_shared'], key_prefix="pulsantiera"
+                )
+                if tasto_cliccato:
+                    st.session_state['tasto_focus_shared'] = (
+                        None if tasto_cliccato == st.session_state['tasto_focus_shared'] else tasto_cliccato
+                    )
                     st.rerun()
-                for riga in ORDINE_TASTIERA_TIRATORI:
-                    cols_tastiera = st.columns(len(riga))
-                    for col_tasto, tasto in zip(cols_tastiera, riga):
-                        tot_b = tot_tast_sel.get(tasto, 0)
-                        goal_b = goal_tast_sel.get(tasto, 0)
-                        pct_b = f"{goal_b/tot_b*100:.0f}%" if tot_b > 0 else "—"
-                        etichetta_btn = f"{tasto} · {goal_b}/{tot_b} ({pct_b})"
-                        selezionato = (st.session_state['tasto_focus_shared'] == tasto)
-                        with col_tasto:
-                            if st.button(etichetta_btn, key=f"tasto_btn_{tasto}", disabled=(tot_b == 0),
-                                         type=("primary" if selezionato else "secondary"), use_container_width=True):
-                                st.session_state['tasto_focus_shared'] = tasto
-                                st.rerun()
+                if st.session_state['tasto_focus_shared']:
+                    if st.button("↺ Reset — show all sectors", key="reset_tasto_focus"):
+                        st.session_state['tasto_focus_shared'] = None
+                        st.rerun()
                 tasto_scelto = st.session_state['tasto_focus_shared']
                 if tasto_scelto:
-                    st.caption(f"🎯 Focused on field sector: **{tasto_scelto}**")
+                    st.caption(f"🎯 Focused on field sector: **{tasto_scelto}** (tap it again, or Reset, to clear)")
+
 
                 # ---- Top 6 shooters + General Shot Map (team view only) ----
                 if modalita_tir == "Team":
@@ -2543,11 +2608,9 @@ with tab4:
                         colore_cornice_sq = None
                     tot_p_sq, goal_p_sq = costruisci_conteggi_porta(df_porta_squadra)
                     fig_p_sq = disegna_porta(tot_p_sq, goal_p_sq, colore_cornice=colore_cornice_sq)
-                    tot_t_sq, goal_t_sq = costruisci_conteggi_tastiera(df_selezione)
-                    fig_t_sq = disegna_tastiera(tot_t_sq, goal_t_sq, tasto_selezionato=tasto_scelto)
-                    col_p_sq, col_t_sq = st.columns(2)
-                    with col_p_sq: st.pyplot(fig_p_sq)
-                    with col_t_sq: st.pyplot(fig_t_sq)
+                    col_p_sq = st.columns([1, 2, 1])[1]
+                    with col_p_sq:
+                        st.pyplot(fig_p_sq)
                     if macro_key:
                         st.markdown(f"**Breakdown of macro-zone {ETICHETTA_MACRO_TIRATORI[macro_key]}**")
                         g_msq, t_msq, pct_msq = calcola_metriche_tiratori_gruppo(df_selezione[df_selezione['macro_settore_tir'] == macro_key])
