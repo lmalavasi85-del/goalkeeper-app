@@ -500,6 +500,11 @@ def applica_colori_expected(df_settore):
     return df_settore.style.apply(_colora_riga, axis=1).format(formattatori_da_usare)
 
 def analizza_timeline(timeline_str):
+    """Legge il campo timeline (in Videocoach spesso scritto a mano dentro 'Notes', insieme ad
+    altro testo tipo 'fuori'/'traversa') in modo tollerante a errori di battitura (spazi in più
+    o mancanti, trattino incollato al numero, apice di chiusura dimenticato, apici "storti" da
+    autocorrezione) e lo riscrive sempre nel formato canonico rigoroso: 23'25'' - 5-4.
+    Restituisce (minuti_totali, timeline_normalizzata, scarto_punteggio, punteggio_pulito)."""
     if pd.isna(timeline_str) or str(timeline_str).strip().lower() in ('', 'none', 'nan'):
         return 0, "", 0, "0-0"
 
@@ -507,21 +512,39 @@ def analizza_timeline(timeline_str):
     minuti_totali = 0
     scarto = 0
     punteggio_pulito = "0-0"
-    
+    timeline_normalizzata = ""
+
     try:
-        match_tempo = re.search(r"(\d+)'", t_str)
+        # Minuti e secondi: un numero, un apice (dritto o "storto"), un altro numero, 0-2 apici di chiusura
+        match_tempo = re.search(r"(\d{1,3})\s*['’´`]\s*(\d{1,2})\s*['’´`]{0,2}", t_str)
         if match_tempo:
             minuti_totali = int(match_tempo.group(1))
-            
-        match_punti = re.findall(r"(\d+)\s*-\s*(\d+)", t_str)
-        if match_punti:
-            pts = match_punti[-1]
-            p1, p2 = int(pts[0]), int(pts[1])
-            scarto = p1 - p2
-            punteggio_pulito = f"{p1}-{p2}"
-    except:
-        pass
-    return minuti_totali, t_str, scarto, punteggio_pulito
+            secondi = int(match_tempo.group(2))
+
+            # Il punteggio si cerca SOLO nel testo dopo il tempo già riconosciuto, così i secondi
+            # non vengono mai scambiati per un numero del punteggio (es. "23'25 - 5-4" senza apice di chiusura).
+            resto_testo = t_str[match_tempo.end():]
+            match_punti = re.findall(r"(\d{1,3})\s*[-–—]\s*(\d{1,3})", resto_testo)
+            if match_punti:
+                pts = match_punti[-1]
+                p1, p2 = int(pts[0]), int(pts[1])
+                scarto = p1 - p2
+                punteggio_pulito = f"{p1}-{p2}"
+
+            timeline_normalizzata = f"{minuti_totali}'{secondi:02d}'' - {punteggio_pulito}"
+        else:
+            # Fallback: nessun tempo riconoscibile, provo comunque a leggere il punteggio da solo
+            match_punti = re.findall(r"(\d{1,3})\s*[-–—]\s*(\d{1,3})", t_str)
+            if match_punti:
+                pts = match_punti[-1]
+                p1, p2 = int(pts[0]), int(pts[1])
+                scarto = p1 - p2
+                punteggio_pulito = f"{p1}-{p2}"
+            timeline_normalizzata = t_str
+    except Exception:
+        timeline_normalizzata = t_str
+
+    return minuti_totali, timeline_normalizzata, scarto, punteggio_pulito
 
 def calcola_gpi_riga(macro, esito, minuti, scarto):
     e = str(esito).lower().strip()
@@ -1046,7 +1069,7 @@ def elabora_file_portieri(df_raw):
     c_gk = _trova_colonna(['gk', 'portiere', 'porter'])
     c_tiro = _trova_colonna(['tiro', 'shot'])
     c_res = _trova_colonna(['result', 'esito', 'risultato'])
-    c_time = _trova_colonna(['timeline', 'tempo', 'minut'])
+    c_time = _trova_colonna(['timeline', 'tempo', 'minut', 'note'])
 
     mancanti = [nome for nome, val in [('PORTIERE/GK', c_gk), ('TIRO', c_tiro),
                 ('RESULT', c_res), ('TIMELINE', c_time)] if val is None]
@@ -1112,7 +1135,7 @@ def elabora_file_tiratori(df_raw):
     c_tiro = _trova_colonna(['tiro', 'shot'])
     c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
     c_result = _trova_colonna(['result', 'esito', 'risultato'])
-    c_time = _trova_colonna(['timeline', 'tempo', 'minut'])
+    c_time = _trova_colonna(['timeline', 'tempo', 'minut', 'note'])
 
     mancanti = [nome for nome, val in [('TIRATORE', c_tiratore), ('TIRO', c_tiro),
                 ('GOAL SECTOR', c_goalsector), ('RESULT', c_result), ('TIMELINE', c_time)] if val is None]
@@ -1167,7 +1190,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
     c_tiro = _trova_colonna(['tiro', 'shot'])
     c_result = _trova_colonna(['result', 'esito', 'risultato'])
     c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
-    c_time = _trova_colonna(['timeline', 'tempo', 'minut'])
+    c_time = _trova_colonna(['timeline', 'tempo', 'minut', 'note'])
 
     mancanti = [nome for nome, val in [('HOME', c_home), ('AWAY', c_away), ('TIRO', c_tiro),
                 ('RESULT', c_result), ('TIMELINE', c_time)] if val is None]
@@ -3637,7 +3660,7 @@ with tab2:
         
         fig_linee.add_trace(go.Scatter(
             x=x_labels, y=y_values, mode='lines', showlegend=False,
-            line=dict(width=3, color='lightgray')
+            line=dict(width=3, color='lightgray'), hoverinfo='skip'
         ))
         
         for i in range(len(df_match)):
@@ -3646,11 +3669,13 @@ with tab2:
                 marker=dict(
                     size=12, color=colori_punti[i],
                     symbol='square' if df_match['Is_Stress_Test'].values[i] else 'circle'
-                )
+                ),
+                customdata=[df_match['TIRO_CLEAN'].values[i]],
+                hovertemplate="%{x}<br>GPI: %{y:+.1f}<br>Zone: %{customdata}<extra></extra>"
             ))
             
         fig_linee.add_trace(go.Scatter(
-            x=x_labels, y=y_values, mode='text', showlegend=False,
+            x=x_labels, y=y_values, mode='text', showlegend=False, hoverinfo='skip',
             text=df_match['GPI_Tiro'].apply(lambda x: f"+{x}" if x > 0 else str(x)),
             textposition="top center", textfont=dict(weight="bold", color="black")
         ))
