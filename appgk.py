@@ -2849,21 +2849,22 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
     """Genera il PDF finale di una sessione di allenamento: una pagina di copertina (logo
     dell'associazione, eventuale logo/nome squadra, data, nome sessione, note generali + note
     specifiche dell'assegnazione, elenco link) seguita dalle pagine del PDF originale caricato
-    (esportato da OneNote), se presente e se pypdf è disponibile."""
+    (esportato da OneNote), se presente e se pypdf è disponibile. Copertina in orizzontale, come
+    le tipiche pagine OneNote esportate, per un documento finale visivamente coerente."""
     stili = getSampleStyleSheet()
-    titolo_stile = ParagraphStyle('TitoloSessione', parent=stili['Title'], fontSize=20,
+    titolo_stile = ParagraphStyle('TitoloSessione', parent=stili['Title'], fontSize=22,
                                    textColor=COLORE_ACCENTO, spaceAfter=2)
-    sottotitolo_stile = ParagraphStyle('SottotitoloSessione', parent=stili['Heading3'], fontSize=13,
+    sottotitolo_stile = ParagraphStyle('SottotitoloSessione', parent=stili['Heading3'], fontSize=14,
                                         textColor=colors.HexColor('#555555'))
-    sezione_stile = ParagraphStyle('SezioneSessione', parent=stili['Heading2'], spaceBefore=10, spaceAfter=6,
+    sezione_stile = ParagraphStyle('SezioneSessione', parent=stili['Heading2'], spaceBefore=12, spaceAfter=6,
                                     textColor=COLORE_ACCENTO)
 
     buffer_copertina = io.BytesIO()
-    doc = SimpleDocTemplate(buffer_copertina, pagesize=A4, topMargin=1.6 * cm, bottomMargin=1.4 * cm,
+    doc = SimpleDocTemplate(buffer_copertina, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
                              leftMargin=1.8 * cm, rightMargin=1.8 * cm)
     elementi = []
 
-    dimensione_logo = 2.6 * cm
+    dimensione_logo = 2.8 * cm
     squadra_nome = assegnazione.get('squadra') if assegnazione else None
     logo_squadra_b64 = st.session_state['loghi_squadre'].get(squadra_nome) if squadra_nome else None
 
@@ -2872,7 +2873,7 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
           [Paragraph("TRAINING SESSION", titolo_stile), Paragraph(sessione['nome_sessione'], sottotitolo_stile)],
           (RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)), width=dimensione_logo, height=dimensione_logo)
            if logo_squadra_b64 else '')]],
-        colWidths=[dimensione_logo + 0.4 * cm, None, dimensione_logo + 0.2 * cm]
+        colWidths=[dimensione_logo + 0.5 * cm, None, dimensione_logo + 0.3 * cm]
     )
     blocco_titolo.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'), ('ALIGN', (2, 0), (2, 0), 'CENTER'),
@@ -2880,13 +2881,18 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
     elementi.append(blocco_titolo)
-    elementi.append(Spacer(1, 0.6 * cm))
+    elementi.append(Spacer(1, 0.35 * cm))
+    elementi.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#dddddd')))
+    elementi.append(Spacer(1, 0.5 * cm))
 
-    if squadra_nome:
-        elementi.append(Paragraph(f"<b>Team:</b> {squadra_nome}", stili['Normal']))
-    if assegnazione and assegnazione.get('data'):
-        elementi.append(Paragraph(f"<b>Date:</b> {assegnazione['data']}", stili['Normal']))
-    elementi.append(Spacer(1, 0.3 * cm))
+    if squadra_nome or (assegnazione and assegnazione.get('data')):
+        info_riga = []
+        if squadra_nome:
+            info_riga.append(f"<b>Team:</b> {squadra_nome}")
+        if assegnazione and assegnazione.get('data'):
+            info_riga.append(f"<b>Date:</b> {assegnazione['data']}")
+        elementi.append(Paragraph("   |   ".join(info_riga), stili['Normal']))
+        elementi.append(Spacer(1, 0.4 * cm))
 
     if sessione.get('note_generali'):
         elementi.append(Paragraph("Session notes", sezione_stile))
@@ -2899,7 +2905,7 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
         elementi.append(Paragraph("Exercise videos", sezione_stile))
         for link in sessione['link_list']:
             elementi.append(Paragraph(f'• <link href="{link["url"]}" color="blue">{link["nome"]}</link>', stili['Normal']))
-            elementi.append(Spacer(1, 0.1 * cm))
+            elementi.append(Spacer(1, 0.12 * cm))
 
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     buffer_copertina.seek(0)
