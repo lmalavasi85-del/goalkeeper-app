@@ -1549,8 +1549,22 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
 
     # Detailed statistics per goalkeeper
     for gk, info in dati_portieri.items():
+        foto_gk_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk))
+        if foto_gk_b64:
+            intestazione_gk = Table(
+                [[RLImage(io.BytesIO(foto_base64_a_bytes(foto_gk_b64)), width=1.8 * cm, height=1.8 * cm),
+                  Paragraph(f"Detailed Statistics — {gk}", sezione_stile)]],
+                colWidths=[2.1 * cm, None]
+            )
+            intestazione_gk.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ]))
+        else:
+            intestazione_gk = Paragraph(f"Detailed Statistics — {gk}", sezione_stile)
         elementi.append(KeepTogether([
-            Paragraph(f"Detailed Statistics — {gk}", sezione_stile),
+            intestazione_gk,
             Paragraph(
                 f"Total GPI: {info['gpi_totale']:+.1f}   |   Saves: {info['parate']}   |   "
                 f"Goals Conceded: {info['gol']}   |   Save %: {info['pct']:.1f}%   |   Efficiency: {info['eff']:.1f}%",
@@ -3702,6 +3716,7 @@ with tab2:
         for gk in portieri_unici:
             df_gk = df_match[df_match['PORTIERE_CLEAN'] == gk]
             with st.expander(f"{mappa_colori_testo[gk]} {gk}", expanded=True):
+                gestisci_foto_giocatore(identita_giocatore(gk), key_prefix="single_match")
 
                 gpi_totale_gk = df_gk['GPI_Tiro'].sum()
                 s_gk, g_gk, m_gk, pct_gk, eff_gk = calcola_metriche_gruppo(df_gk)
