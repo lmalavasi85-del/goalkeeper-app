@@ -307,6 +307,16 @@ def assicura_colonna_id(df, colonna_clean, colonna_id):
         df[colonna_id] = pd.Series(dtype=object)
     return df
 
+def assicura_colonna_vuota(df, colonna, valore_default=''):
+    """Rete di sicurezza generica: garantisce che 'df' abbia 'colonna', creandola vuota se manca
+    (es. partite portieri salvate prima che GOAL_SECTOR_CLEAN esistesse per loro). Non modifica
+    df in place."""
+    if colonna in df.columns:
+        return df
+    df = df.copy()
+    df[colonna] = valore_default
+    return df
+
 def numeri_maglia_visti(nomi_grezzi):
     """Dato un elenco di nomi grezzi (con numero) di uno stesso giocatore in un certo
     sottoinsieme di partite, restituisce una stringa con il/i numero/i di maglia usati:
@@ -1418,8 +1428,15 @@ def calcola_metriche_tiratori_gruppo(df):
 
 def costruisci_conteggi_porta(df, esiti_successo=('goal', 'g')):
     """dict settore-porta(T1..T9) -> totale tiri, dict -> esiti di successo (default: gol segnati;
-    per i portieri si passa esiti_successo=('save','s') per contare le parate)."""
+    per i portieri si passa esiti_successo=('save','s') per contare le parate). Se il dataframe
+    non ha GOAL_SECTOR_CLEAN (partite portieri caricate prima che questa colonna esistesse per
+    loro), restituisce tutti zeri invece di sollevare un errore."""
     tot, successo = {}, {}
+    if 'GOAL_SECTOR_CLEAN' not in df.columns:
+        for sett in [t for riga in ORDINE_PORTA for t in riga]:
+            tot[sett] = 0
+            successo[sett] = 0
+        return tot, successo
     for sett in [t for riga in ORDINE_PORTA for t in riga]:
         df_s = df[df['GOAL_SECTOR_CLEAN'] == sett]
         tot[sett] = len(df_s)
@@ -2905,6 +2922,7 @@ if 'db' not in st.session_state:
     st.session_state['db'] = carica_stagione_da_disco()
     for _m in st.session_state['db']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
+        _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
 if 'db_tiratori' not in st.session_state:
     st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
     for _m in st.session_state['db_tiratori']:
