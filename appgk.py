@@ -265,6 +265,39 @@ def filtra_per_macro_zona(df, macro_key):
         return df
     return df[df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori) == macro_key]
 
+def selettore_avversario(df_h2h_scope, identita_giocatore_corrente, e_portiere, key_prefix):
+    """Selettore 'faccia a faccia': per un portiere, l'elenco dei tiratori affrontati nell'ambito
+    scelto (partita singola / stagione / selezione); per un tiratore, l'elenco dei portieri
+    affrontati. Restituisce l'identità dell'avversario scelto, o None se '(All)'. df_h2h_scope
+    deve già essere ristretto all'ambito giusto (partita/stagione/campionato)."""
+    if df_h2h_scope.empty:
+        return None
+    if e_portiere:
+        d = df_h2h_scope[df_h2h_scope['PORTIERE_ID'] == identita_giocatore_corrente]
+        opzioni = sorted(d['TIRATORE_ID'].unique())
+        etichetta = "Shooter (opponent, optional):"
+    else:
+        d = df_h2h_scope[df_h2h_scope['TIRATORE_ID'] == identita_giocatore_corrente]
+        opzioni = sorted(d['PORTIERE_ID'].unique())
+        etichetta = "Goalkeeper (opponent, optional):"
+    if not opzioni:
+        return None
+    scelto = st.selectbox(etichetta, ["(All)"] + opzioni, key=f"{key_prefix}_avversario")
+    return None if scelto == "(All)" else scelto
+
+def applica_filtro_avversario(df_base, df_h2h_scope, identita_giocatore_corrente, e_portiere, avversario_scelto):
+    """Se avversario_scelto è specificato, passa dal dataframe 'semplice' (che non sa chi ha
+    tirato/parato dall'altra parte) agli eventi H2H (che lo sanno), filtrati per quell'avversario
+    specifico — così si possono costruire mappe 'faccia a faccia'. Altrimenti restituisce
+    df_base invariato (i dati completi, non solo quelli con entrambi i lati taggati)."""
+    if not avversario_scelto:
+        return df_base
+    if e_portiere:
+        return df_h2h_scope[(df_h2h_scope['PORTIERE_ID'] == identita_giocatore_corrente) &
+                             (df_h2h_scope['TIRATORE_ID'] == avversario_scelto)]
+    return df_h2h_scope[(df_h2h_scope['TIRATORE_ID'] == identita_giocatore_corrente) &
+                         (df_h2h_scope['PORTIERE_ID'] == avversario_scelto)]
+
 # Ordine "naturale" dei tasti della tastiera dei settori di campo (come da immagine allegata)
 ORDINE_TASTIERA_TIRATORI = [
     ['7m'],
@@ -868,7 +901,58 @@ def costruisci_grafico_blocchi(df_aggregato, altezza=520):
     fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
     return df_blocchi, fig_blocchi
 
-def _disegna_grafico_stagione(dati_per_portiere, chiave_valore, etichetta_y, output_path):
+def costruisci_grafico_blocchi_tiratori(df_aggregato, altezza=520):
+    """Costruisce la tabella e il grafico a blocchi da 10 minuti per i tiratori (linea Goal % +
+    barre conteggio tiri, 2 pannelli) — stessa impostazione grafica dei portieri, ma con Goal %
+    e numero di tiri al posto di Save % e GPI (i tiratori non hanno un GPI)."""
+    righe_blocchi = []
+    for blocco in ORDINE_BLOCCHI:
+        df_b = df_aggregato[df_aggregato['Blocco_10m'] == blocco] if not df_aggregato.empty else pd.DataFrame()
+        g_b, t_b, pct_b = calcola_metriche_tiratori_gruppo(df_b)
+        righe_blocchi.append({'Block': blocco, 'Goal %': round(pct_b, 1), 'Shots': t_b, 'Goals': g_b})
+    df_blocchi = pd.DataFrame(righe_blocchi)
+
+    max_tiri = max(df_blocchi['Shots'].max(), 1)
+    y_top_tiri = max_tiri * 1.35
+    y_bottom_pct = 6
+
+    fig_blocchi = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
+        row_heights=[0.5, 0.5],
+        subplot_titles=("Goal % per block", "Shots per block")
+    )
+    fig_blocchi.add_trace(
+        go.Scatter(x=df_blocchi['Block'], y=df_blocchi['Goal %'], name='Goal %',
+                   mode='lines+markers', line=dict(color='#1f77b4', width=3),
+                   marker=dict(size=10, color='#1f77b4'), showlegend=False),
+        row=1, col=1
+    )
+    fig_blocchi.add_trace(
+        go.Scatter(x=df_blocchi['Block'], y=[y_bottom_pct] * len(df_blocchi), mode='text',
+                   text=df_blocchi['Goal %'].apply(lambda x: f"{x:.0f}%"),
+                   textfont=dict(color='#1f77b4', size=13), showlegend=False),
+        row=1, col=1
+    )
+    fig_blocchi.add_trace(
+        go.Bar(x=df_blocchi['Block'], y=df_blocchi['Shots'], name='Shots',
+               marker_color='#ff7f0e', width=0.5, showlegend=False),
+        row=2, col=1
+    )
+    fig_blocchi.add_trace(
+        go.Scatter(x=df_blocchi['Block'], y=[y_top_tiri] * len(df_blocchi), mode='text',
+                   text=df_blocchi.apply(lambda r: f"{r['Shots']} ({r['Goals']}g)", axis=1),
+                   textfont=dict(color='#ff7f0e', size=13), showlegend=False),
+        row=2, col=1
+    )
+    fig_blocchi.update_layout(
+        height=altezza, plot_bgcolor='white', margin=dict(t=50, b=40, l=40, r=40)
+    )
+    fig_blocchi.update_yaxes(title_text="Goal %", range=[0, 115], row=1, col=1)
+    fig_blocchi.update_yaxes(title_text="Shots", range=[0, y_top_tiri * 1.15], row=2, col=1)
+    fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
+    return df_blocchi, fig_blocchi
+
+
     """Disegna, per ciascun portiere, l'andamento del valore (GPI o %) partita per partita,
     integrato con la linea della media cumulativa stagionale (ricalcolata partita dopo partita).
     Le partite in cui il portiere non ha giocato sono già escluse a monte.
@@ -1152,6 +1236,16 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None):
 # PORTIERI: PARSING FILE (stessa identica logica prima incorporata nel loop di upload,
 # ora estratta in una funzione riusabile anche dal nuovo file unificato)
 # ============================================================
+def _calcola_blocco_stringa(m):
+    """Blocco da 10 minuti (0-10, 10-20, ..., 50-60) per un dato minuto di gara. Riusata sia
+    per i portieri sia per i tiratori."""
+    if m < 10: return '0-10'
+    elif m < 20: return '10-20'
+    elif m < 30: return '20-30'
+    elif m < 40: return '30-40'
+    elif m < 50: return '40-50'
+    else: return '50-60'
+
 def elabora_file_portieri(df_raw):
     """Prende il DataFrame grezzo (colonne tipo PORTIERE/GK, TIRO, RESULT, TIMELINE) e
     restituisce il DataFrame arricchito con tutte le colonne calcolate (GPI, Money Time, ecc.).
@@ -1211,13 +1305,6 @@ def elabora_file_portieri(df_raw):
     df['GPI_Tiro'] = gpi_list
     df['Is_Stress_Test'] = stress_list
 
-    def _calcola_blocco_stringa(m):
-        if m < 10: return '0-10'
-        elif m < 20: return '10-20'
-        elif m < 30: return '20-30'
-        elif m < 40: return '30-40'
-        elif m < 50: return '40-50'
-        else: return '50-60'
     df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
 
     # Colonne di tagging avanzato (facoltative): ciascuna diventa una colonna con liste di tag
@@ -1277,6 +1364,7 @@ def elabora_file_tiratori(df_raw):
 
     df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
     df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
+    df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
 
     colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
     for chiave, nome_colonna in colonne_avanzate_trovate.items():
@@ -1398,11 +1486,15 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
             (righe_tir_home if squadra_tiratore == 'home' else righe_tir_away).append(riga_tir)
 
         if portiere and tiratore:
-            righe_h2h.append({
+            riga_h2h = {
                 'PORTIERE': portiere, 'TIRATORE': tiratore, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline,
+                'GOAL SECTOR': goal_sector,
                 'Squadra_Portiere': squadra_home if squadra_portiere == 'home' else squadra_away,
                 'Squadra_Tiratore': squadra_home if squadra_tiratore == 'home' else squadra_away,
-            })
+            }
+            riga_h2h.update(valori_avanzati_gk)
+            riga_h2h.update(valori_avanzati_tir)
+            righe_h2h.append(riga_h2h)
 
     def _elabora_o_vuoto_gk(righe):
         if not righe:
@@ -1427,6 +1519,8 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h['TIRATORE_ID'] = df_h2h['TIRATORE_CLEAN'].apply(identita_giocatore)
         df_h2h['TIRO_CLEAN'] = df_h2h['TIRO'].astype(str).str.strip()
         df_h2h['RESULT_CLEAN'] = df_h2h['RESULT'].astype(str).str.lower().str.strip()
+        df_h2h['GOAL_SECTOR_CLEAN'] = df_h2h['GOAL SECTOR'].astype(str).str.strip() if 'GOAL SECTOR' in df_h2h.columns else ''
+        df_h2h['macro_settore_tir'] = df_h2h['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
         minuti_list, scarti_list = [], []
         for val in df_h2h['TIMELINE']:
             m_tot, _, sc, _ = analizza_timeline(val)
@@ -1435,11 +1529,16 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h['Minuti_Gara'] = minuti_list
         df_h2h['Scarto_Punteggio'] = scarti_list
         df_h2h['Is_Money_Time'] = df_h2h.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
-        df_h2h = df_h2h[['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
-                          'TIRO_CLEAN', 'RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']]
+        colonne_base_h2h = ['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
+                             'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']
+        colonne_avanzate_h2h = trova_colonne_tagging_avanzato(df_h2h.columns)
+        for chiave, nome_colonna in colonne_avanzate_h2h.items():
+            df_h2h[f'TAG_{chiave}'] = df_h2h[nome_colonna].apply(dividi_tag_multipli)
+            colonne_base_h2h.append(f'TAG_{chiave}')
+        df_h2h = df_h2h[colonne_base_h2h]
     else:
         df_h2h = pd.DataFrame(columns=['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
-                                        'TIRO_CLEAN', 'RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time'])
+                                        'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time'])
 
     if righe_tiro_portiere:
         df_tiro_portiere = pd.DataFrame(righe_tiro_portiere)
@@ -1553,6 +1652,33 @@ def selettore_filtri_avanzati(df, key_prefix):
                                    key=f"{key_prefix}_filtro_{chiave}")
             filtri_scelti[chiave] = scelto
     return filtri_scelti
+
+def descrivi_filtri_attivi(macro_key=None, tasto_scelto=None, filtri_avanzati=None, avversario=None):
+    """Costruisce una descrizione leggibile dei filtri attualmente attivi (macro-settore,
+    settore di campo specifico, avversario faccia a faccia, dimensioni di tagging avanzato),
+    usata come titolo automatico quando si salva una mappa per il PDF. Restituisce 'All shots'
+    se non è attivo nessun filtro."""
+    parti = []
+    if macro_key:
+        parti.append(ETICHETTA_MACRO_TIRATORI.get(macro_key, macro_key))
+    if tasto_scelto:
+        parti.append(tasto_scelto)
+    if avversario:
+        parti.append(f"vs {avversario}")
+    for chiave, valore in (filtri_avanzati or {}).items():
+        if valore and valore != '(All)':
+            parti.append(valore)
+    return " | ".join(parti) if parti else "All shots"
+
+def pulsante_salva_mappa_pdf(contenitore_mappe, chiave_contenitore, titolo_base, df_mappa, key):
+    """Pulsante riusabile 'Salva questa mappa per il PDF': accoda (titolo, dataframe già filtrato
+    così com'è visualizzato a schermo) alla lista di mappe extra per quel contesto (partita
+    singola, stagione, o selezione Shooting Trend), pronte per essere incluse nell'esportazione."""
+    if st.button("💾 Save this map for PDF", key=key):
+        if chiave_contenitore not in contenitore_mappe:
+            contenitore_mappe[chiave_contenitore] = []
+        contenitore_mappe[chiave_contenitore].append({'titolo': titolo_base, 'df': df_mappa.copy()})
+        st.success(f"Map '{titolo_base}' saved ({len(df_mappa)} shots) — it will appear in the PDF export below.")
 
 def classifica_tiratori_per_volume(df, solo_money_time=False, n=None):
     """Restituisce TUTTI i giocatori (o i primi n se specificato) ordinati per NUMERO di tiri
@@ -1887,11 +2013,13 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     buffer.seek(0)
     return buffer.getvalue()
 
-def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_portieri, df_blocchi, df_stagione_totale, fig_blocchi, logo_squadra_b64=None):
+def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_portieri, df_blocchi, df_stagione_totale, fig_blocchi, logo_squadra_b64=None, mappe_extra=None):
     """Costruisce il PDF del report stagionale (portiere singolo o squadra) e lo restituisce come bytes.
     Stessa identità grafica (logo, colori, footer) del report di partita singola.
     logo_squadra_b64: se fornito, il logo della squadra compare in copertina accanto al logo
-    dell'associazione (solo quando il report è per squadra)."""
+    dell'associazione (solo quando il report è per squadra).
+    mappe_extra: lista opzionale di dict {'titolo': str, 'df': dataframe già filtrato} per mappe
+    salvate dall'utente durante la navigazione (filtri macro-settore/tagging/settore specifico)."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6*cm, bottomMargin=1.4*cm,
                              leftMargin=1.2*cm, rightMargin=1.2*cm)
@@ -1981,6 +2109,18 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     ]))
     elementi.append(_df_to_reportlab_table(df_storico, font_size=7))
     elementi.append(_separatore())
+
+    # Saved custom shot maps (facoltative, salvate dall'utente durante la navigazione)
+    if mappe_extra:
+        elementi.append(Paragraph("Saved Shot Maps", sezione_stile))
+        for mappa in mappe_extra:
+            if mappa['df'].empty:
+                continue
+            tot_m, salvate_m = costruisci_conteggi_porta(mappa['df'], esiti_successo=('save', 's'))
+            fig_m = disegna_porta(tot_m, salvate_m, titolo=mappa['titolo'])
+            img_m = _immagine_da_figura_matplotlib(fig_m, 8, 7)
+            elementi.append(KeepTogether([img_m, Spacer(1, 0.3 * cm)]))
+        elementi.append(_separatore())
 
     # Detailed statistics per goalkeeper (season cumulative)
     for gk, lista in dati_portieri.items():
@@ -2402,6 +2542,13 @@ def _backfill_id_h2h(df):
         df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
     if 'TIRATORE_ID' not in df.columns and 'TIRATORE_CLEAN' in df.columns:
         df['TIRATORE_ID'] = df['TIRATORE_CLEAN'].apply(identita_giocatore)
+    if 'GOAL_SECTOR_CLEAN' not in df.columns:
+        df['GOAL_SECTOR_CLEAN'] = ''
+    if 'macro_settore_tir' not in df.columns:
+        if 'TIRO_CLEAN' in df.columns:
+            df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+        else:
+            df['macro_settore_tir'] = None
     return df
 
 def carica_h2h_da_disco():
@@ -3085,14 +3232,16 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
 
     return elementi
 
-def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None):
+def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None, mappe_extra=None):
     """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con UNA PAGINA per
     ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto).
     Se df_squadra_riepilogo è fornito (dataframe aggregato dell'intera selezione), il PDF apre
     con due pagine di riepilogo squadra: 1) mappa generale (porta + tastiera con heat map),
     2) tabelle tiratori per volume di tiro (totale e Money Time) e statistiche per macro-zona.
     logo_squadra_b64: se fornito, il logo della squadra compare in copertina accanto al logo
-    dell'associazione."""
+    dell'associazione.
+    mappe_extra: lista opzionale di dict {'titolo': str, 'df': dataframe già filtrato} per mappe
+    salvate dall'utente durante la navigazione (filtri macro-settore/tagging/settore specifico)."""
     note_dict = note_dict or {}
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
@@ -3162,6 +3311,17 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
                                     col_widths=[5 * cm, 3 * cm, 3 * cm, 3 * cm], font_size=7),
         ]
         blocchi_pagine.append(pagina2)
+
+    if mappe_extra:
+        mappe_valide = [m for m in mappe_extra if not m['df'].empty]
+        if mappe_valide:
+            pagina_mappe = [Paragraph("Saved Shot Maps", sezione_stile), Spacer(1, 0.2 * cm)]
+            for mappa in mappe_valide:
+                tot_m, goal_m = costruisci_conteggi_porta(mappa['df'])
+                fig_m = disegna_porta(tot_m, goal_m, titolo=mappa['titolo'])
+                img_m = _immagine_da_figura_matplotlib(fig_m, 8, 7)
+                pagina_mappe.append(KeepTogether([img_m, Spacer(1, 0.3 * cm)]))
+            blocchi_pagine.append(pagina_mappe)
 
     giocatori_validi = [(g, df_g) for g, df_g in dati_per_giocatore.items() if not df_g.empty]
     for nome_giocatore, df_g in giocatori_validi:
@@ -3983,412 +4143,603 @@ with tab2:
                      if m['nome'] == nome_match_sel and str(m['data']) == str(data_match_sel)]
         df_tiro_portiere_match = pd.concat(_match_tp, ignore_index=True) if _match_tp else pd.DataFrame(
             columns=['PORTIERE_CLEAN', 'PORTIERE_ID', 'Squadra_Portiere', 'ESITO', 'Minuti_Gara', 'Tempo_Visuale'])
-        
-        st.subheader("📊 Team Goalkeeping Totals")
-        s_t, g_t, m_t, pct_t, eff_t = calcola_metriche_gruppo(df_match)
-        gpi_totale_squadra = df_match['GPI_Tiro'].sum()
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Total Saves", s_t)
-        c2.metric("Total Goals Conceded", g_t)
-        c3.metric("Team Save %", f"{pct_t:.1f}%")
-        c4.metric("Team Efficiency %", f"{eff_t:.1f}%")
-        c5.metric("Team GPI (Total)", f"{gpi_totale_squadra:+.1f}")
+        _match_h2h = [m['dati'] for m in st.session_state.get('db_h2h', [])
+                      if m['nome'] == nome_match_sel and str(m['data']) == str(data_match_sel)]
+        df_h2h_match = pd.concat(_match_h2h, ignore_index=True) if _match_h2h else pd.DataFrame(
+            columns=['PORTIERE_ID', 'TIRATORE_ID', 'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN'])
         
-        st.markdown("---")
-        st.subheader("📈 Goalkeeper Cumulative Match Performance Graph")
+        db_tir_match = [m for m in st.session_state.get('db_tiratori', [])
+                        if m['nome'] == nome_match_sel and str(m['data']) == str(data_match_sel)]
+        if db_tir_match:
+            vista_match = st.radio("View:", ["Goalkeeper", "Shooters"], horizontal=True, key="vista_match_tipo")
+        else:
+            vista_match = "Goalkeeper"
+
+        if vista_match == "Goalkeeper":
+            st.subheader("📊 Team Goalkeeping Totals")
+            s_t, g_t, m_t, pct_t, eff_t = calcola_metriche_gruppo(df_match)
+            gpi_totale_squadra = df_match['GPI_Tiro'].sum()
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Total Saves", s_t)
+            c2.metric("Total Goals Conceded", g_t)
+            c3.metric("Team Save %", f"{pct_t:.1f}%")
+            c4.metric("Team Efficiency %", f"{eff_t:.1f}%")
+            c5.metric("Team GPI (Total)", f"{gpi_totale_squadra:+.1f}")
         
-        gpi_progressivo = []
-        storico_portieri_gpi = {}
+            st.markdown("---")
+            st.subheader("📈 Goalkeeper Cumulative Match Performance Graph")
         
-        for idx, row in df_match.iterrows():
-            gk_attuale = row['PORTIERE_CLEAN']
-            punti_tiro = row['GPI_Tiro']
+            gpi_progressivo = []
+            storico_portieri_gpi = {}
+        
+            for idx, row in df_match.iterrows():
+                gk_attuale = row['PORTIERE_CLEAN']
+                punti_tiro = row['GPI_Tiro']
             
-            if gk_attuale not in storico_portieri_gpi:
-                nuovo_valore = punti_tiro
-            else:
-                nuovo_valore = storico_portieri_gpi[gk_attuale] + punti_tiro
+                if gk_attuale not in storico_portieri_gpi:
+                    nuovo_valore = punti_tiro
+                else:
+                    nuovo_valore = storico_portieri_gpi[gk_attuale] + punti_tiro
                 
-            gpi_progressivo.append(nuovo_valore)
-            storico_portieri_gpi[gk_attuale] = nuovo_valore
+                gpi_progressivo.append(nuovo_valore)
+                storico_portieri_gpi[gk_attuale] = nuovo_valore
             
-        df_match['GPI_Progressivo_Disegno'] = gpi_progressivo
+            df_match['GPI_Progressivo_Disegno'] = gpi_progressivo
         
-        portieri_unici = list(df_match['PORTIERE_CLEAN'].dropna().unique())
-        simboli_colore = ['🔵', '🔴', '🟢', '🟡', '🟣']
-        mappa_colori_testo = {gk: simboli_colore[i % len(simboli_colore)] for i, gk in enumerate(portieri_unici)}
+            portieri_unici = list(df_match['PORTIERE_CLEAN'].dropna().unique())
+            simboli_colore = ['🔵', '🔴', '🟢', '🟡', '🟣']
+            mappa_colori_testo = {gk: simboli_colore[i % len(simboli_colore)] for i, gk in enumerate(portieri_unici)}
         
-        def _costruisci_etichetta_asse_x(indice, gk, tempo_visuale):
-            prefisso = f"{mappa_colori_testo[gk]} {gk}"
-            if str(tempo_visuale).strip():
-                return f"{prefisso} | {tempo_visuale}"
-            return f"{prefisso} | Shot {indice + 1}"
+            def _costruisci_etichetta_asse_x(indice, gk, tempo_visuale):
+                prefisso = f"{mappa_colori_testo[gk]} {gk}"
+                if str(tempo_visuale).strip():
+                    return f"{prefisso} | {tempo_visuale}"
+                return f"{prefisso} | Shot {indice + 1}"
 
-        df_match['Label_Asse_X'] = [
-            _costruisci_etichetta_asse_x(i, row['PORTIERE_CLEAN'], row['Tempo_Visuale'])
-            for i, row in df_match.iterrows()
-        ]
+            df_match['Label_Asse_X'] = [
+                _costruisci_etichetta_asse_x(i, row['PORTIERE_CLEAN'], row['Tempo_Visuale'])
+                for i, row in df_match.iterrows()
+            ]
         
-        colori_punti = []
-        for _, row in df_match.iterrows():
-            if row['Is_Stress_Test']:
-                colori_punti.append('#ffcc00')
-            elif row['GPI_Tiro'] >= 0:
-                colori_punti.append('#2ca02c')
-            else:
-                colori_punti.append('#d62728')
+            colori_punti = []
+            for _, row in df_match.iterrows():
+                if row['Is_Stress_Test']:
+                    colori_punti.append('#ffcc00')
+                elif row['GPI_Tiro'] >= 0:
+                    colori_punti.append('#2ca02c')
+                else:
+                    colori_punti.append('#d62728')
 
-        fig_linee = go.Figure()
-        x_labels = df_match['Label_Asse_X'].values
-        y_values = df_match['GPI_Progressivo_Disegno'].values
+            fig_linee = go.Figure()
+            x_labels = df_match['Label_Asse_X'].values
+            y_values = df_match['GPI_Progressivo_Disegno'].values
         
-        fig_linee.add_trace(go.Scatter(
-            x=x_labels, y=y_values, mode='lines', showlegend=False,
-            line=dict(width=3, color='lightgray'), hoverinfo='skip'
-        ))
-        
-        for i in range(len(df_match)):
             fig_linee.add_trace(go.Scatter(
-                x=[x_labels[i]], y=[y_values[i]], mode='markers', showlegend=False,
-                marker=dict(
-                    size=12, color=colori_punti[i],
-                    symbol='square' if df_match['Is_Stress_Test'].values[i] else 'circle'
-                ),
-                customdata=[df_match['TIRO_CLEAN'].values[i]],
-                hovertemplate="%{x}<br>GPI: %{y:+.1f}<br>Zone: %{customdata}<extra></extra>"
+                x=x_labels, y=y_values, mode='lines', showlegend=False,
+                line=dict(width=3, color='lightgray'), hoverinfo='skip'
+            ))
+        
+            for i in range(len(df_match)):
+                fig_linee.add_trace(go.Scatter(
+                    x=[x_labels[i]], y=[y_values[i]], mode='markers', showlegend=False,
+                    marker=dict(
+                        size=12, color=colori_punti[i],
+                        symbol='square' if df_match['Is_Stress_Test'].values[i] else 'circle'
+                    ),
+                    customdata=[df_match['TIRO_CLEAN'].values[i]],
+                    hovertemplate="%{x}<br>GPI: %{y:+.1f}<br>Zone: %{customdata}<extra></extra>"
+                ))
+            
+            fig_linee.add_trace(go.Scatter(
+                x=x_labels, y=y_values, mode='text', showlegend=False, hoverinfo='skip',
+                text=df_match['GPI_Tiro'].apply(lambda x: f"+{x}" if x > 0 else str(x)),
+                textposition="top center", textfont=dict(weight="bold", color="black")
             ))
             
-        fig_linee.add_trace(go.Scatter(
-            x=x_labels, y=y_values, mode='text', showlegend=False, hoverinfo='skip',
-            text=df_match['GPI_Tiro'].apply(lambda x: f"+{x}" if x > 0 else str(x)),
-            textposition="top center", textfont=dict(weight="bold", color="black")
-        ))
-            
-        fig_linee.add_shape(
-            type="line", x0=-0.5, y0=0, x1=len(df_match)-0.5, y1=0, line=dict(color="black", width=4)
-        )
+            fig_linee.add_shape(
+                type="line", x0=-0.5, y0=0, x1=len(df_match)-0.5, y1=0, line=dict(color="black", width=4)
+            )
         
-        fig_linee.update_layout(
-            xaxis_title="Timeline / Live Score / Active Goalkeeper (Chronological Order)",
-            yaxis_title="Progressive GPI Valuation Index",
-            xaxis=dict(tickangle=90),
-            height=600,
-            margin=dict(b=140),
-            plot_bgcolor='white'
-        )
+            fig_linee.update_layout(
+                xaxis_title="Timeline / Live Score / Active Goalkeeper (Chronological Order)",
+                yaxis_title="Progressive GPI Valuation Index",
+                xaxis=dict(tickangle=90),
+                height=600,
+                margin=dict(b=140),
+                plot_bgcolor='white'
+            )
 
-        st.plotly_chart(fig_linee, use_container_width=True, key="fig_linee_single_match")
-        st.caption("🟢 Save/positive Miss   🔴 Goal conceded   🟨 square = Money Time (last 10 real match minutes, score margin between -5 and +5)")
+            st.plotly_chart(fig_linee, use_container_width=True, key="fig_linee_single_match")
+            st.caption("🟢 Save/positive Miss   🔴 Goal conceded   🟨 square = Money Time (last 10 real match minutes, score margin between -5 and +5)")
 
-        # ============================================================
-        # SEZIONE: SEQUENZA CRONOLOGICA DEI TIRI
-        # ============================================================
-        st.markdown("---")
-        st.subheader("📋 Chronological Shot Sequence")
-        st.caption("Data from the Excel file, in chronological order, with the GPI calculated for each shot.")
+            # ============================================================
+            # SEZIONE: SEQUENZA CRONOLOGICA DEI TIRI
+            # ============================================================
+            st.markdown("---")
+            st.subheader("📋 Chronological Shot Sequence")
+            st.caption("Data from the Excel file, in chronological order, with the GPI calculated for each shot.")
 
-        tabella_sequenza = pd.DataFrame({
-            'Timeline': df_match['Tempo_Visuale'].values,
-            'Goalkeeper': df_match['PORTIERE_CLEAN'].values,
-            'Shot Type': df_match['TIRO_CLEAN'].values,
-            'Outcome': df_match['RESULT_CLEAN'].values,
-            'GPI': df_match['GPI_Tiro'].apply(lambda x: f"+{x}" if x > 0 else str(x)).values,
-            'Money Time': df_match['Is_Stress_Test'].map({True: 'Yes', False: ''}).values
-        })
-        st.dataframe(tabella_sequenza, use_container_width=True, hide_index=True, height=450)
-
-        # ============================================================
-        # SEZIONE: GPI TOTALE PARTITA PER PORTIERE
-        # ============================================================
-        st.markdown("---")
-        st.subheader("🥅 Total Match GPI per Goalkeeper")
-
-        righe_gpi_totale = []
-        for gk in portieri_unici:
-            df_gk_tot = df_match[df_match['PORTIERE_CLEAN'] == gk]
-            righe_gpi_totale.append({
-                'Goalkeeper': f"{mappa_colori_testo[gk]} {gk}",
-                'Total Match GPI': round(df_gk_tot['GPI_Tiro'].sum(), 1),
-                'Shots Faced': len(df_gk_tot)
+            tabella_sequenza = pd.DataFrame({
+                'Timeline': df_match['Tempo_Visuale'].values,
+                'Goalkeeper': df_match['PORTIERE_CLEAN'].values,
+                'Shot Type': df_match['TIRO_CLEAN'].values,
+                'Outcome': df_match['RESULT_CLEAN'].values,
+                'GPI': df_match['GPI_Tiro'].apply(lambda x: f"+{x}" if x > 0 else str(x)).values,
+                'Money Time': df_match['Is_Stress_Test'].map({True: 'Yes', False: ''}).values
             })
-        st.dataframe(pd.DataFrame(righe_gpi_totale), use_container_width=True, hide_index=True)
+            st.dataframe(tabella_sequenza, use_container_width=True, hide_index=True, height=450)
 
-        # ============================================================
-        # SEZIONE: STATISTICHE DETTAGLIATE PER PORTIERE
-        # (settore specifico, macro-settore aggregato, money time)
-        # ============================================================
-        st.markdown("---")
-        st.subheader("🧤 Detailed Statistics per Goalkeeper")
+            # ============================================================
+            # SEZIONE: GPI TOTALE PARTITA PER PORTIERE
+            # ============================================================
+            st.markdown("---")
+            st.subheader("🥅 Total Match GPI per Goalkeeper")
 
-        dati_pdf_portieri = {}
+            righe_gpi_totale = []
+            for gk in portieri_unici:
+                df_gk_tot = df_match[df_match['PORTIERE_CLEAN'] == gk]
+                righe_gpi_totale.append({
+                    'Goalkeeper': f"{mappa_colori_testo[gk]} {gk}",
+                    'Total Match GPI': round(df_gk_tot['GPI_Tiro'].sum(), 1),
+                    'Shots Faced': len(df_gk_tot)
+                })
+            st.dataframe(pd.DataFrame(righe_gpi_totale), use_container_width=True, hide_index=True)
 
-        for gk in portieri_unici:
-            df_gk = df_match[df_match['PORTIERE_CLEAN'] == gk]
-            with st.expander(f"{mappa_colori_testo[gk]} {gk}", expanded=True):
-                gestisci_foto_giocatore(identita_giocatore(gk), key_prefix="single_match")
+            # ============================================================
+            # SEZIONE: STATISTICHE DETTAGLIATE PER PORTIERE
+            # (settore specifico, macro-settore aggregato, money time)
+            # ============================================================
+            st.markdown("---")
+            st.subheader("🧤 Detailed Statistics per Goalkeeper")
 
-                gpi_totale_gk = df_gk['GPI_Tiro'].sum()
-                s_gk, g_gk, m_gk, pct_gk, eff_gk = calcola_metriche_gruppo(df_gk)
+            dati_pdf_portieri = {}
 
-                cA, cB, cC, cD, cE = st.columns(5)
-                cA.metric("Total GPI", f"{gpi_totale_gk:+.1f}")
-                cB.metric("Saves", s_gk)
-                cC.metric("Goals Conceded", g_gk)
-                cD.metric("Save %", f"{pct_gk:.1f}%")
-                cE.metric("Efficiency", f"{eff_gk:.1f}%")
+            for gk in portieri_unici:
+                df_gk = df_match[df_match['PORTIERE_CLEAN'] == gk]
+                with st.expander(f"{mappa_colori_testo[gk]} {gk}", expanded=True):
+                    gestisci_foto_giocatore(identita_giocatore(gk), key_prefix="single_match")
 
-                st.markdown("**Statistics by specific shot zone** (e.g. 6m1, lw2, 9m2.5 ...)")
-                righe_settore = []
-                for settore in sorted(df_gk['TIRO_CLEAN'].dropna().unique()):
-                    df_s = df_gk[df_gk['TIRO_CLEAN'] == settore]
-                    s, g, m, pct, eff = calcola_metriche_gruppo(df_s)
-                    expected = ottieni_expected_pct(settore)
-                    righe_settore.append({
-                        'Zone': settore, 'Saves': s, 'Goals': g, 'Miss': m,
-                        'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
-                        'Expected Efficiency %': expected if expected is not None else '',
-                        'GPI': round(df_s['GPI_Tiro'].sum(), 1)
-                    })
-                st.dataframe(applica_colori_expected(pd.DataFrame(righe_settore)), use_container_width=True, hide_index=True)
+                    gpi_totale_gk = df_gk['GPI_Tiro'].sum()
+                    s_gk, g_gk, m_gk, pct_gk, eff_gk = calcola_metriche_gruppo(df_gk)
 
-                st.markdown("**Statistics by aggregated macro-zone** (all 6m, all bt, all 9m ...)")
-                righe_macro = []
-                for macro in sorted(df_gk['macro_settore'].dropna().unique()):
-                    df_ma = df_gk[df_gk['macro_settore'] == macro]
-                    s, g, m, pct, eff = calcola_metriche_gruppo(df_ma)
-                    righe_macro.append({
-                        'Macro-Zone': macro.upper(), 'Saves': s, 'Goals': g, 'Miss': m,
-                        'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
-                        'GPI': round(df_ma['GPI_Tiro'].sum(), 1)
-                    })
-                st.dataframe(pd.DataFrame(righe_macro), use_container_width=True, hide_index=True)
+                    cA, cB, cC, cD, cE = st.columns(5)
+                    cA.metric("Total GPI", f"{gpi_totale_gk:+.1f}")
+                    cB.metric("Saves", s_gk)
+                    cC.metric("Goals Conceded", g_gk)
+                    cD.metric("Save %", f"{pct_gk:.1f}%")
+                    cE.metric("Efficiency", f"{eff_gk:.1f}%")
 
-                st.markdown("**Money Time Performance** (from the 50th minute onward, score margin between -5 and +5)")
-                df_stress_gk = df_gk[df_gk['Is_Stress_Test'] == True]
-                pct_su_totale_gk = (len(df_stress_gk) / len(df_gk) * 100) if len(df_gk) > 0 else 0.0
-                if not df_stress_gk.empty:
-                    s_st, g_st, m_st, pct_st, eff_st = calcola_metriche_gruppo(df_stress_gk)
-                    gpi_totale_st = df_stress_gk['GPI_Tiro'].sum()
-                    cs1, cs2, cs3, cs4, cs5, cs6 = st.columns(6)
-                    cs1.metric("Shots in Money Time", len(df_stress_gk))
-                    cs2.metric("% of Total Shots", f"{pct_su_totale_gk:.1f}%")
-                    cs3.metric("Saves", s_st)
-                    cs4.metric("Goals Conceded", g_st)
-                    cs5.metric("Save %", f"{pct_st:.1f}%")
-                    cs6.metric("Total Match GPI", f"{gpi_totale_st:+.2f}")
-                    money_time_riassunto = (
-                        f"{len(df_stress_gk)} shots ({pct_su_totale_gk:.1f}% of total shots), "
-                        f"{s_st} saves, {g_st} goals, Save % {pct_st:.1f}%, Total Match GPI {gpi_totale_st:+.2f}"
-                    )
-                else:
-                    st.info("No shots faced in Money Time by this goalkeeper in this match.")
-                    money_time_riassunto = "No shots in Money Time"
+                    st.markdown("**Statistics by specific shot zone** (e.g. 6m1, lw2, 9m2.5 ...)")
+                    righe_settore = []
+                    for settore in sorted(df_gk['TIRO_CLEAN'].dropna().unique()):
+                        df_s = df_gk[df_gk['TIRO_CLEAN'] == settore]
+                        s, g, m, pct, eff = calcola_metriche_gruppo(df_s)
+                        expected = ottieni_expected_pct(settore)
+                        righe_settore.append({
+                            'Zone': settore, 'Saves': s, 'Goals': g, 'Miss': m,
+                            'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
+                            'Expected Efficiency %': expected if expected is not None else '',
+                            'GPI': round(df_s['GPI_Tiro'].sum(), 1)
+                        })
+                    st.dataframe(applica_colori_expected(pd.DataFrame(righe_settore)), use_container_width=True, hide_index=True)
 
-                # ---- Tiri effettuati dal portiere stesso (Tiro +/-) ----
-                df_tp_gk = df_tiro_portiere_match[df_tiro_portiere_match['PORTIERE_ID'] == identita_giocatore(gk)]
-                if not df_tp_gk.empty:
-                    goal_tp, tot_tp, pct_tp = calcola_statistica_tiro_portiere(df_tp_gk)
-                    st.markdown(f"**Goalkeeper's own shots:** {goal_tp}/{tot_tp} = {pct_tp:.1f}% "
-                                f"(not counted in saves/GPI/GPI chart above)")
+                    st.markdown("**Statistics by aggregated macro-zone** (all 6m, all bt, all 9m ...)")
+                    righe_macro = []
+                    for macro in sorted(df_gk['macro_settore'].dropna().unique()):
+                        df_ma = df_gk[df_gk['macro_settore'] == macro]
+                        s, g, m, pct, eff = calcola_metriche_gruppo(df_ma)
+                        righe_macro.append({
+                            'Macro-Zone': macro.upper(), 'Saves': s, 'Goals': g, 'Miss': m,
+                            'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
+                            'GPI': round(df_ma['GPI_Tiro'].sum(), 1)
+                        })
+                    st.dataframe(pd.DataFrame(righe_macro), use_container_width=True, hide_index=True)
 
-                # ---- Shot Map del portiere: porta + pulsantiera + filtri incrociati ----
-                st.markdown("**Shot Map**")
-                chiave_gk_sicura = _chiave_css_sicura(gk)
-                col_macro_gk, col_spazio_gk = st.columns([1, 2])
-                with col_macro_gk:
-                    macro_key_gk = selettore_macro_zona(key_prefix=f"gk_single_{chiave_gk_sicura}")
-                filtri_gk = selettore_filtri_avanzati(df_gk, key_prefix=f"gk_single_{chiave_gk_sicura}")
-                df_gk_filtrato = applica_filtri_avanzati(df_gk, filtri_gk)
-                df_gk_filtrato = filtra_per_macro_zona(df_gk_filtrato, macro_key_gk)
+                    st.markdown("**Money Time Performance** (from the 50th minute onward, score margin between -5 and +5)")
+                    df_stress_gk = df_gk[df_gk['Is_Stress_Test'] == True]
+                    pct_su_totale_gk = (len(df_stress_gk) / len(df_gk) * 100) if len(df_gk) > 0 else 0.0
+                    if not df_stress_gk.empty:
+                        s_st, g_st, m_st, pct_st, eff_st = calcola_metriche_gruppo(df_stress_gk)
+                        gpi_totale_st = df_stress_gk['GPI_Tiro'].sum()
+                        cs1, cs2, cs3, cs4, cs5, cs6 = st.columns(6)
+                        cs1.metric("Shots in Money Time", len(df_stress_gk))
+                        cs2.metric("% of Total Shots", f"{pct_su_totale_gk:.1f}%")
+                        cs3.metric("Saves", s_st)
+                        cs4.metric("Goals Conceded", g_st)
+                        cs5.metric("Save %", f"{pct_st:.1f}%")
+                        cs6.metric("Total Match GPI", f"{gpi_totale_st:+.2f}")
+                        money_time_riassunto = (
+                            f"{len(df_stress_gk)} shots ({pct_su_totale_gk:.1f}% of total shots), "
+                            f"{s_st} saves, {g_st} goals, Save % {pct_st:.1f}%, Total Match GPI {gpi_totale_st:+.2f}"
+                        )
+                    else:
+                        st.info("No shots faced in Money Time by this goalkeeper in this match.")
+                        money_time_riassunto = "No shots in Money Time"
 
-                key_focus_gk = f"tasto_focus_gk_single_{chiave_gk_sicura}"
-                if key_focus_gk not in st.session_state:
-                    st.session_state[key_focus_gk] = None
-                if st.session_state[key_focus_gk] not in TUTTI_I_TASTI_TIRATORI:
-                    st.session_state[key_focus_gk] = None
-                tasto_sel_gk = st.session_state[key_focus_gk]
+                    # ---- Tiri effettuati dal portiere stesso (Tiro +/-) ----
+                    df_tp_gk = df_tiro_portiere_match[df_tiro_portiere_match['PORTIERE_ID'] == identita_giocatore(gk)]
+                    if not df_tp_gk.empty:
+                        goal_tp, tot_tp, pct_tp = calcola_statistica_tiro_portiere(df_tp_gk)
+                        st.markdown(f"**Goalkeeper's own shots:** {goal_tp}/{tot_tp} = {pct_tp:.1f}% "
+                                    f"(not counted in saves/GPI/GPI chart above)")
 
-                if tasto_sel_gk:
-                    df_per_porta_gk = df_gk_filtrato[df_gk_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_gk]
-                    s_sel_gk, g_sel_gk, m_sel_gk, pct_sel_gk, eff_sel_gk = calcola_metriche_gruppo(df_per_porta_gk)
-                    expected_sel_gk = ottieni_expected_pct(tasto_sel_gk)
-                    colore_cornice_gk = _colore_expected(pct_sel_gk if len(df_per_porta_gk) > 0 else None, expected_sel_gk)
-                else:
-                    df_per_porta_gk = df_gk_filtrato
-                    colore_cornice_gk = None
+                    # ---- Shot Map del portiere: porta + pulsantiera + filtri incrociati ----
+                    st.markdown("**Shot Map**")
+                    chiave_gk_sicura = _chiave_css_sicura(gk)
+                    col_macro_gk, col_avv_gk = st.columns(2)
+                    with col_macro_gk:
+                        macro_key_gk = selettore_macro_zona(key_prefix=f"gk_single_{chiave_gk_sicura}")
+                    with col_avv_gk:
+                        avversario_gk = selettore_avversario(df_h2h_match, identita_giocatore(gk), True, key_prefix=f"gk_single_{chiave_gk_sicura}")
+                    filtri_gk = selettore_filtri_avanzati(df_gk, key_prefix=f"gk_single_{chiave_gk_sicura}")
+                    df_gk_base = applica_filtro_avversario(df_gk, df_h2h_match, identita_giocatore(gk), True, avversario_gk)
+                    df_gk_filtrato = applica_filtri_avanzati(df_gk_base, filtri_gk)
+                    df_gk_filtrato = filtra_per_macro_zona(df_gk_filtrato, macro_key_gk)
 
-                tot_porta_gk, salvate_porta_gk = costruisci_conteggi_porta(df_per_porta_gk, esiti_successo=('save', 's'))
-                fig_porta_gk = disegna_porta(tot_porta_gk, salvate_porta_gk, colore_cornice=colore_cornice_gk)
-                tot_tast_gk, salvate_tast_gk = costruisci_conteggi_tastiera(df_gk_filtrato, esiti_successo=('save', 's'))
+                    key_focus_gk = f"tasto_focus_gk_single_{chiave_gk_sicura}"
+                    if key_focus_gk not in st.session_state:
+                        st.session_state[key_focus_gk] = None
+                    if st.session_state[key_focus_gk] not in TUTTI_I_TASTI_TIRATORI:
+                        st.session_state[key_focus_gk] = None
+                    tasto_sel_gk = st.session_state[key_focus_gk]
 
-                col_porta_gk, col_tast_gk = st.columns([1, 2])
-                with col_porta_gk:
-                    st.pyplot(fig_porta_gk)
                     if tasto_sel_gk:
-                        expected_testo_gk = f"{expected_sel_gk:.0f}%" if expected_sel_gk is not None else "n/a"
-                        if len(df_per_porta_gk) > 0:
-                            st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  "
-                                       f"Real: **{pct_sel_gk:.1f}%** ({s_sel_gk}/{len(df_per_porta_gk)})")
-                        else:
-                            st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  No shots from this sector.")
-                with col_tast_gk:
-                    tasto_cliccato_gk = pulsantiera_settori_campo(
-                        tot_tast_gk, salvate_tast_gk, tasto_sel_gk, key_prefix=f"gk_single_pulsantiera_{chiave_gk_sicura}"
+                        df_per_porta_gk = df_gk_filtrato[df_gk_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_gk]
+                        s_sel_gk, g_sel_gk, m_sel_gk, pct_sel_gk, eff_sel_gk = calcola_metriche_gruppo(df_per_porta_gk)
+                        expected_sel_gk = ottieni_expected_pct(tasto_sel_gk)
+                        colore_cornice_gk = _colore_expected(pct_sel_gk if len(df_per_porta_gk) > 0 else None, expected_sel_gk)
+                    else:
+                        df_per_porta_gk = df_gk_filtrato
+                        colore_cornice_gk = None
+
+                    tot_porta_gk, salvate_porta_gk = costruisci_conteggi_porta(df_per_porta_gk, esiti_successo=('save', 's'))
+                    fig_porta_gk = disegna_porta(tot_porta_gk, salvate_porta_gk, colore_cornice=colore_cornice_gk)
+                    tot_tast_gk, salvate_tast_gk = costruisci_conteggi_tastiera(df_gk_filtrato, esiti_successo=('save', 's'))
+
+                    col_porta_gk, col_tast_gk = st.columns([1, 2])
+                    with col_porta_gk:
+                        st.pyplot(fig_porta_gk)
+                        if tasto_sel_gk:
+                            expected_testo_gk = f"{expected_sel_gk:.0f}%" if expected_sel_gk is not None else "n/a"
+                            if len(df_per_porta_gk) > 0:
+                                st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  "
+                                           f"Real: **{pct_sel_gk:.1f}%** ({s_sel_gk}/{len(df_per_porta_gk)})")
+                            else:
+                                st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  No shots from this sector.")
+                    with col_tast_gk:
+                        tasto_cliccato_gk = pulsantiera_settori_campo(
+                            tot_tast_gk, salvate_tast_gk, tasto_sel_gk, key_prefix=f"gk_single_pulsantiera_{chiave_gk_sicura}"
+                        )
+                        if tasto_cliccato_gk:
+                            st.session_state[key_focus_gk] = None if tasto_cliccato_gk == tasto_sel_gk else tasto_cliccato_gk
+                            st.rerun()
+                        if tasto_sel_gk:
+                            if st.button("↺ Reset — show all sectors", key=f"reset_gk_single_{chiave_gk_sicura}"):
+                                st.session_state[key_focus_gk] = None
+                                st.rerun()
+
+                    if 'mappe_extra_pdf_match' not in st.session_state:
+                        st.session_state['mappe_extra_pdf_match'] = {}
+                    titolo_mappa_gk_single = f"{gk} — {descrivi_filtri_attivi(macro_key_gk, tasto_sel_gk, filtri_gk, avversario_gk)}"
+                    pulsante_salva_mappa_pdf(
+                        st.session_state['mappe_extra_pdf_match'], scelta, titolo_mappa_gk_single,
+                        df_per_porta_gk, key=f"salva_mappa_gk_single_{chiave_gk_sicura}"
                     )
-                    if tasto_cliccato_gk:
-                        st.session_state[key_focus_gk] = None if tasto_cliccato_gk == tasto_sel_gk else tasto_cliccato_gk
-                        st.rerun()
-                    if tasto_sel_gk:
-                        if st.button("↺ Reset — show all sectors", key=f"reset_gk_single_{chiave_gk_sicura}"):
-                            st.session_state[key_focus_gk] = None
+
+                    dati_pdf_portieri[f"{mappa_colori_testo[gk]} {gk}"] = {
+                        'gpi_totale': gpi_totale_gk, 'parate': s_gk, 'gol': g_gk,
+                        'pct': pct_gk, 'eff': eff_gk,
+                        'tabella_settore': pd.DataFrame(righe_settore),
+                        'tabella_macro': pd.DataFrame(righe_macro),
+                        'money_time_riassunto': money_time_riassunto
+                    }
+
+            # ============================================================
+            # SEZIONE: RENDIMENTO PER BLOCCHI DA 10 MINUTI
+            # (% parate e GPI totale calcolati in modo indipendente per ogni blocco)
+            # ============================================================
+            st.markdown("---")
+            st.subheader("⏱️ Performance by 10-Minute Blocks (full match)")
+            st.caption("Each block is calculated independently of the others: this is not a cumulative value.")
+
+            righe_blocchi = []
+            for blocco in ORDINE_BLOCCHI:
+                df_b = df_match[df_match['Blocco_10m'] == blocco]
+                s_b, g_b, m_b, pct_b, eff_b = calcola_metriche_gruppo(df_b)
+                gpi_b = df_b['GPI_Tiro'].sum() if not df_b.empty else 0.0
+                righe_blocchi.append({
+                    'Block': blocco, 'Save %': round(pct_b, 1), 'Total GPI': round(gpi_b, 1),
+                    'Shots': len(df_b)
+                })
+            df_blocchi = pd.DataFrame(righe_blocchi)
+
+            max_gpi_abs = max(df_blocchi['Total GPI'].abs().max(), 1)
+            y_top_gpi = max_gpi_abs * 1.35
+            y_bottom_gpi = -max_gpi_abs * 1.35
+            y_bottom_pct = 6
+
+            fig_blocchi = make_subplots(
+                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
+                row_heights=[0.5, 0.5],
+                subplot_titles=("Save % per block", "Total GPI per block")
+            )
+            # % line (no text attached to points)
+            fig_blocchi.add_trace(
+                go.Scatter(x=df_blocchi['Block'], y=df_blocchi['Save %'], name='Save %',
+                           mode='lines+markers', line=dict(color='#1f77b4', width=3),
+                           marker=dict(size=10, color='#1f77b4'), showlegend=False),
+                row=1, col=1
+            )
+            # % labels ALWAYS at the bottom, fixed height (never overlapping the line)
+            fig_blocchi.add_trace(
+                go.Scatter(x=df_blocchi['Block'], y=[y_bottom_pct] * len(df_blocchi), mode='text',
+                           text=df_blocchi['Save %'].apply(lambda x: f"{x:.0f}%"),
+                           textfont=dict(color='#1f77b4', size=13), showlegend=False),
+                row=1, col=1
+            )
+            # GPI bars (no text attached)
+            fig_blocchi.add_trace(
+                go.Bar(x=df_blocchi['Block'], y=df_blocchi['Total GPI'], name='Total GPI',
+                       marker_color='#ff7f0e', width=0.5, showlegend=False),
+                row=2, col=1
+            )
+            # GPI labels ALWAYS at the top, fixed height (never overlapping the bars)
+            fig_blocchi.add_trace(
+                go.Scatter(x=df_blocchi['Block'], y=[y_top_gpi] * len(df_blocchi), mode='text',
+                           text=df_blocchi['Total GPI'].apply(lambda x: f"{x:+.1f}"),
+                           textfont=dict(color='#ff7f0e', size=13), showlegend=False),
+                row=2, col=1
+            )
+            fig_blocchi.update_layout(
+                height=520, plot_bgcolor='white', margin=dict(t=50, b=40, l=40, r=40)
+            )
+            fig_blocchi.update_yaxes(title_text="Save %", range=[0, 115], row=1, col=1)
+            fig_blocchi.update_yaxes(title_text="Total GPI", range=[y_bottom_gpi * 1.15, y_top_gpi * 1.15], row=2, col=1)
+            fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
+
+            st.plotly_chart(fig_blocchi, use_container_width=True, key="fig_blocchi_single_match")
+            st.dataframe(df_blocchi, use_container_width=True, hide_index=True)
+
+            # ============================================================
+            # ESPORTAZIONE PDF DELL'INTERA PAGINA
+            # ============================================================
+            st.markdown("---")
+            st.subheader("📄 Export Match Report to PDF")
+            st.caption("Generate a PDF with every section of this page: totals, GPI chart, shot sequence, "
+                       "shot maps, per-goalkeeper statistics, and 10-minute blocks.")
+
+            with st.expander("🗺️ Shot Maps to include in the PDF"):
+                col_map1, col_map2 = st.columns(2)
+                with col_map1:
+                    includi_generale_pdf = st.checkbox("General Shot Map (all shots, all goalkeepers)", value=True, key="pdf_includi_generale")
+                with col_map2:
+                    includi_per_gk_pdf = st.checkbox("One map per goalkeeper (only those who faced shots)", value=True, key="pdf_includi_per_gk")
+
+                if 'mappe_extra_pdf_match' not in st.session_state:
+                    st.session_state['mappe_extra_pdf_match'] = {}
+                chiave_match_mappe = f"{scelta}"
+                if chiave_match_mappe not in st.session_state['mappe_extra_pdf_match']:
+                    st.session_state['mappe_extra_pdf_match'][chiave_match_mappe] = []
+                mappe_correnti = st.session_state['mappe_extra_pdf_match'][chiave_match_mappe]
+
+                st.markdown("**Add a custom filtered map (optional)**")
+                portieri_per_mappa = ["(All goalkeepers)"] + list(df_match['PORTIERE_CLEAN'].dropna().unique())
+                gk_mappa_scelto = st.selectbox("Goalkeeper:", portieri_per_mappa, key="mappa_extra_gk")
+                df_base_mappa = df_match if gk_mappa_scelto == "(All goalkeepers)" else df_match[df_match['PORTIERE_CLEAN'] == gk_mappa_scelto]
+                filtri_mappa_extra = selettore_filtri_avanzati(df_base_mappa, key_prefix="mappa_extra")
+                zona_mappa_scelta = st.selectbox("Field sector (optional):", ["(All sectors)"] + TUTTI_I_TASTI_TIRATORI, key="mappa_extra_zona")
+                titolo_mappa_extra = st.text_input("Map title:", value="Custom Shot Map", key="mappa_extra_titolo")
+                if st.button("➕ Add this map to the PDF"):
+                    df_mappa_extra = applica_filtri_avanzati(df_base_mappa, filtri_mappa_extra)
+                    if zona_mappa_scelta != "(All sectors)":
+                        df_mappa_extra = df_mappa_extra[df_mappa_extra['TIRO_CLEAN'].apply(_normalizza_zona) == zona_mappa_scelta]
+                    mappe_correnti.append({'titolo': titolo_mappa_extra, 'df': df_mappa_extra})
+                    st.success(f"Map '{titolo_mappa_extra}' added ({len(df_mappa_extra)} shots).")
+                    st.rerun()
+
+                if mappe_correnti:
+                    st.markdown("**Custom maps queued for this PDF:**")
+                    for i, mappa in enumerate(mappe_correnti):
+                        col_m1, col_m2 = st.columns([5, 1])
+                        col_m1.caption(f"{mappa['titolo']} — {len(mappa['df'])} shot(s)")
+                        if col_m2.button("🗑️", key=f"del_mappa_extra_{i}"):
+                            mappe_correnti.pop(i)
                             st.rerun()
 
-                dati_pdf_portieri[f"{mappa_colori_testo[gk]} {gk}"] = {
-                    'gpi_totale': gpi_totale_gk, 'parate': s_gk, 'gol': g_gk,
-                    'pct': pct_gk, 'eff': eff_gk,
-                    'tabella_settore': pd.DataFrame(righe_settore),
-                    'tabella_macro': pd.DataFrame(righe_macro),
-                    'money_time_riassunto': money_time_riassunto
-                }
+            if st.button("📄 Generate PDF for this match"):
+                with st.spinner("Generating PDF..."):
+                    try:
+                        pdf_bytes = genera_pdf_partita(
+                            titolo_partita=scelta,
+                            righe_gpi_totale=righe_gpi_totale,
+                            tabella_sequenza=tabella_sequenza,
+                            dati_portieri=dati_pdf_portieri,
+                            df_blocchi=df_blocchi,
+                            df_match=df_match,
+                            fig_blocchi=fig_blocchi,
+                            includi_mappa_generale=includi_generale_pdf,
+                            includi_mappe_per_portiere=includi_per_gk_pdf,
+                            mappe_extra=st.session_state.get('mappe_extra_pdf_match', {}).get(scelta, [])
+                        )
+                        nome_file_pdf = f"Report_{scelta}".replace(' ', '_').replace('/', '-') + ".pdf"
+                        st.download_button(
+                            label="⬇️ Download PDF",
+                            data=pdf_bytes,
+                            file_name=nome_file_pdf,
+                            mime="application/pdf"
+                        )
+                        st.success("PDF generated! Click the button above to download it.")
+                    except Exception as e:
+                        st.error(f"Error generating PDF: {e}")
 
-        # ============================================================
-        # SEZIONE: RENDIMENTO PER BLOCCHI DA 10 MINUTI
-        # (% parate e GPI totale calcolati in modo indipendente per ogni blocco)
-        # ============================================================
-        st.markdown("---")
-        st.subheader("⏱️ Performance by 10-Minute Blocks (full match)")
-        st.caption("Each block is calculated independently of the others: this is not a cumulative value.")
+        else:
+            # ============================================================
+            # VISTA TIRATORI (dentro Single Game Analysis): stesso motore usato in Shooting
+            # Trend Analysis, ma ristretto a questa singola partita. Il grafico a blocchi da 10
+            # minuti qui è SEMPRE di squadra (un individuale non avrebbe senso su una sola gara).
+            # ============================================================
+            st.markdown(f"**Shooters — {scelta}**")
+            squadre_match_tir = sorted(set(m['squadra'] for m in db_tir_match))
+            modalita_match_tir = st.radio("View by:", ["Team", "Player"], horizontal=True, key="modalita_match_tir")
 
-        righe_blocchi = []
-        for blocco in ORDINE_BLOCCHI:
-            df_b = df_match[df_match['Blocco_10m'] == blocco]
-            s_b, g_b, m_b, pct_b, eff_b = calcola_metriche_gruppo(df_b)
-            gpi_b = df_b['GPI_Tiro'].sum() if not df_b.empty else 0.0
-            righe_blocchi.append({
-                'Block': blocco, 'Save %': round(pct_b, 1), 'Total GPI': round(gpi_b, 1),
-                'Shots': len(df_b)
-            })
-        df_blocchi = pd.DataFrame(righe_blocchi)
+            if modalita_match_tir == "Team":
+                squadra_match_tir_scelta = st.selectbox("Select team:", squadre_match_tir, key="squadra_match_tir_scelta")
+                match_squadra_mt = [m for m in db_tir_match if m['squadra'] == squadra_match_tir_scelta]
+                df_squadra_completa_mt = pd.concat([m['dati'] for m in match_squadra_mt], ignore_index=True) if match_squadra_mt else pd.DataFrame()
+                df_selezione_match_tir = df_squadra_completa_mt
+                titolo_match_tir = squadra_match_tir_scelta
+            else:
+                giocatori_disponibili_match_tir = sorted(set(
+                    g for m in db_tir_match for g in m['dati']['TIRATORE_ID'].dropna().unique()
+                ))
+                if not giocatori_disponibili_match_tir:
+                    st.info("No shooters recorded for this match.")
+                    st.stop()
+                giocatore_match_tir_scelto = st.selectbox("Select player:", giocatori_disponibili_match_tir, key="giocatore_match_tir_scelto")
+                squadra_del_giocatore_mt = next((m['squadra'] for m in db_tir_match
+                                                  if giocatore_match_tir_scelto in m['dati']['TIRATORE_ID'].values), None)
+                match_squadra_mt = [m for m in db_tir_match if m['squadra'] == squadra_del_giocatore_mt]
+                df_squadra_completa_mt = pd.concat([m['dati'] for m in match_squadra_mt], ignore_index=True) if match_squadra_mt else pd.DataFrame()
+                df_selezione_match_tir = df_squadra_completa_mt[df_squadra_completa_mt['TIRATORE_ID'] == giocatore_match_tir_scelto]
+                titolo_match_tir = giocatore_match_tir_scelto
 
-        max_gpi_abs = max(df_blocchi['Total GPI'].abs().max(), 1)
-        y_top_gpi = max_gpi_abs * 1.35
-        y_bottom_gpi = -max_gpi_abs * 1.35
-        y_bottom_pct = 6
+            if df_selezione_match_tir.empty:
+                st.info("No shots recorded for this selection.")
+            else:
+                g_tir_m, t_tir_m, pct_tir_m = calcola_metriche_tiratori_gruppo(df_selezione_match_tir)
+                cM1, cM2, cM3 = st.columns(3)
+                cM1.metric("Shots", t_tir_m)
+                cM2.metric("Goals", g_tir_m)
+                cM3.metric("Goal %", f"{pct_tir_m:.1f}%")
 
-        fig_blocchi = make_subplots(
-            rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
-            row_heights=[0.5, 0.5],
-            subplot_titles=("Save % per block", "Total GPI per block")
-        )
-        # % line (no text attached to points)
-        fig_blocchi.add_trace(
-            go.Scatter(x=df_blocchi['Block'], y=df_blocchi['Save %'], name='Save %',
-                       mode='lines+markers', line=dict(color='#1f77b4', width=3),
-                       marker=dict(size=10, color='#1f77b4'), showlegend=False),
-            row=1, col=1
-        )
-        # % labels ALWAYS at the bottom, fixed height (never overlapping the line)
-        fig_blocchi.add_trace(
-            go.Scatter(x=df_blocchi['Block'], y=[y_bottom_pct] * len(df_blocchi), mode='text',
-                       text=df_blocchi['Save %'].apply(lambda x: f"{x:.0f}%"),
-                       textfont=dict(color='#1f77b4', size=13), showlegend=False),
-            row=1, col=1
-        )
-        # GPI bars (no text attached)
-        fig_blocchi.add_trace(
-            go.Bar(x=df_blocchi['Block'], y=df_blocchi['Total GPI'], name='Total GPI',
-                   marker_color='#ff7f0e', width=0.5, showlegend=False),
-            row=2, col=1
-        )
-        # GPI labels ALWAYS at the top, fixed height (never overlapping the bars)
-        fig_blocchi.add_trace(
-            go.Scatter(x=df_blocchi['Block'], y=[y_top_gpi] * len(df_blocchi), mode='text',
-                       text=df_blocchi['Total GPI'].apply(lambda x: f"{x:+.1f}"),
-                       textfont=dict(color='#ff7f0e', size=13), showlegend=False),
-            row=2, col=1
-        )
-        fig_blocchi.update_layout(
-            height=520, plot_bgcolor='white', margin=dict(t=50, b=40, l=40, r=40)
-        )
-        fig_blocchi.update_yaxes(title_text="Save %", range=[0, 115], row=1, col=1)
-        fig_blocchi.update_yaxes(title_text="Total GPI", range=[y_bottom_gpi * 1.15, y_top_gpi * 1.15], row=2, col=1)
-        fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
+                st.markdown("**Shot Map**")
+                chiave_match_tir_sicura = _chiave_css_sicura(titolo_match_tir)
 
-        st.plotly_chart(fig_blocchi, use_container_width=True, key="fig_blocchi_single_match")
-        st.dataframe(df_blocchi, use_container_width=True, hide_index=True)
+                col_macro_mt, col_avv_mt = st.columns(2)
+                with col_macro_mt:
+                    macro_key_mt = selettore_macro_zona(key_prefix=f"match_tir_{chiave_match_tir_sicura}")
+                with col_avv_mt:
+                    if modalita_match_tir == "Player":
+                        avversario_mt = selettore_avversario(df_h2h_match, titolo_match_tir, False,
+                                                              key_prefix=f"match_tir_{chiave_match_tir_sicura}")
+                    else:
+                        portieri_h2h_mt = sorted(df_h2h_match['PORTIERE_ID'].unique()) if not df_h2h_match.empty else []
+                        if portieri_h2h_mt:
+                            scelta_avv_mt = st.selectbox("Goalkeeper (opponent, optional):", ["(All)"] + portieri_h2h_mt,
+                                                          key=f"match_tir_{chiave_match_tir_sicura}_avv_team")
+                            avversario_mt = None if scelta_avv_mt == "(All)" else scelta_avv_mt
+                        else:
+                            avversario_mt = None
 
-        # ============================================================
-        # ESPORTAZIONE PDF DELL'INTERA PAGINA
-        # ============================================================
-        st.markdown("---")
-        st.subheader("📄 Export Match Report to PDF")
-        st.caption("Generate a PDF with every section of this page: totals, GPI chart, shot sequence, "
-                   "shot maps, per-goalkeeper statistics, and 10-minute blocks.")
+                filtri_mt = selettore_filtri_avanzati(df_selezione_match_tir, key_prefix=f"match_tir_{chiave_match_tir_sicura}")
 
-        with st.expander("🗺️ Shot Maps to include in the PDF"):
-            col_map1, col_map2 = st.columns(2)
-            with col_map1:
-                includi_generale_pdf = st.checkbox("General Shot Map (all shots, all goalkeepers)", value=True, key="pdf_includi_generale")
-            with col_map2:
-                includi_per_gk_pdf = st.checkbox("One map per goalkeeper (only those who faced shots)", value=True, key="pdf_includi_per_gk")
+                if modalita_match_tir == "Player":
+                    df_base_mt = applica_filtro_avversario(df_selezione_match_tir, df_h2h_match, titolo_match_tir, False, avversario_mt)
+                else:
+                    df_base_mt = df_h2h_match[df_h2h_match['PORTIERE_ID'] == avversario_mt] if avversario_mt else df_selezione_match_tir
 
-            if 'mappe_extra_pdf_match' not in st.session_state:
-                st.session_state['mappe_extra_pdf_match'] = {}
-            chiave_match_mappe = f"{scelta}"
-            if chiave_match_mappe not in st.session_state['mappe_extra_pdf_match']:
-                st.session_state['mappe_extra_pdf_match'][chiave_match_mappe] = []
-            mappe_correnti = st.session_state['mappe_extra_pdf_match'][chiave_match_mappe]
+                df_mt_filtrato = applica_filtri_avanzati(df_base_mt, filtri_mt)
+                df_mt_filtrato = filtra_per_macro_zona(df_mt_filtrato, macro_key_mt)
 
-            st.markdown("**Add a custom filtered map (optional)**")
-            portieri_per_mappa = ["(All goalkeepers)"] + list(df_match['PORTIERE_CLEAN'].dropna().unique())
-            gk_mappa_scelto = st.selectbox("Goalkeeper:", portieri_per_mappa, key="mappa_extra_gk")
-            df_base_mappa = df_match if gk_mappa_scelto == "(All goalkeepers)" else df_match[df_match['PORTIERE_CLEAN'] == gk_mappa_scelto]
-            filtri_mappa_extra = selettore_filtri_avanzati(df_base_mappa, key_prefix="mappa_extra")
-            zona_mappa_scelta = st.selectbox("Field sector (optional):", ["(All sectors)"] + TUTTI_I_TASTI_TIRATORI, key="mappa_extra_zona")
-            titolo_mappa_extra = st.text_input("Map title:", value="Custom Shot Map", key="mappa_extra_titolo")
-            if st.button("➕ Add this map to the PDF"):
-                df_mappa_extra = applica_filtri_avanzati(df_base_mappa, filtri_mappa_extra)
-                if zona_mappa_scelta != "(All sectors)":
-                    df_mappa_extra = df_mappa_extra[df_mappa_extra['TIRO_CLEAN'].apply(_normalizza_zona) == zona_mappa_scelta]
-                mappe_correnti.append({'titolo': titolo_mappa_extra, 'df': df_mappa_extra})
-                st.success(f"Map '{titolo_mappa_extra}' added ({len(df_mappa_extra)} shots).")
-                st.rerun()
+                key_focus_mt = f"tasto_focus_match_tir_{chiave_match_tir_sicura}"
+                if key_focus_mt not in st.session_state:
+                    st.session_state[key_focus_mt] = None
+                if st.session_state[key_focus_mt] not in TUTTI_I_TASTI_TIRATORI:
+                    st.session_state[key_focus_mt] = None
+                tasto_sel_mt = st.session_state[key_focus_mt]
 
-            if mappe_correnti:
-                st.markdown("**Custom maps queued for this PDF:**")
-                for i, mappa in enumerate(mappe_correnti):
-                    col_m1, col_m2 = st.columns([5, 1])
-                    col_m1.caption(f"{mappa['titolo']} — {len(mappa['df'])} shot(s)")
-                    if col_m2.button("🗑️", key=f"del_mappa_extra_{i}"):
-                        mappe_correnti.pop(i)
+                if tasto_sel_mt:
+                    df_porta_mt = df_mt_filtrato[df_mt_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_mt]
+                    g_sel_mt, t_sel_mt, pct_sel_mt = calcola_metriche_tiratori_gruppo(df_porta_mt)
+                    expected_sel_mt = ottieni_expected_goal_pct(tasto_sel_mt)
+                    colore_cornice_mt = _colore_expected(pct_sel_mt if t_sel_mt > 0 else None, expected_sel_mt)
+                else:
+                    df_porta_mt = df_mt_filtrato
+                    colore_cornice_mt = None
+
+                tot_porta_mt, goal_porta_mt = costruisci_conteggi_porta(df_porta_mt)
+                fig_porta_mt = disegna_porta(tot_porta_mt, goal_porta_mt, colore_cornice=colore_cornice_mt)
+                tot_tast_mt, goal_tast_mt = costruisci_conteggi_tastiera(df_mt_filtrato)
+
+                col_porta_mt, col_tast_mt = st.columns([1, 2])
+                with col_porta_mt:
+                    st.pyplot(fig_porta_mt)
+                    if tasto_sel_mt:
+                        expected_testo_mt = f"{expected_sel_mt:.0f}%" if expected_sel_mt is not None else "n/a"
+                        if t_sel_mt > 0:
+                            st.caption(f"Expected Goal % for {tasto_sel_mt}: **{expected_testo_mt}**  |  "
+                                       f"Real: **{pct_sel_mt:.1f}%** ({g_sel_mt}/{t_sel_mt})")
+                        else:
+                            st.caption(f"Expected Goal % for {tasto_sel_mt}: **{expected_testo_mt}**  |  No shots from this sector.")
+                with col_tast_mt:
+                    tasto_cliccato_mt = pulsantiera_settori_campo(
+                        tot_tast_mt, goal_tast_mt, tasto_sel_mt, key_prefix=f"match_tir_pulsantiera_{chiave_match_tir_sicura}"
+                    )
+                    if tasto_cliccato_mt:
+                        st.session_state[key_focus_mt] = None if tasto_cliccato_mt == tasto_sel_mt else tasto_cliccato_mt
                         st.rerun()
+                    if tasto_sel_mt:
+                        if st.button("↺ Reset — show all sectors", key=f"reset_match_tir_{chiave_match_tir_sicura}"):
+                            st.session_state[key_focus_mt] = None
+                            st.rerun()
 
-        if st.button("📄 Generate PDF for this match"):
-            with st.spinner("Generating PDF..."):
-                try:
-                    pdf_bytes = genera_pdf_partita(
-                        titolo_partita=scelta,
-                        righe_gpi_totale=righe_gpi_totale,
-                        tabella_sequenza=tabella_sequenza,
-                        dati_portieri=dati_pdf_portieri,
-                        df_blocchi=df_blocchi,
-                        df_match=df_match,
-                        fig_blocchi=fig_blocchi,
-                        includi_mappa_generale=includi_generale_pdf,
-                        includi_mappe_per_portiere=includi_per_gk_pdf,
-                        mappe_extra=st.session_state.get('mappe_extra_pdf_match', {}).get(scelta, [])
-                    )
-                    nome_file_pdf = f"Report_{scelta}".replace(' ', '_').replace('/', '-') + ".pdf"
-                    st.download_button(
-                        label="⬇️ Download PDF",
-                        data=pdf_bytes,
-                        file_name=nome_file_pdf,
-                        mime="application/pdf"
-                    )
-                    st.success("PDF generated! Click the button above to download it.")
-                except Exception as e:
-                    st.error(f"Error generating PDF: {e}")
+                if 'mappe_extra_pdf_match_tir' not in st.session_state:
+                    st.session_state['mappe_extra_pdf_match_tir'] = {}
+                titolo_mappa_mt = f"{titolo_match_tir} — {descrivi_filtri_attivi(macro_key_mt, tasto_sel_mt, filtri_mt, avversario_mt)}"
+                pulsante_salva_mappa_pdf(
+                    st.session_state['mappe_extra_pdf_match_tir'], scelta, titolo_mappa_mt, df_porta_mt,
+                    key=f"salva_mappa_match_tir_{chiave_match_tir_sicura}"
+                )
+
+                if modalita_match_tir == "Team":
+                    st.markdown("**By macro-zone**")
+                    st.dataframe(tabella_macro_tiratori(df_selezione_match_tir), use_container_width=True, hide_index=True)
+
+                nota_giocatore_mt = st.session_state['note_tiratori'].get(titolo_match_tir, '')
+                if nota_giocatore_mt:
+                    st.markdown(f"**Notes:** {note_markup_a_html_streamlit(nota_giocatore_mt)}", unsafe_allow_html=True)
+
+                st.markdown("---")
+                st.subheader("⏱️ Shot Distribution by 10-Minute Blocks (team)")
+                st.caption("Always shown at team level — an individual breakdown isn't meaningful over a single match.")
+                df_blocchi_mt, fig_blocchi_mt = costruisci_grafico_blocchi_tiratori(df_squadra_completa_mt)
+                st.plotly_chart(fig_blocchi_mt, use_container_width=True, key="fig_blocchi_match_tir")
+                st.dataframe(df_blocchi_mt, use_container_width=True, hide_index=True)
+
+                st.markdown("---")
+                st.subheader("📄 Export to PDF")
+                mappe_match_tir_correnti = st.session_state.get('mappe_extra_pdf_match_tir', {}).get(scelta, [])
+                if mappe_match_tir_correnti:
+                    st.markdown("**Custom maps queued for this PDF:**")
+                    for i, mappa in enumerate(mappe_match_tir_correnti):
+                        col_mmt1, col_mmt2 = st.columns([5, 1])
+                        col_mmt1.caption(f"{mappa['titolo']} — {len(mappa['df'])} shot(s)")
+                        if col_mmt2.button("🗑️", key=f"del_mappa_match_tir_{i}"):
+                            mappe_match_tir_correnti.pop(i)
+                            st.rerun()
+
+                if st.button("📄 Generate PDF for this match (shooters)"):
+                    with st.spinner("Generating PDF..."):
+                        try:
+                            logo_squadra_mt = st.session_state['loghi_squadre'].get(titolo_match_tir) if modalita_match_tir == "Team" else None
+                            pdf_bytes_mt = genera_pdf_tiratori(
+                                f"{scelta} — {titolo_match_tir}",
+                                {titolo_match_tir: df_selezione_match_tir},
+                                {titolo_match_tir: st.session_state['note_tiratori'].get(titolo_match_tir, '')},
+                                df_squadra_riepilogo=(df_squadra_completa_mt if modalita_match_tir == "Team" else None),
+                                logo_squadra_b64=logo_squadra_mt,
+                                mappe_extra=mappe_match_tir_correnti
+                            )
+                            st.download_button(
+                                label="⬇️ Download PDF", data=pdf_bytes_mt,
+                                file_name=f"Shooting_Report_{scelta}_{titolo_match_tir}".replace(' ', '_') + ".pdf",
+                                mime="application/pdf", key="dl_match_tir"
+                            )
+                            st.success("PDF generated! Click the button above to download it.")
+                        except Exception as e:
+                            st.error(f"Error generating PDF: {e}")
 
 
 with tab3:
@@ -4569,11 +4920,22 @@ with tab3:
                     # ---- Shot Map: porta + pulsantiera + filtri incrociati, sull'intera selezione ----
                     st.markdown("**Shot Map (season)**")
                     chiave_gk_stag_sicura = _chiave_css_sicura(gk)
-                    col_macro_gk_stag, col_spazio_gk_stag = st.columns([1, 2])
+                    _chiavi_match_stagione = {(mm['nome'], str(mm['data'])) for mm in db_gk_filtrato}
+                    _frammenti_h2h_stagione = [
+                        m['dati'] for m in st.session_state.get('db_h2h', [])
+                        if (m['nome'], str(m['data'])) in _chiavi_match_stagione
+                    ]
+                    df_h2h_stagione = pd.concat(_frammenti_h2h_stagione, ignore_index=True) if _frammenti_h2h_stagione else pd.DataFrame(
+                        columns=['PORTIERE_ID', 'TIRATORE_ID', 'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN'])
+
+                    col_macro_gk_stag, col_avv_gk_stag = st.columns(2)
                     with col_macro_gk_stag:
                         macro_key_gk_stag = selettore_macro_zona(key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
+                    with col_avv_gk_stag:
+                        avversario_gk_stag = selettore_avversario(df_h2h_stagione, gk, True, key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
                     filtri_gk_stag = selettore_filtri_avanzati(df_gk_tot, key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
-                    df_gk_stag_filtrato = applica_filtri_avanzati(df_gk_tot, filtri_gk_stag)
+                    df_gk_stag_base = applica_filtro_avversario(df_gk_tot, df_h2h_stagione, gk, True, avversario_gk_stag)
+                    df_gk_stag_filtrato = applica_filtri_avanzati(df_gk_stag_base, filtri_gk_stag)
                     df_gk_stag_filtrato = filtra_per_macro_zona(df_gk_stag_filtrato, macro_key_gk_stag)
 
                     key_focus_gk_stag = f"tasto_focus_gk_seasonal_{chiave_gk_stag_sicura}"
@@ -4619,6 +4981,14 @@ with tab3:
                                 st.session_state[key_focus_gk_stag] = None
                                 st.rerun()
 
+                    if 'mappe_extra_pdf_stagione' not in st.session_state:
+                        st.session_state['mappe_extra_pdf_stagione'] = {}
+                    titolo_mappa_gk_stag = f"{gk} — {descrivi_filtri_attivi(macro_key_gk_stag, tasto_sel_gk_stag, filtri_gk_stag, avversario_gk_stag)}"
+                    pulsante_salva_mappa_pdf(
+                        st.session_state['mappe_extra_pdf_stagione'], titolo_report, titolo_mappa_gk_stag,
+                        df_per_porta_gk_stag, key=f"salva_mappa_gk_seasonal_{chiave_gk_stag_sicura}"
+                    )
+
             st.markdown("---")
             st.subheader("⏱️ Performance by 10-Minute Blocks (season cumulative)")
             df_blocchi_stagione, fig_blocchi_stagione = costruisci_grafico_blocchi(df_stagione_totale)
@@ -4627,7 +4997,17 @@ with tab3:
 
             st.markdown("---")
             st.subheader("📄 Export Season Report to PDF")
-            st.caption("Generate a PDF with every section of this page: totals, GPI and save % trends, match history, per-goalkeeper statistics, and 10-minute blocks.")
+            st.caption("Generate a PDF with every section of this page: totals, GPI and save % trends, match history, per-goalkeeper statistics, saved shot maps, and 10-minute blocks.")
+
+            mappe_stagione_correnti = st.session_state.get('mappe_extra_pdf_stagione', {}).get(titolo_report, [])
+            if mappe_stagione_correnti:
+                st.markdown("**Custom maps queued for this PDF:**")
+                for i, mappa in enumerate(mappe_stagione_correnti):
+                    col_ms1, col_ms2 = st.columns([5, 1])
+                    col_ms1.caption(f"{mappa['titolo']} — {len(mappa['df'])} shot(s)")
+                    if col_ms2.button("🗑️", key=f"del_mappa_stagione_{i}"):
+                        mappe_stagione_correnti.pop(i)
+                        st.rerun()
 
             if st.button("📄 Generate Season PDF"):
                 with st.spinner("Generating PDF..."):
@@ -4641,7 +5021,8 @@ with tab3:
                             df_blocchi=df_blocchi_stagione,
                             df_stagione_totale=df_stagione_totale,
                             fig_blocchi=fig_blocchi_stagione,
-                            logo_squadra_b64=logo_squadra_gk
+                            logo_squadra_b64=logo_squadra_gk,
+                            mappe_extra=mappe_stagione_correnti
                         )
                         nome_file_pdf_stagione = f"Report_{titolo_report}".replace(' ', '_').replace('/', '-').replace('—', '-') + ".pdf"
                         st.download_button(
@@ -4790,8 +5171,27 @@ with tab4:
                 # ---- Shot Map: porta e pulsantiera affiancate ----
                 st.markdown("---")
                 st.subheader(f"🥅 Shot Map — {titolo_dashboard}")
+
+                _chiavi_match_trend = {(m['nome'], str(m['data'])) for m in match_filtrati}
+                _frammenti_h2h_trend = [m['dati'] for m in st.session_state.get('db_h2h', [])
+                                         if (m['nome'], str(m['data'])) in _chiavi_match_trend]
+                df_h2h_trend = pd.concat(_frammenti_h2h_trend, ignore_index=True) if _frammenti_h2h_trend else pd.DataFrame(
+                    columns=['PORTIERE_ID', 'TIRATORE_ID', 'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN'])
+
+                if modalita_tir == "Player":
+                    avversario_tir = selettore_avversario(df_h2h_trend, giocatore_scelto_tir, False, key_prefix="tir_shared")
+                    df_selezione_base = applica_filtro_avversario(df_selezione, df_h2h_trend, giocatore_scelto_tir, False, avversario_tir)
+                else:
+                    portieri_h2h_trend = sorted(df_h2h_trend['PORTIERE_ID'].unique()) if not df_h2h_trend.empty else []
+                    if portieri_h2h_trend:
+                        scelta_avv_trend = st.selectbox("Goalkeeper (opponent, optional):", ["(All)"] + portieri_h2h_trend, key="tir_shared_avversario")
+                        avversario_tir = None if scelta_avv_trend == "(All)" else scelta_avv_trend
+                    else:
+                        avversario_tir = None
+                    df_selezione_base = df_h2h_trend[df_h2h_trend['PORTIERE_ID'] == avversario_tir] if avversario_tir else df_selezione
+
                 filtri_tir_shared = selettore_filtri_avanzati(df_selezione, key_prefix="tir_shared")
-                df_selezione = applica_filtri_avanzati(df_selezione, filtri_tir_shared)
+                df_selezione = applica_filtri_avanzati(df_selezione_base, filtri_tir_shared)
                 if 'tasto_focus_shared' not in st.session_state:
                     st.session_state['tasto_focus_shared'] = None
                 tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione)
@@ -4835,6 +5235,14 @@ with tab4:
                             st.session_state['tasto_focus_shared'] = None
                             st.rerun()
 
+                if 'mappe_extra_pdf_trend' not in st.session_state:
+                    st.session_state['mappe_extra_pdf_trend'] = {}
+                titolo_mappa_trend = f"{titolo_dashboard} — {descrivi_filtri_attivi(macro_key, tasto_scelto, filtri_tir_shared, avversario_tir)}"
+                pulsante_salva_mappa_pdf(
+                    st.session_state['mappe_extra_pdf_trend'], titolo_dashboard, titolo_mappa_trend,
+                    df_porta_sel, key="salva_mappa_trend_shared"
+                )
+
                 if modalita_tir == "Team":
                     if macro_key:
                         st.markdown(f"**Breakdown of macro-zone {ETICHETTA_MACRO_TIRATORI[macro_key]}**")
@@ -4847,6 +5255,7 @@ with tab4:
 
                 st.markdown("---")
                 dati_pdf_giocatori = {}
+                dati_completi_per_giocatore_stagione = {}
                 for nome_giocatore in giocatori_da_mostrare:
                     frammenti_g = []
                     lista_partite_g = []
@@ -4975,9 +5384,36 @@ with tab4:
 
                         dati_pdf_giocatori[nome_giocatore] = df_giocatore_vista
 
+                    dati_completi_per_giocatore_stagione[nome_giocatore] = df_giocatore
+
+                # ---- Shot Distribution by 10-Minute Blocks: squadra di default, individuale
+                # selezionabile a piacere (non mostrato automaticamente) ----
+                st.markdown("---")
+                st.subheader("⏱️ Shot Distribution by 10-Minute Blocks")
+                opzioni_blocchi_tir = ["Team"] + list(dati_completi_per_giocatore_stagione.keys())
+                scelta_blocchi_tir = st.selectbox("Show blocks for:", opzioni_blocchi_tir, key="blocchi_tir_scelta")
+                df_per_blocchi_tir = (
+                    df_selezione if scelta_blocchi_tir == "Team"
+                    else dati_completi_per_giocatore_stagione.get(scelta_blocchi_tir, pd.DataFrame())
+                )
+                df_blocchi_tir_stag, fig_blocchi_tir_stag = costruisci_grafico_blocchi_tiratori(df_per_blocchi_tir)
+                st.plotly_chart(fig_blocchi_tir_stag, use_container_width=True, key="fig_blocchi_tir_stagione")
+                st.dataframe(df_blocchi_tir_stag, use_container_width=True, hide_index=True)
+
                 # ---- Team / full-selection PDF ----
                 st.markdown("---")
                 st.subheader("📄 Export to PDF")
+
+                mappe_trend_correnti = st.session_state.get('mappe_extra_pdf_trend', {}).get(titolo_dashboard, [])
+                if mappe_trend_correnti:
+                    st.markdown("**Custom maps queued for this PDF:**")
+                    for i, mappa in enumerate(mappe_trend_correnti):
+                        col_mt1, col_mt2 = st.columns([5, 1])
+                        col_mt1.caption(f"{mappa['titolo']} — {len(mappa['df'])} shot(s)")
+                        if col_mt2.button("🗑️", key=f"del_mappa_trend_{i}"):
+                            mappe_trend_correnti.pop(i)
+                            st.rerun()
+
                 col_pdf1, col_pdf2 = st.columns(2)
                 with col_pdf1:
                     if st.button("📄 Generate PDF for this selection"):
@@ -4988,7 +5424,8 @@ with tab4:
                                 pdf_bytes_sel = genera_pdf_tiratori(
                                     titolo_dashboard, dati_pdf_giocatori, note_selezione,
                                     df_squadra_riepilogo=(df_selezione if modalita_tir == "Team" else None),
-                                    logo_squadra_b64=logo_squadra_tir
+                                    logo_squadra_b64=logo_squadra_tir,
+                                    mappe_extra=mappe_trend_correnti
                                 )
                                 st.download_button(
                                     label="⬇️ Download PDF", data=pdf_bytes_sel,
