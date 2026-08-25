@@ -246,6 +246,25 @@ def mappa_macro_settore_tiratori(zona):
         return m.group(2)
     return None
 
+def selettore_macro_zona(key_prefix, etichetta="Focus on a macro-zone (optional):"):
+    """Selettore del macro-settore di campo (7m, LW, RW, FB, Sector 1...3), riusabile ovunque
+    nell'app (Single Game Analysis, Seasonal Report, Shooting Trend Analysis). Restituisce la
+    chiave interna del macro-settore scelto, o None se '(All zones)'."""
+    macro_scelto = st.selectbox(
+        etichetta, ["(All zones)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
+        key=f"{key_prefix}_macro_scelto"
+    )
+    if macro_scelto == "(All zones)":
+        return None
+    return next(k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v == macro_scelto)
+
+def filtra_per_macro_zona(df, macro_key):
+    """Filtra un qualsiasi dataframe (portieri o tiratori) per macro-settore, usando TIRO_CLEAN.
+    Se macro_key è None, restituisce il dataframe invariato."""
+    if not macro_key or df.empty:
+        return df
+    return df[df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori) == macro_key]
+
 # Ordine "naturale" dei tasti della tastiera dei settori di campo (come da immagine allegata)
 ORDINE_TASTIERA_TIRATORI = [
     ['7m'],
@@ -361,6 +380,12 @@ COLONNE_TAGGING_AVANZATO = {
 # Colonna che identifica i tiri effettuati dal portiere stesso verso la porta avversaria
 # (marcati "Tiro +"/"Tiro -" in Videocoach): esclusi dalle statistiche di parata/GPI, contati a parte.
 COLONNA_TIRO_PORTIERE = ['lancio/tiro portiere/intercetto', 'lancio tiro portiere', 'tiro portiere/intercetto']
+
+# Quali dimensioni di tagging avanzato appartengono ai portieri, quali ai tiratori, e quali sono
+# condivise (es. il contesto del tiro riguarda entrambi): usato per non mostrare filtri senza
+# senso (es. "Save Type" nella sezione tiratori).
+DIMENSIONI_TAGGING_PORTIERE = {'TIPOLOGIA_PARATA', 'POSIZIONE_PORTIERE', 'COMPORTAMENTO_PORTIERE', 'CONTESTO_TIRO'}
+DIMENSIONI_TAGGING_TIRATORE = {'TIPOLOGIA_TIRO', 'TRAIETTORIA_TIRATORE', 'CONTESTO_TIRO'}
 
 def trova_colonne_tagging_avanzato(colonne_df):
     """Cerca, tra le colonne di un DataFrame grezzo, quelle che corrispondono alle dimensioni di
@@ -1356,17 +1381,20 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         result = r[c_result]
         timeline = r[c_time]
         goal_sector = r[c_goalsector] if c_goalsector is not None else None
-        valori_avanzati = {nome_colonna: r[nome_colonna] for nome_colonna in colonne_avanzate_trovate.values()}
+        valori_avanzati_gk = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
+                               if chiave in DIMENSIONI_TAGGING_PORTIERE}
+        valori_avanzati_tir = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
+                                if chiave in DIMENSIONI_TAGGING_TIRATORE}
 
         if portiere:
             riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline, 'GOAL SECTOR': goal_sector}
-            riga_gk.update(valori_avanzati)
+            riga_gk.update(valori_avanzati_gk)
             (righe_gk_home if squadra_portiere == 'home' else righe_gk_away).append(riga_gk)
 
         if tiratore:
             riga_tir = {'TIRATORE': tiratore, 'TIRO': tiro, 'GOAL SECTOR': goal_sector,
                         'RESULT': result, 'TIMELINE': timeline}
-            riga_tir.update(valori_avanzati)
+            riga_tir.update(valori_avanzati_tir)
             (righe_tir_home if squadra_tiratore == 'home' else righe_tir_away).append(riga_tir)
 
         if portiere and tiratore:
@@ -4167,8 +4195,12 @@ with tab2:
                 # ---- Shot Map del portiere: porta + pulsantiera + filtri incrociati ----
                 st.markdown("**Shot Map**")
                 chiave_gk_sicura = _chiave_css_sicura(gk)
+                col_macro_gk, col_spazio_gk = st.columns([1, 2])
+                with col_macro_gk:
+                    macro_key_gk = selettore_macro_zona(key_prefix=f"gk_single_{chiave_gk_sicura}")
                 filtri_gk = selettore_filtri_avanzati(df_gk, key_prefix=f"gk_single_{chiave_gk_sicura}")
                 df_gk_filtrato = applica_filtri_avanzati(df_gk, filtri_gk)
+                df_gk_filtrato = filtra_per_macro_zona(df_gk_filtrato, macro_key_gk)
 
                 key_focus_gk = f"tasto_focus_gk_single_{chiave_gk_sicura}"
                 if key_focus_gk not in st.session_state:
@@ -4537,8 +4569,12 @@ with tab3:
                     # ---- Shot Map: porta + pulsantiera + filtri incrociati, sull'intera selezione ----
                     st.markdown("**Shot Map (season)**")
                     chiave_gk_stag_sicura = _chiave_css_sicura(gk)
+                    col_macro_gk_stag, col_spazio_gk_stag = st.columns([1, 2])
+                    with col_macro_gk_stag:
+                        macro_key_gk_stag = selettore_macro_zona(key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
                     filtri_gk_stag = selettore_filtri_avanzati(df_gk_tot, key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
                     df_gk_stag_filtrato = applica_filtri_avanzati(df_gk_tot, filtri_gk_stag)
+                    df_gk_stag_filtrato = filtra_per_macro_zona(df_gk_stag_filtrato, macro_key_gk_stag)
 
                     key_focus_gk_stag = f"tasto_focus_gk_seasonal_{chiave_gk_stag_sicura}"
                     if key_focus_gk_stag not in st.session_state:
@@ -4754,6 +4790,8 @@ with tab4:
                 # ---- Shot Map: porta e pulsantiera affiancate ----
                 st.markdown("---")
                 st.subheader(f"🥅 Shot Map — {titolo_dashboard}")
+                filtri_tir_shared = selettore_filtri_avanzati(df_selezione, key_prefix="tir_shared")
+                df_selezione = applica_filtri_avanzati(df_selezione, filtri_tir_shared)
                 if 'tasto_focus_shared' not in st.session_state:
                     st.session_state['tasto_focus_shared'] = None
                 tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione)
