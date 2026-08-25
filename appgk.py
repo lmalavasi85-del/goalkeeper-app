@@ -4580,19 +4580,22 @@ with tab5:
                             salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
                             st.rerun()
 
-                    with st.form(key=f"form_nuova_ass_{chiave_sess}", clear_on_submit=True):
-                        squadra_ass = st.selectbox("Team (optional)", ["(none)"] + nomi_squadre_disponibili, key=f"squadra_ass_{chiave_sess}")
-                        specifica_data = st.checkbox("Specify a date", key=f"specifica_data_{chiave_sess}")
-                        data_ass = st.date_input("Date", value=datetime.now(), key=f"data_ass_{chiave_sess}") if specifica_data else None
-                        nota_ass = st.text_area("Notes for this team/date (max 1000 characters)", max_chars=1000, key=f"nota_ass_{chiave_sess}")
-                        if st.form_submit_button("➕ Add assignment"):
-                            st.session_state['sessioni_allenamento'][idx_sessione]['assegnazioni'].append({
-                                'squadra': None if squadra_ass == "(none)" else squadra_ass,
-                                'data': str(data_ass) if data_ass else None,
-                                'nota': nota_ass,
-                            })
-                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
-                            st.rerun()
+                    st.markdown("**Add a new assignment**")
+                    squadra_ass = st.selectbox("Team (optional)", ["(none)"] + nomi_squadre_disponibili, key=f"squadra_ass_{chiave_sess}")
+                    specifica_data = st.checkbox("Specify a date", key=f"specifica_data_{chiave_sess}")
+                    data_ass = st.date_input("Date", value=datetime.now(), key=f"data_ass_{chiave_sess}") if specifica_data else None
+                    nota_ass = st.text_area("Notes for this team/date (max 1000 characters)", max_chars=1000, key=f"nota_ass_{chiave_sess}")
+                    if st.button("➕ Add assignment", key=f"add_ass_btn_{chiave_sess}"):
+                        st.session_state['sessioni_allenamento'][idx_sessione]['assegnazioni'].append({
+                            'squadra': None if squadra_ass == "(none)" else squadra_ass,
+                            'data': str(data_ass) if data_ass else None,
+                            'nota': nota_ass,
+                        })
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        for _chiave_da_svuotare in (f"squadra_ass_{chiave_sess}", f"specifica_data_{chiave_sess}",
+                                                     f"data_ass_{chiave_sess}", f"nota_ass_{chiave_sess}"):
+                            st.session_state.pop(_chiave_da_svuotare, None)
+                        st.rerun()
 
                     st.markdown("---")
                     if st.button("📄 Export session (no team/date)", key=f"export_plain_{chiave_sess}"):
