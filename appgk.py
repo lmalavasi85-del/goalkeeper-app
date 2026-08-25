@@ -952,7 +952,7 @@ def costruisci_grafico_blocchi_tiratori(df_aggregato, altezza=520):
     fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
     return df_blocchi, fig_blocchi
 
-
+def _disegna_grafico_stagione(dati_per_portiere, chiave_valore, etichetta_y, output_path):
     """Disegna, per ciascun portiere, l'andamento del valore (GPI o %) partita per partita,
     integrato con la linea della media cumulativa stagionale (ricalcolata partita dopo partita).
     Le partite in cui il portiere non ha giocato sono già escluse a monte.
