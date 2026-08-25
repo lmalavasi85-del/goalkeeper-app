@@ -2886,10 +2886,24 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
         ]))
         return t
 
+    # Rileva la dimensione esatta della prima pagina del PDF originale (spesso più larga di un
+    # normale A4 orizzontale, tipo formato "widescreen" di OneNote/PowerPoint), così la copertina
+    # ha ESATTAMENTE le stesse dimensioni e il documento finale risulta uniforme in ogni visualizzatore.
+    dimensione_pagina = landscape(A4)
+    if sessione.get('pdf_bytes') and _PYPDF_DISPONIBILE:
+        try:
+            prima_pagina_originale = PdfReader(io.BytesIO(sessione['pdf_bytes'])).pages[0]
+            larghezza_punti = float(prima_pagina_originale.mediabox.width)
+            altezza_punti = float(prima_pagina_originale.mediabox.height)
+            if larghezza_punti > 0 and altezza_punti > 0:
+                dimensione_pagina = (larghezza_punti, altezza_punti)
+        except Exception:
+            pass
+
     buffer_copertina = io.BytesIO()
-    doc = SimpleDocTemplate(buffer_copertina, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
+    doc = SimpleDocTemplate(buffer_copertina, pagesize=dimensione_pagina, topMargin=1.6 * cm, bottomMargin=1.4 * cm,
                              leftMargin=1.8 * cm, rightMargin=1.8 * cm)
-    larghezza_pagina = landscape(A4)[0] - 3.6 * cm
+    larghezza_pagina = dimensione_pagina[0] - 3.6 * cm
     elementi = []
 
     dimensione_logo = 2.8 * cm
