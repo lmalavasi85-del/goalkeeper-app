@@ -2009,28 +2009,53 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     elementi.append(_df_to_reportlab_table(tabella_sequenza, font_size=7))
     elementi.append(_separatore())
 
-    # Shot Maps: porta generale + una per portiere (di default) + eventuali mappe su misura
-    liste_mappe = []
-    if includi_mappa_generale and not df_match.empty:
-        liste_mappe.append(("General Shot Map (all shots, all goalkeepers)", df_match))
+    # Shot Maps: porta generale (più grande) + una per portiere (affiancate, centrate) + eventuali
+    # mappe su misura — ognuna sempre con la sua heat map dei settori specifici (tastiera) accanto.
+    liste_mappe_gk = []
     if includi_mappe_per_portiere:
         for gk_label in dati_portieri.keys():
             gk_raw = gk_label.split(' ', 1)[1] if ' ' in gk_label else gk_label
             df_gk_pdf = df_match[df_match['PORTIERE_CLEAN'] == gk_raw]
             if not df_gk_pdf.empty:
-                liste_mappe.append((f"Shot Map — {gk_label}", df_gk_pdf))
-    if mappe_extra:
-        for mappa in mappe_extra:
-            if not mappa['df'].empty:
-                liste_mappe.append((mappa['titolo'], mappa['df']))
+                liste_mappe_gk.append((f"Shot Map — {gk_label}", df_gk_pdf))
 
-    if liste_mappe:
+    liste_mappe_extra = [(m['titolo'], m['df']) for m in (mappe_extra or []) if not m['df'].empty]
+
+    if (includi_mappa_generale and not df_match.empty) or liste_mappe_gk or liste_mappe_extra:
         elementi.append(Paragraph("Shot Maps", sezione_stile))
-        for titolo_mappa, df_mappa in liste_mappe:
-            tot_m, salvate_m = costruisci_conteggi_porta(df_mappa, esiti_successo=('save', 's'))
-            fig_m = disegna_porta(tot_m, salvate_m, titolo=titolo_mappa)
-            img_m = _immagine_da_figura_matplotlib(fig_m, 8, 7)
-            elementi.append(KeepTogether([img_m, Spacer(1, 0.3 * cm)]))
+
+        if includi_mappa_generale and not df_match.empty:
+            blocco_generale = _blocco_porta_tastiera_pdf(
+                df_match, esiti_successo=('save', 's'), titolo="General Shot Map (all shots, all goalkeepers)",
+                larghezza_porta_cm=9, larghezza_tastiera_cm=13
+            )
+            blocco_generale.hAlign = 'CENTER'
+            elementi.append(blocco_generale)
+            elementi.append(Spacer(1, 0.4 * cm))
+
+        if liste_mappe_gk:
+            n_gk = len(liste_mappe_gk)
+            if n_gk <= 2:
+                larg_porta_gk, larg_tast_gk = (6.5, 9.5) if n_gk == 1 else (5, 7)
+                blocchi_gk = [_blocco_porta_tastiera_pdf(df_gk_pdf, ('save', 's'), titolo_mappa, larg_porta_gk, larg_tast_gk)
+                              for titolo_mappa, df_gk_pdf in liste_mappe_gk]
+                riga_gk = Table([blocchi_gk])
+                riga_gk.hAlign = 'CENTER'
+                riga_gk.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+                elementi.append(riga_gk)
+            else:
+                for titolo_mappa, df_gk_pdf in liste_mappe_gk:
+                    blocco = _blocco_porta_tastiera_pdf(df_gk_pdf, ('save', 's'), titolo_mappa, 6, 8.5)
+                    blocco.hAlign = 'CENTER'
+                    elementi.append(KeepTogether([blocco, Spacer(1, 0.25 * cm)]))
+            elementi.append(Spacer(1, 0.4 * cm))
+
+        for titolo_mappa, df_mappa in liste_mappe_extra:
+            blocco_extra = _blocco_porta_tastiera_pdf(df_mappa, esiti_successo=('save', 's'), titolo=titolo_mappa,
+                                                        larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
+            blocco_extra.hAlign = 'CENTER'
+            elementi.append(KeepTogether([blocco_extra, Spacer(1, 0.3 * cm)]))
+
         elementi.append(_separatore())
 
     # Detailed statistics per goalkeeper
@@ -2190,10 +2215,10 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
         for mappa in mappe_extra:
             if mappa['df'].empty:
                 continue
-            tot_m, salvate_m = costruisci_conteggi_porta(mappa['df'], esiti_successo=('save', 's'))
-            fig_m = disegna_porta(tot_m, salvate_m, titolo=mappa['titolo'])
-            img_m = _immagine_da_figura_matplotlib(fig_m, 8, 7)
-            elementi.append(KeepTogether([img_m, Spacer(1, 0.3 * cm)]))
+            blocco_mappa = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=('save', 's'), titolo=mappa['titolo'],
+                                                        larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
+            blocco_mappa.hAlign = 'CENTER'
+            elementi.append(KeepTogether([blocco_mappa, Spacer(1, 0.3 * cm)]))
         elementi.append(_separatore())
 
     # Detailed statistics per goalkeeper (season cumulative)
@@ -3257,6 +3282,22 @@ def _immagine_da_figura_matplotlib(fig, max_larghezza_cm, max_altezza_cm):
         w_cm, h_cm = _dimensioni_adattate(larghezza_px, altezza_px, max_larghezza_cm, max_altezza_cm)
         return RLImage(tmp.name, width=w_cm * cm, height=h_cm * cm)
 
+def _blocco_porta_tastiera_pdf(df, esiti_successo, titolo=None, larghezza_porta_cm=7.5, larghezza_tastiera_cm=11):
+    """Costruisce un blocco ReportLab con la porta a 9 settori E, accanto, la sua heat map dei
+    settori specifici (tastiera) — sempre insieme, ovunque nel PDF compaia una porta (mappa
+    generale, per giocatore, o mappe create con i filtri). esiti_successo: ('save','s') per i
+    portieri, ('goal','g') per i tiratori. larghezza_*_cm regola la dimensione (usato per rendere
+    la mappa generale più grande di quelle dei singoli giocatori/portieri)."""
+    tot_porta, successo_porta = costruisci_conteggi_porta(df, esiti_successo=esiti_successo)
+    fig_porta = disegna_porta(tot_porta, successo_porta, titolo=titolo)
+    tot_tast, successo_tast = costruisci_conteggi_tastiera(df, esiti_successo=esiti_successo)
+    fig_tast = disegna_tastiera(tot_tast, successo_tast)
+    img_porta = _immagine_da_figura_matplotlib(fig_porta, larghezza_porta_cm, larghezza_porta_cm * 0.87)
+    img_tast = _immagine_da_figura_matplotlib(fig_tast, larghezza_tastiera_cm, larghezza_tastiera_cm * 0.68)
+    blocco = Table([[img_porta, img_tast]], colWidths=[(larghezza_porta_cm + 0.5) * cm, (larghezza_tastiera_cm + 0.5) * cm])
+    blocco.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
+    return blocco
+
 def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, nota_html=None):
     """Costruisce gli elementi ReportLab (porta, tastiera, tabella macro-zone, note) per UN
     giocatore, a partire dal suo sottoinsieme di tiri già filtrato (per partite/money-time/macro
@@ -3395,10 +3436,10 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         if mappe_valide:
             pagina_mappe = [Paragraph("Saved Shot Maps", sezione_stile), Spacer(1, 0.2 * cm)]
             for mappa in mappe_valide:
-                tot_m, goal_m = costruisci_conteggi_porta(mappa['df'])
-                fig_m = disegna_porta(tot_m, goal_m, titolo=mappa['titolo'])
-                img_m = _immagine_da_figura_matplotlib(fig_m, 8, 7)
-                pagina_mappe.append(KeepTogether([img_m, Spacer(1, 0.3 * cm)]))
+                blocco_mappa = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=('goal', 'g'), titolo=mappa['titolo'],
+                                                            larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
+                blocco_mappa.hAlign = 'CENTER'
+                pagina_mappe.append(KeepTogether([blocco_mappa, Spacer(1, 0.3 * cm)]))
             blocchi_pagine.append(pagina_mappe)
 
     giocatori_validi = [(g, df_g) for g, df_g in dati_per_giocatore.items() if not df_g.empty]
