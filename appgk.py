@@ -4432,13 +4432,26 @@ with tab5:
                     st.rerun()
 
         if st.session_state['squadre_allenate']:
-            for i, squadra in enumerate(st.session_state['squadre_allenate']):
-                col_sq1, col_sq2 = st.columns([5, 1])
-                with col_sq1:
-                    st.caption(f"**{squadra['nome']}**")
-                    gestisci_logo_squadra(squadra['nome'], key_prefix="training")
-                with col_sq2:
-                    if st.button("🗑️ Remove team", key=f"del_squadra_training_{i}"):
+            indici_ordinati = sorted(range(len(st.session_state['squadre_allenate'])),
+                                      key=lambda i: st.session_state['squadre_allenate'][i]['nome'].lower())
+            colonne_squadre = st.columns(min(len(st.session_state['squadre_allenate']), 5))
+            for posizione, i in enumerate(indici_ordinati):
+                squadra = st.session_state['squadre_allenate'][i]
+                with colonne_squadre[posizione % len(colonne_squadre)]:
+                    logo_b64 = st.session_state['loghi_squadre'].get(squadra['nome'])
+                    if logo_b64:
+                        st.image(foto_base64_a_bytes(logo_b64), width=60)
+                    st.caption(squadra['nome'])
+                    nuovo_logo_file = st.file_uploader("Logo", type=['jpg', 'jpeg', 'png'], key=f"logo_compatto_{i}",
+                                                        label_visibility="collapsed")
+                    if nuovo_logo_file is not None:
+                        marcatore_logo = f"{nuovo_logo_file.name}-{nuovo_logo_file.size}"
+                        if st.session_state.get(f"_processato_logo_compatto_{i}") != marcatore_logo:
+                            st.session_state['loghi_squadre'][squadra['nome']] = elabora_foto_giocatore(nuovo_logo_file)
+                            salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+                            st.session_state[f"_processato_logo_compatto_{i}"] = marcatore_logo
+                            st.rerun()
+                    if st.button("🗑️", key=f"del_squadra_training_{i}", help=f"Remove {squadra['nome']}"):
                         st.session_state['squadre_allenate'].pop(i)
                         salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
                         st.rerun()
@@ -4493,7 +4506,7 @@ with tab5:
         if not st.session_state['sessioni_allenamento']:
             st.info("No sessions yet — upload some PDFs above to get started.")
         else:
-            nomi_squadre_disponibili = [s['nome'] for s in st.session_state['squadre_allenate']]
+            nomi_squadre_disponibili = sorted(s['nome'] for s in st.session_state['squadre_allenate'])
             for idx_sessione, sessione in enumerate(st.session_state['sessioni_allenamento']):
                 chiave_sess = sessione['id']
                 with st.expander(f"📄 {sessione['nome_sessione']}"):
