@@ -1587,9 +1587,11 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     buffer.seek(0)
     return buffer.getvalue()
 
-def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_portieri, df_blocchi, df_stagione_totale, fig_blocchi):
+def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_portieri, df_blocchi, df_stagione_totale, fig_blocchi, logo_squadra_b64=None):
     """Costruisce il PDF del report stagionale (portiere singolo o squadra) e lo restituisce come bytes.
-    Stessa identità grafica (logo, colori, footer) del report di partita singola."""
+    Stessa identità grafica (logo, colori, footer) del report di partita singola.
+    logo_squadra_b64: se fornito, il logo della squadra compare in copertina accanto al logo
+    dell'associazione (solo quando il report è per squadra)."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6*cm, bottomMargin=1.4*cm,
                              leftMargin=1.2*cm, rightMargin=1.2*cm)
@@ -1606,12 +1608,15 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     blocco_titolo = Table(
         [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo_copertina, height=dimensione_logo_copertina),
           [Paragraph("GOALKEEPER SEASONAL REPORT", titolo_stile),
-           Paragraph(titolo_report, sottotitolo_stile)]]],
-        colWidths=[dimensione_logo_copertina + 0.4*cm, None]
+           Paragraph(titolo_report, sottotitolo_stile)],
+          (RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)), width=dimensione_logo_copertina, height=dimensione_logo_copertina)
+           if logo_squadra_b64 else '')]],
+        colWidths=[dimensione_logo_copertina + 0.4*cm, None, dimensione_logo_copertina + 0.2*cm]
     )
     blocco_titolo.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('ALIGN', (2, 0), (2, 0), 'CENTER'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0),
         ('TOPPADDING', (0, 0), (-1, -1), 0),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
@@ -2473,6 +2478,88 @@ def salva_sessioni_allenamento_su_disco(lista_sessioni):
     with open(TRAINING_SESSIONS_FILE, 'wb') as f:
         pickle.dump(lista_sessioni, f)
 
+# ============================================================
+# LOGHI SQUADRA: magazzino condiviso in tutta l'app, indicizzato per nome squadra (esattamente
+# come le foto giocatori sono indicizzate per identità). Non importa in quale sezione carichi il
+# logo la prima volta (Training Sessions, Seasonal Report, Shooting Trend...): una volta agganciato
+# a un nome, viene riconosciuto ovunque quel nome compaia, comprese le esportazioni PDF cumulative
+# di squadra.
+# ============================================================
+TEAM_LOGOS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "team_logos.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_loghi_squadra():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('TeamLogos')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='TeamLogos', rows=500, cols=2)
+        worksheet.append_row(['squadra', 'logo_base64'])
+    return worksheet
+
+def carica_loghi_squadra_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_loghi_squadra()
+            valori = worksheet.get_all_values()
+            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            return {}
+    if os.path.exists(TEAM_LOGOS_FILE):
+        try:
+            with open(TEAM_LOGOS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_loghi_squadra_su_disco(loghi_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_loghi_squadra()
+            worksheet.clear()
+            worksheet.append_row(['squadra', 'logo_base64'])
+            righe = [[nome, logo] for nome, logo in loghi_dict.items()]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save team logos to Google Sheets: {e}")
+    with open(TEAM_LOGOS_FILE, 'wb') as f:
+        pickle.dump(loghi_dict, f)
+
+def gestisci_logo_squadra(nome_squadra, key_prefix):
+    """Widget riusabile: mostra il logo attuale della squadra (se presente) e un uploader per
+    caricarne/sostituirne uno. Riconosciuto ovunque nell'app in base al nome squadra."""
+    chiave_sicura = _chiave_css_sicura(nome_squadra)
+    key_uploader = f"{key_prefix}_logo_{chiave_sicura}"
+    key_marcatore = f"_processato_{key_uploader}"
+    col_logo, col_upload = st.columns([1, 4])
+    with col_upload:
+        nuovo_file = st.file_uploader(f"Logo for {nome_squadra} (optional, jpg/png)", type=['jpg', 'jpeg', 'png'],
+                                       key=key_uploader, label_visibility="collapsed")
+        if nuovo_file is not None:
+            marcatore_attuale = f"{nuovo_file.name}-{nuovo_file.size}"
+            if st.session_state.get(key_marcatore) != marcatore_attuale:
+                st.session_state['loghi_squadre'][nome_squadra] = elabora_foto_giocatore(nuovo_file)
+                salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+                st.session_state[key_marcatore] = marcatore_attuale
+                st.rerun()
+    with col_logo:
+        logo_b64 = st.session_state['loghi_squadre'].get(nome_squadra)
+        if logo_b64:
+            st.image(foto_base64_a_bytes(logo_b64), width=80)
+            if st.button("🗑️", key=f"rimuovi_{key_uploader}", help="Remove team logo"):
+                del st.session_state['loghi_squadre'][nome_squadra]
+                salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+                st.rerun()
+
 def gestisci_foto_giocatore(nome_giocatore, key_prefix):
     """Widget riusabile: mostra la foto attuale (se presente) e un uploader per caricarne/
     sostituirne una. Ridimensiona e salva automaticamente al volo."""
@@ -2524,6 +2611,17 @@ if 'squadre_allenate' not in st.session_state:
     st.session_state['squadre_allenate'] = carica_squadre_allenate_da_disco()
 if 'sessioni_allenamento' not in st.session_state:
     st.session_state['sessioni_allenamento'] = carica_sessioni_allenamento_da_disco()
+if 'loghi_squadre' not in st.session_state:
+    st.session_state['loghi_squadre'] = carica_loghi_squadra_da_disco()
+    # Migrazione: i loghi caricati finora dentro "Training Sessions" (per squadra) confluiscono
+    # nel magazzino condiviso, così sono riconosciuti subito ovunque nell'app.
+    _migrazione_avvenuta = False
+    for _squadra in st.session_state['squadre_allenate']:
+        if _squadra.get('logo_b64') and _squadra['nome'] not in st.session_state['loghi_squadre']:
+            st.session_state['loghi_squadre'][_squadra['nome']] = _squadra['logo_b64']
+            _migrazione_avvenuta = True
+    if _migrazione_avvenuta:
+        salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
 
 # ============================================================
 # NOTE DEL COACH: markup semplice **grassetto**, __sottolineato__, ==evidenziato==
@@ -2609,12 +2707,14 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
 
     return elementi
 
-def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None):
+def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None):
     """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con UNA PAGINA per
     ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto).
     Se df_squadra_riepilogo è fornito (dataframe aggregato dell'intera selezione), il PDF apre
     con due pagine di riepilogo squadra: 1) mappa generale (porta + tastiera con heat map),
-    2) tabelle tiratori per volume di tiro (totale e Money Time) e statistiche per macro-zona."""
+    2) tabelle tiratori per volume di tiro (totale e Money Time) e statistiche per macro-zona.
+    logo_squadra_b64: se fornito, il logo della squadra compare in copertina accanto al logo
+    dell'associazione."""
     note_dict = note_dict or {}
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
@@ -2633,11 +2733,13 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
     dimensione_logo_copertina = 2.6 * cm
     blocco_titolo = Table(
         [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo_copertina, height=dimensione_logo_copertina),
-          [Paragraph("SHOOTING TREND ANALYSIS", titolo_stile), Paragraph(titolo_report, sottotitolo_stile)]]],
-        colWidths=[dimensione_logo_copertina + 0.4 * cm, None]
+          [Paragraph("SHOOTING TREND ANALYSIS", titolo_stile), Paragraph(titolo_report, sottotitolo_stile)],
+          (RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)), width=dimensione_logo_copertina, height=dimensione_logo_copertina)
+           if logo_squadra_b64 else '')]],
+        colWidths=[dimensione_logo_copertina + 0.4 * cm, None, dimensione_logo_copertina + 0.2 * cm]
     )
     blocco_titolo.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'), ('ALIGN', (2, 0), (2, 0), 'CENTER'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
@@ -2763,11 +2865,7 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
 
     dimensione_logo = 2.6 * cm
     squadra_nome = assegnazione.get('squadra') if assegnazione else None
-    logo_squadra_b64 = None
-    if squadra_nome:
-        squadra_obj = next((s for s in squadre_allenate if s['nome'] == squadra_nome), None)
-        if squadra_obj:
-            logo_squadra_b64 = squadra_obj.get('logo_b64')
+    logo_squadra_b64 = st.session_state['loghi_squadre'].get(squadra_nome) if squadra_nome else None
 
     blocco_titolo = Table(
         [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo, height=dimensione_logo),
@@ -3738,6 +3836,8 @@ with tab3:
                 st.info("No teams found in the uploaded data.")
             else:
                 squadra_scelta = st.selectbox("Select team:", squadre_stagione)
+                with st.expander(f"🖼️ {squadra_scelta} logo"):
+                    gestisci_logo_squadra(squadra_scelta, key_prefix="gk_seasonal")
                 df_stagione_totale, dati_per_portiere = raccogli_stagione_per_squadra(db_gk_filtrato, squadra_scelta)
                 titolo_report = f"{campionato_scelto_gk} — {squadra_scelta}"
 
@@ -3869,6 +3969,7 @@ with tab3:
             if st.button("📄 Generate Season PDF"):
                 with st.spinner("Generating PDF..."):
                     try:
+                        logo_squadra_gk = st.session_state['loghi_squadre'].get(squadra_scelta) if modalita == "Team" else None
                         pdf_bytes_stagione = genera_pdf_stagione(
                             titolo_report=titolo_report,
                             righe_gpi_stagione=righe_gpi_stagione,
@@ -3876,7 +3977,8 @@ with tab3:
                             dati_portieri=dati_per_portiere,
                             df_blocchi=df_blocchi_stagione,
                             df_stagione_totale=df_stagione_totale,
-                            fig_blocchi=fig_blocchi_stagione
+                            fig_blocchi=fig_blocchi_stagione,
+                            logo_squadra_b64=logo_squadra_gk
                         )
                         nome_file_pdf_stagione = f"Report_{titolo_report}".replace(' ', '_').replace('/', '-').replace('—', '-') + ".pdf"
                         st.download_button(
@@ -3958,6 +4060,8 @@ with tab4:
 
             if modalita_tir == "Team":
                 squadra_scelta_tir = st.selectbox("Select team:", squadre_tir, key="squadra_scelta_tir")
+                with st.expander(f"🖼️ {squadra_scelta_tir} logo"):
+                    gestisci_logo_squadra(squadra_scelta_tir, key_prefix="tir_dashboard")
                 match_squadra = [m for m in db_tir if m['squadra'] == squadra_scelta_tir]
                 giocatori_da_mostrare = sorted(set(
                     g for m in match_squadra for g in m['dati']['TIRATORE_ID'].dropna().unique()
@@ -4215,9 +4319,11 @@ with tab4:
                         with st.spinner("Generating PDF..."):
                             try:
                                 note_selezione = {g: st.session_state['note_tiratori'].get(g, '') for g in dati_pdf_giocatori}
+                                logo_squadra_tir = st.session_state['loghi_squadre'].get(titolo_dashboard) if modalita_tir == "Team" else None
                                 pdf_bytes_sel = genera_pdf_tiratori(
                                     titolo_dashboard, dati_pdf_giocatori, note_selezione,
-                                    df_squadra_riepilogo=(df_selezione if modalita_tir == "Team" else None)
+                                    df_squadra_riepilogo=(df_selezione if modalita_tir == "Team" else None),
+                                    logo_squadra_b64=logo_squadra_tir
                                 )
                                 st.download_button(
                                     label="⬇️ Download PDF", data=pdf_bytes_sel,
@@ -4313,7 +4419,6 @@ with tab5:
         st.subheader("👥 Teams you coach")
         with st.expander("➕ Add a team"):
             nome_squadra_nuova = st.text_input("Team name", key="nuova_squadra_training_nome")
-            logo_squadra_file = st.file_uploader("Team logo (optional, jpg/png)", type=['jpg', 'jpeg', 'png'], key="nuova_squadra_training_logo")
             if st.button("➕ Add team"):
                 nome_pulito_squadra = nome_squadra_nuova.strip()
                 if not nome_pulito_squadra:
@@ -4321,20 +4426,19 @@ with tab5:
                 elif any(s['nome'] == nome_pulito_squadra for s in st.session_state['squadre_allenate']):
                     st.error("A team with this name already exists.")
                 else:
-                    logo_b64_nuovo = elabora_foto_giocatore(logo_squadra_file) if logo_squadra_file else None
-                    st.session_state['squadre_allenate'].append({'nome': nome_pulito_squadra, 'logo_b64': logo_b64_nuovo})
+                    st.session_state['squadre_allenate'].append({'nome': nome_pulito_squadra})
                     salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
-                    st.success(f"Team '{nome_pulito_squadra}' added.")
+                    st.success(f"Team '{nome_pulito_squadra}' added. You can attach a logo below.")
                     st.rerun()
 
         if st.session_state['squadre_allenate']:
-            colonne_squadre = st.columns(min(len(st.session_state['squadre_allenate']), 5))
             for i, squadra in enumerate(st.session_state['squadre_allenate']):
-                with colonne_squadre[i % len(colonne_squadre)]:
-                    if squadra.get('logo_b64'):
-                        st.image(foto_base64_a_bytes(squadra['logo_b64']), width=60)
-                    st.caption(squadra['nome'])
-                    if st.button("🗑️", key=f"del_squadra_training_{i}", help=f"Remove {squadra['nome']}"):
+                col_sq1, col_sq2 = st.columns([5, 1])
+                with col_sq1:
+                    st.caption(f"**{squadra['nome']}**")
+                    gestisci_logo_squadra(squadra['nome'], key_prefix="training")
+                with col_sq2:
+                    if st.button("🗑️ Remove team", key=f"del_squadra_training_{i}"):
                         st.session_state['squadre_allenate'].pop(i)
                         salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
                         st.rerun()
