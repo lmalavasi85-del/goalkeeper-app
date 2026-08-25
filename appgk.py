@@ -2852,43 +2852,10 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
     seguita dalle pagine del PDF originale caricato (esportato da OneNote), se presente e se
     pypdf è disponibile. Copertina in orizzontale a due colonne, come le tipiche pagine OneNote
     esportate, per un documento finale visivamente coerente e senza spazio bianco sprecato."""
-    stili = getSampleStyleSheet()
-    titolo_stile = ParagraphStyle('TitoloSessione', parent=stili['Title'], fontSize=22,
-                                   textColor=COLORE_ACCENTO, spaceAfter=2)
-    sottotitolo_stile = ParagraphStyle('SottotitoloSessione', parent=stili['Heading3'], fontSize=14,
-                                        textColor=colors.HexColor('#555555'))
-    sezione_stile = ParagraphStyle('SezioneSessione', parent=stili['Heading2'], fontSize=13,
-                                    spaceBefore=0, spaceAfter=4, textColor=COLORE_ACCENTO)
-    corpo_scheda_stile = ParagraphStyle('CorpoScheda', parent=stili['Normal'], fontSize=10, leading=14)
-    link_pulsante_stile = ParagraphStyle('LinkPulsante', parent=stili['Normal'], fontSize=10.5, textColor=COLORE_ACCENTO)
-    COLORE_SFONDO_NOTA = colors.HexColor('#f3f5f7')
-    COLORE_SFONDO_LINK = colors.HexColor('#eaf0f7')
-    COLORE_BORDO_LINK = colors.HexColor('#c3d3e3')
-
-    def _scheda_nota(titolo, testo_html, larghezza):
-        t = Table([[Paragraph(titolo, sezione_stile)], [Paragraph(testo_html, corpo_scheda_stile)]], colWidths=[larghezza])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), COLORE_SFONDO_NOTA),
-            ('LEFTPADDING', (0, 0), (-1, -1), 12), ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-            ('TOPPADDING', (0, 0), (0, 0), 10), ('BOTTOMPADDING', (0, 0), (0, 0), 2),
-            ('TOPPADDING', (0, 1), (0, 1), 0), ('BOTTOMPADDING', (0, 1), (0, 1), 10),
-        ]))
-        return t
-
-    def _pulsante_link(nome, url, larghezza):
-        p = Paragraph(f'<link href="{url}" color="#15304f"><b>• {nome}</b></link>', link_pulsante_stile)
-        t = Table([[p]], colWidths=[larghezza])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), COLORE_SFONDO_LINK),
-            ('BOX', (0, 0), (-1, -1), 0.7, COLORE_BORDO_LINK),
-            ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 9), ('BOTTOMPADDING', (0, 0), (-1, -1), 9),
-        ]))
-        return t
-
-    # Rileva la dimensione esatta della prima pagina del PDF originale (spesso più larga di un
-    # normale A4 orizzontale, tipo formato "widescreen" di OneNote/PowerPoint), così la copertina
-    # ha ESATTAMENTE le stesse dimensioni e il documento finale risulta uniforme in ogni visualizzatore.
+    # Rileva la dimensione esatta della prima pagina del PDF originale (a volte molto più grande
+    # di un normale foglio, es. formati "widescreen" o pagine OneNote esportate a canvas ampio),
+    # e calcola un fattore di scala così che loghi, testi e margini crescano/si riducano in
+    # proporzione, restando sempre leggibili e ben distribuiti qualunque sia la dimensione reale.
     dimensione_pagina = landscape(A4)
     if sessione.get('pdf_bytes') and _PYPDF_DISPONIBILE:
         try:
@@ -2899,14 +2866,54 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
                 dimensione_pagina = (larghezza_punti, altezza_punti)
         except Exception:
             pass
+    fattore_scala = dimensione_pagina[0] / landscape(A4)[0]
+
+    stili = getSampleStyleSheet()
+    titolo_stile = ParagraphStyle('TitoloSessione', parent=stili['Title'], fontSize=22 * fattore_scala,
+                                   leading=26 * fattore_scala, textColor=COLORE_ACCENTO, spaceAfter=2 * fattore_scala)
+    sottotitolo_stile = ParagraphStyle('SottotitoloSessione', parent=stili['Heading3'], fontSize=14 * fattore_scala,
+                                        leading=17 * fattore_scala, textColor=colors.HexColor('#555555'))
+    sezione_stile = ParagraphStyle('SezioneSessione', parent=stili['Heading2'], fontSize=13 * fattore_scala,
+                                    leading=16 * fattore_scala, spaceBefore=0, spaceAfter=4 * fattore_scala,
+                                    textColor=COLORE_ACCENTO)
+    corpo_scheda_stile = ParagraphStyle('CorpoScheda', parent=stili['Normal'], fontSize=10 * fattore_scala,
+                                         leading=14 * fattore_scala)
+    link_pulsante_stile = ParagraphStyle('LinkPulsante', parent=stili['Normal'], fontSize=10.5 * fattore_scala,
+                                          leading=13 * fattore_scala, textColor=COLORE_ACCENTO)
+    COLORE_SFONDO_NOTA = colors.HexColor('#f3f5f7')
+    COLORE_SFONDO_LINK = colors.HexColor('#eaf0f7')
+    COLORE_BORDO_LINK = colors.HexColor('#c3d3e3')
+
+    def _scheda_nota(titolo, testo_html, larghezza):
+        t = Table([[Paragraph(titolo, sezione_stile)], [Paragraph(testo_html, corpo_scheda_stile)]], colWidths=[larghezza])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), COLORE_SFONDO_NOTA),
+            ('LEFTPADDING', (0, 0), (-1, -1), 12 * fattore_scala), ('RIGHTPADDING', (0, 0), (-1, -1), 12 * fattore_scala),
+            ('TOPPADDING', (0, 0), (0, 0), 10 * fattore_scala), ('BOTTOMPADDING', (0, 0), (0, 0), 2 * fattore_scala),
+            ('TOPPADDING', (0, 1), (0, 1), 0), ('BOTTOMPADDING', (0, 1), (0, 1), 10 * fattore_scala),
+        ]))
+        return t
+
+    def _pulsante_link(nome, url, larghezza):
+        p = Paragraph(f'<link href="{url}" color="#15304f"><b>• {nome}</b></link>', link_pulsante_stile)
+        t = Table([[p]], colWidths=[larghezza])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), COLORE_SFONDO_LINK),
+            ('BOX', (0, 0), (-1, -1), 0.7, COLORE_BORDO_LINK),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10 * fattore_scala), ('RIGHTPADDING', (0, 0), (-1, -1), 10 * fattore_scala),
+            ('TOPPADDING', (0, 0), (-1, -1), 9 * fattore_scala), ('BOTTOMPADDING', (0, 0), (-1, -1), 9 * fattore_scala),
+        ]))
+        return t
 
     buffer_copertina = io.BytesIO()
-    doc = SimpleDocTemplate(buffer_copertina, pagesize=dimensione_pagina, topMargin=1.6 * cm, bottomMargin=1.4 * cm,
-                             leftMargin=1.8 * cm, rightMargin=1.8 * cm)
-    larghezza_pagina = dimensione_pagina[0] - 3.6 * cm
+    margine_orizzontale = 1.8 * cm * fattore_scala
+    doc = SimpleDocTemplate(buffer_copertina, pagesize=dimensione_pagina,
+                             topMargin=1.6 * cm * fattore_scala, bottomMargin=1.4 * cm * fattore_scala,
+                             leftMargin=margine_orizzontale, rightMargin=margine_orizzontale)
+    larghezza_pagina = dimensione_pagina[0] - 2 * margine_orizzontale
     elementi = []
 
-    dimensione_logo = 2.8 * cm
+    dimensione_logo = 2.8 * cm * fattore_scala
     squadra_nome = assegnazione.get('squadra') if assegnazione else None
     logo_squadra_b64 = st.session_state['loghi_squadre'].get(squadra_nome) if squadra_nome else None
 
@@ -2915,7 +2922,7 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
           [Paragraph("TRAINING SESSION", titolo_stile), Paragraph(sessione['nome_sessione'], sottotitolo_stile)],
           (RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)), width=dimensione_logo, height=dimensione_logo)
            if logo_squadra_b64 else '')]],
-        colWidths=[dimensione_logo + 0.5 * cm, None, dimensione_logo + 0.3 * cm]
+        colWidths=[dimensione_logo + 0.5 * cm * fattore_scala, None, dimensione_logo + 0.3 * cm * fattore_scala]
     )
     blocco_titolo.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'), ('ALIGN', (2, 0), (2, 0), 'CENTER'),
@@ -2923,12 +2930,12 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
     elementi.append(blocco_titolo)
-    elementi.append(Spacer(1, 0.3 * cm))
+    elementi.append(Spacer(1, 0.3 * cm * fattore_scala))
 
-    fascia_colorata = Table([['']], colWidths=[larghezza_pagina], rowHeights=[0.22 * cm])
+    fascia_colorata = Table([['']], colWidths=[larghezza_pagina], rowHeights=[0.22 * cm * fattore_scala])
     fascia_colorata.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), COLORE_ACCENTO)]))
     elementi.append(fascia_colorata)
-    elementi.append(Spacer(1, 0.45 * cm))
+    elementi.append(Spacer(1, 0.45 * cm * fattore_scala))
 
     if squadra_nome or (assegnazione and assegnazione.get('data')):
         info_riga = []
@@ -2937,32 +2944,32 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
         if assegnazione and assegnazione.get('data'):
             info_riga.append(f"<b>Date:</b> {assegnazione['data']}")
         elementi.append(Paragraph("   |   ".join(info_riga), corpo_scheda_stile))
-        elementi.append(Spacer(1, 0.4 * cm))
+        elementi.append(Spacer(1, 0.4 * cm * fattore_scala))
 
-    larghezza_colonna = (larghezza_pagina - 1.0 * cm) / 2
+    larghezza_colonna = (larghezza_pagina - 1.0 * cm * fattore_scala) / 2
 
     colonna_sinistra = []
     if sessione.get('note_generali'):
         colonna_sinistra.append(_scheda_nota("Session notes", note_markup_a_reportlab(sessione['note_generali']), larghezza_colonna))
-        colonna_sinistra.append(Spacer(1, 0.35 * cm))
+        colonna_sinistra.append(Spacer(1, 0.35 * cm * fattore_scala))
     if assegnazione and assegnazione.get('nota'):
         colonna_sinistra.append(_scheda_nota(f"Notes for {squadra_nome or 'this session'}",
                                               note_markup_a_reportlab(assegnazione['nota']), larghezza_colonna))
-        colonna_sinistra.append(Spacer(1, 0.35 * cm))
+        colonna_sinistra.append(Spacer(1, 0.35 * cm * fattore_scala))
 
     colonna_destra = []
     if sessione.get('link_list'):
         colonna_destra.append(Paragraph("Exercise videos", sezione_stile))
-        colonna_destra.append(Spacer(1, 0.15 * cm))
+        colonna_destra.append(Spacer(1, 0.15 * cm * fattore_scala))
         for link in sessione['link_list']:
             colonna_destra.append(_pulsante_link(link['nome'], link['url'], larghezza_colonna))
-            colonna_destra.append(Spacer(1, 0.2 * cm))
+            colonna_destra.append(Spacer(1, 0.2 * cm * fattore_scala))
 
     if colonna_sinistra or colonna_destra:
         tabella_colonne = Table([[colonna_sinistra or '', colonna_destra or '']], colWidths=[larghezza_colonna, larghezza_colonna])
         tabella_colonne.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (1, 0), (1, 0), 1.0 * cm), ('LEFTPADDING', (0, 0), (0, 0), 0),
+            ('LEFTPADDING', (1, 0), (1, 0), 1.0 * cm * fattore_scala), ('LEFTPADDING', (0, 0), (0, 0), 0),
             ('RIGHTPADDING', (0, 0), (0, 0), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
         ]))
         elementi.append(tabella_colonne)
