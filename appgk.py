@@ -8,6 +8,7 @@ from datetime import datetime
 import re
 import inspect
 import json
+import uuid
 import os
 import pickle
 import io
@@ -23,6 +24,12 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak, KeepTogether, HRFlowable
+
+try:
+    from pypdf import PdfReader, PdfWriter
+    _PYPDF_DISPONIBILE = True
+except Exception:
+    _PYPDF_DISPONIBILE = False
 
 # Logo dell'associazione, incorporato direttamente nel codice (base64) cosicche' non
 # serva gestire un file immagine separato: appare su ogni pagina dei PDF esportati.
@@ -2301,6 +2308,171 @@ def salva_profili_expected_su_disco(dati):
     with open(EXPECTED_PROFILES_FILE, 'wb') as f:
         pickle.dump(dati, f)
 
+# ============================================================
+# TRAINING SESSIONS: sezione riservata separata (stessa password di Shooting Trend, ma da
+# sbloccare a sé) per gestire squadre allenate (con logo), una libreria di sessioni PDF
+# (esportate da OneNote, caricate in blocco) con link ed etichette persistenti, e l'esportazione
+# in un PDF finale (copertina con logo associazione + dati sessione, seguita dalle pagine
+# originali del PDF caricato).
+# ============================================================
+TRAINING_ACCESS_CODE = "GigiGiamba2026"
+TRAINING_TEAMS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "training_teams.pkl")
+TRAINING_SESSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "training_sessions.pkl")
+DIMENSIONE_CHUNK_PDF = 40000  # caratteri base64 per riga: resta sotto il limite di una cella di Google Sheets
+
+@st.cache_resource
+def _ottieni_worksheet_training_teams():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('TrainingTeams')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='TrainingTeams', rows=200, cols=2)
+        worksheet.append_row(['nome', 'logo_base64'])
+    return worksheet
+
+def carica_squadre_allenate_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_training_teams()
+            valori = worksheet.get_all_values()
+            return [{'nome': r[0], 'logo_b64': r[1] if len(r) > 1 and r[1] else None} for r in valori[1:] if r and r[0]]
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load training teams from Google Sheets: {e}")
+            return []
+    if os.path.exists(TRAINING_TEAMS_FILE):
+        try:
+            with open(TRAINING_TEAMS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_squadre_allenate_su_disco(lista_squadre):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_training_teams()
+            worksheet.clear()
+            worksheet.append_row(['nome', 'logo_base64'])
+            righe = [[s['nome'], s.get('logo_b64') or ''] for s in lista_squadre]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save training teams to Google Sheets: {e}")
+    with open(TRAINING_TEAMS_FILE, 'wb') as f:
+        pickle.dump(lista_squadre, f)
+
+@st.cache_resource
+def _ottieni_worksheet_training_meta():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('TrainingSessionsMeta')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='TrainingSessionsMeta', rows=500, cols=3)
+        worksheet.append_row(['id', 'nome_sessione', 'dati_json'])
+    return worksheet
+
+@st.cache_resource
+def _ottieni_worksheet_training_pdf():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('TrainingSessionsPDF')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='TrainingSessionsPDF', rows=5000, cols=3)
+        worksheet.append_row(['id', 'indice_chunk', 'chunk_base64'])
+    return worksheet
+
+def carica_sessioni_allenamento_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet_meta = _ottieni_worksheet_training_meta()
+            valori_meta = worksheet_meta.get_all_values()
+            if len(valori_meta) <= 1:
+                return []
+            worksheet_pdf = _ottieni_worksheet_training_pdf()
+            valori_pdf = worksheet_pdf.get_all_values()
+            chunk_per_id = {}
+            for riga in valori_pdf[1:]:
+                if not riga or not riga[0]:
+                    continue
+                chunk_per_id.setdefault(riga[0], []).append((int(riga[1]), riga[2]))
+            sessioni = []
+            for riga in valori_meta[1:]:
+                if not riga or not riga[0]:
+                    continue
+                id_sessione, nome_sessione, dati_json = riga[0], riga[1], riga[2]
+                dati = json.loads(dati_json)
+                pdf_bytes = None
+                if id_sessione in chunk_per_id:
+                    chunk_ordinati = sorted(chunk_per_id[id_sessione], key=lambda c: c[0])
+                    b64_completo = ''.join(c[1] for c in chunk_ordinati)
+                    pdf_bytes = base64.b64decode(b64_completo)
+                sessioni.append({
+                    'id': id_sessione, 'nome_sessione': nome_sessione, 'pdf_bytes': pdf_bytes,
+                    'link_list': dati.get('link_list', []), 'note_generali': dati.get('note_generali', ''),
+                    'assegnazioni': dati.get('assegnazioni', []),
+                })
+            return sessioni
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load training sessions from Google Sheets: {e}")
+            return []
+    if os.path.exists(TRAINING_SESSIONS_FILE):
+        try:
+            with open(TRAINING_SESSIONS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_sessioni_allenamento_su_disco(lista_sessioni):
+    if _google_sheets_configurato():
+        try:
+            worksheet_meta = _ottieni_worksheet_training_meta()
+            worksheet_meta.clear()
+            worksheet_meta.append_row(['id', 'nome_sessione', 'dati_json'])
+            righe_meta = [[
+                s['id'], s['nome_sessione'],
+                json.dumps({'link_list': s['link_list'], 'note_generali': s['note_generali'], 'assegnazioni': s['assegnazioni']})
+            ] for s in lista_sessioni]
+            if righe_meta:
+                worksheet_meta.append_rows(righe_meta)
+
+            worksheet_pdf = _ottieni_worksheet_training_pdf()
+            worksheet_pdf.clear()
+            worksheet_pdf.append_row(['id', 'indice_chunk', 'chunk_base64'])
+            righe_pdf = []
+            for s in lista_sessioni:
+                if not s.get('pdf_bytes'):
+                    continue
+                b64_completo = base64.b64encode(s['pdf_bytes']).decode('utf-8')
+                for indice, inizio in enumerate(range(0, len(b64_completo), DIMENSIONE_CHUNK_PDF)):
+                    righe_pdf.append([s['id'], indice, b64_completo[inizio:inizio + DIMENSIONE_CHUNK_PDF]])
+            if righe_pdf:
+                worksheet_pdf.append_rows(righe_pdf)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save training sessions to Google Sheets: {e}")
+    with open(TRAINING_SESSIONS_FILE, 'wb') as f:
+        pickle.dump(lista_sessioni, f)
+
 def gestisci_foto_giocatore(nome_giocatore, key_prefix):
     """Widget riusabile: mostra la foto attuale (se presente) e un uploader per caricarne/
     sostituirne una. Ridimensiona e salva automaticamente al volo."""
@@ -2348,6 +2520,10 @@ if 'campionati' not in st.session_state:
     st.session_state['campionati'] = carica_campionati_da_disco()
 if 'profili_expected_stato' not in st.session_state:
     st.session_state['profili_expected_stato'] = carica_profili_expected_da_disco()
+if 'squadre_allenate' not in st.session_state:
+    st.session_state['squadre_allenate'] = carica_squadre_allenate_da_disco()
+if 'sessioni_allenamento' not in st.session_state:
+    st.session_state['sessioni_allenamento'] = carica_sessioni_allenamento_da_disco()
 
 # ============================================================
 # NOTE DEL COACH: markup semplice **grassetto**, __sottolineato__, ==evidenziato==
@@ -2567,6 +2743,85 @@ def genera_pdf_trend_summary(titolo_report, note_dict):
     buffer.seek(0)
     return buffer.getvalue()
 
+def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
+    """Genera il PDF finale di una sessione di allenamento: una pagina di copertina (logo
+    dell'associazione, eventuale logo/nome squadra, data, nome sessione, note generali + note
+    specifiche dell'assegnazione, elenco link) seguita dalle pagine del PDF originale caricato
+    (esportato da OneNote), se presente e se pypdf è disponibile."""
+    stili = getSampleStyleSheet()
+    titolo_stile = ParagraphStyle('TitoloSessione', parent=stili['Title'], fontSize=20,
+                                   textColor=COLORE_ACCENTO, spaceAfter=2)
+    sottotitolo_stile = ParagraphStyle('SottotitoloSessione', parent=stili['Heading3'], fontSize=13,
+                                        textColor=colors.HexColor('#555555'))
+    sezione_stile = ParagraphStyle('SezioneSessione', parent=stili['Heading2'], spaceBefore=10, spaceAfter=6,
+                                    textColor=COLORE_ACCENTO)
+
+    buffer_copertina = io.BytesIO()
+    doc = SimpleDocTemplate(buffer_copertina, pagesize=A4, topMargin=1.6 * cm, bottomMargin=1.4 * cm,
+                             leftMargin=1.8 * cm, rightMargin=1.8 * cm)
+    elementi = []
+
+    dimensione_logo = 2.6 * cm
+    squadra_nome = assegnazione.get('squadra') if assegnazione else None
+    logo_squadra_b64 = None
+    if squadra_nome:
+        squadra_obj = next((s for s in squadre_allenate if s['nome'] == squadra_nome), None)
+        if squadra_obj:
+            logo_squadra_b64 = squadra_obj.get('logo_b64')
+
+    blocco_titolo = Table(
+        [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo, height=dimensione_logo),
+          [Paragraph("TRAINING SESSION", titolo_stile), Paragraph(sessione['nome_sessione'], sottotitolo_stile)],
+          (RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)), width=dimensione_logo, height=dimensione_logo)
+           if logo_squadra_b64 else '')]],
+        colWidths=[dimensione_logo + 0.4 * cm, None, dimensione_logo + 0.2 * cm]
+    )
+    blocco_titolo.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'), ('ALIGN', (2, 0), (2, 0), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elementi.append(blocco_titolo)
+    elementi.append(Spacer(1, 0.6 * cm))
+
+    if squadra_nome:
+        elementi.append(Paragraph(f"<b>Team:</b> {squadra_nome}", stili['Normal']))
+    if assegnazione and assegnazione.get('data'):
+        elementi.append(Paragraph(f"<b>Date:</b> {assegnazione['data']}", stili['Normal']))
+    elementi.append(Spacer(1, 0.3 * cm))
+
+    if sessione.get('note_generali'):
+        elementi.append(Paragraph("Session notes", sezione_stile))
+        elementi.append(Paragraph(note_markup_a_reportlab(sessione['note_generali']), stili['Normal']))
+    if assegnazione and assegnazione.get('nota'):
+        elementi.append(Paragraph(f"Notes for {squadra_nome or 'this session'}", sezione_stile))
+        elementi.append(Paragraph(note_markup_a_reportlab(assegnazione['nota']), stili['Normal']))
+
+    if sessione.get('link_list'):
+        elementi.append(Paragraph("Exercise videos", sezione_stile))
+        for link in sessione['link_list']:
+            elementi.append(Paragraph(f'• <link href="{link["url"]}" color="blue">{link["nome"]}</link>', stili['Normal']))
+            elementi.append(Spacer(1, 0.1 * cm))
+
+    doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
+    buffer_copertina.seek(0)
+
+    if not sessione.get('pdf_bytes') or not _PYPDF_DISPONIBILE:
+        return buffer_copertina.getvalue()
+
+    try:
+        writer = PdfWriter()
+        for pagina in PdfReader(buffer_copertina).pages:
+            writer.add_page(pagina)
+        for pagina in PdfReader(io.BytesIO(sessione['pdf_bytes'])).pages:
+            writer.add_page(pagina)
+        buffer_finale = io.BytesIO()
+        writer.write(buffer_finale)
+        buffer_finale.seek(0)
+        return buffer_finale.getvalue()
+    except Exception:
+        return buffer_copertina.getvalue()
+
 st.sidebar.caption(f"📦 Matches in memory (season): {len(st.session_state['db'])}")
 if _google_sheets_configurato():
     st.sidebar.caption("☁️ Storage: Google Sheets")
@@ -2574,7 +2829,7 @@ else:
     st.sidebar.caption("💻 Storage: local file")
     st.sidebar.caption(f"ℹ️ {_diagnosi_google_sheets()}")
 
-tab1, tab2, tab3, tab4 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis'])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🏋️ Training Sessions'])
 
 with tab1:
     st.header('Upload Game Data')
@@ -4031,3 +4286,199 @@ with tab4:
             st.markdown(f"**{giocatore_h2h}** ({etichetta_ruolo}) — {etichetta_avv} ranked from most to least suffered:")
             classifica_finale_vis = classifica_finale.rename(columns={'Opponent': etichetta_avv[:-1] if etichetta_avv.endswith('s') else etichetta_avv})
             st.dataframe(classifica_finale_vis, use_container_width=True, hide_index=True)
+
+with tab5:
+    st.header("🏋️ Training Sessions")
+    st.caption("Reserved staff section — training session library (PDFs exported from OneNote), "
+               "exercise video links, and export as a branded PDF ready to share with a team.")
+
+    if 'training_authorized' not in st.session_state:
+        st.session_state['training_authorized'] = False
+
+    if not st.session_state['training_authorized']:
+        st.info("🔒 This section is reserved for authorized staff.")
+        with st.form(key="form_training_access", clear_on_submit=True):
+            codice_training = st.text_input("Access code", type="password", key="codice_training")
+            sbloccato_training = st.form_submit_button("Unlock")
+        if sbloccato_training:
+            if codice_training == TRAINING_ACCESS_CODE:
+                st.session_state['training_authorized'] = True
+                st.rerun()
+            else:
+                st.error("Incorrect code.")
+    else:
+        # ============================================================
+        # SQUADRE ALLENATE
+        # ============================================================
+        st.subheader("👥 Teams you coach")
+        with st.expander("➕ Add a team"):
+            nome_squadra_nuova = st.text_input("Team name", key="nuova_squadra_training_nome")
+            logo_squadra_file = st.file_uploader("Team logo (optional, jpg/png)", type=['jpg', 'jpeg', 'png'], key="nuova_squadra_training_logo")
+            if st.button("➕ Add team"):
+                nome_pulito_squadra = nome_squadra_nuova.strip()
+                if not nome_pulito_squadra:
+                    st.error("Give the team a name.")
+                elif any(s['nome'] == nome_pulito_squadra for s in st.session_state['squadre_allenate']):
+                    st.error("A team with this name already exists.")
+                else:
+                    logo_b64_nuovo = elabora_foto_giocatore(logo_squadra_file) if logo_squadra_file else None
+                    st.session_state['squadre_allenate'].append({'nome': nome_pulito_squadra, 'logo_b64': logo_b64_nuovo})
+                    salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
+                    st.success(f"Team '{nome_pulito_squadra}' added.")
+                    st.rerun()
+
+        if st.session_state['squadre_allenate']:
+            colonne_squadre = st.columns(min(len(st.session_state['squadre_allenate']), 5))
+            for i, squadra in enumerate(st.session_state['squadre_allenate']):
+                with colonne_squadre[i % len(colonne_squadre)]:
+                    if squadra.get('logo_b64'):
+                        st.image(foto_base64_a_bytes(squadra['logo_b64']), width=60)
+                    st.caption(squadra['nome'])
+                    if st.button("🗑️", key=f"del_squadra_training_{i}", help=f"Remove {squadra['nome']}"):
+                        st.session_state['squadre_allenate'].pop(i)
+                        salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
+                        st.rerun()
+        else:
+            st.caption("No teams added yet.")
+
+        st.markdown("---")
+
+        # ============================================================
+        # LIBRERIA SESSIONI: upload in blocco
+        # ============================================================
+        st.subheader("📥 Session library")
+        st.caption("Export your OneNote pages as PDF (File → Export → PDF), then drop as many as "
+                   "you like here at once — e.g. all the sessions you write during the off-season. "
+                   "Each becomes a reusable session: attach links and notes once, then reuse it for "
+                   "as many teams and dates as you want, without retyping anything.")
+
+        fc_sessioni = st.file_uploader("Drag and drop session PDF(s) here", type=['pdf'],
+                                        accept_multiple_files=True, key="upload_sessioni_bulk")
+        if fc_sessioni:
+            if st.button("➕ Create Session(s) from these PDFs"):
+                nomi_esistenti = {s['nome_sessione'] for s in st.session_state['sessioni_allenamento']}
+                aggiunte_sessioni = 0
+                for f in fc_sessioni:
+                    nome_base = os.path.splitext(f.name)[0]
+                    nome_finale = nome_base
+                    contatore = 2
+                    while nome_finale in nomi_esistenti:
+                        nome_finale = f"{nome_base} ({contatore})"
+                        contatore += 1
+                    st.session_state['sessioni_allenamento'].append({
+                        'id': uuid.uuid4().hex,
+                        'nome_sessione': nome_finale,
+                        'pdf_bytes': f.read(),
+                        'link_list': [],
+                        'note_generali': '',
+                        'assegnazioni': [],
+                    })
+                    nomi_esistenti.add(nome_finale)
+                    aggiunte_sessioni += 1
+                salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                st.success(f"{aggiunte_sessioni} session(s) created.")
+                st.rerun()
+
+        if not _PYPDF_DISPONIBILE:
+            st.warning("⚠️ The `pypdf` package isn't available — sessions will still work, but the "
+                       "exported PDF will only include the cover page, not the original OneNote pages. "
+                       "Add `pypdf` to requirements.txt to enable full merging.")
+
+        st.markdown("---")
+        st.subheader("📚 Your sessions")
+        if not st.session_state['sessioni_allenamento']:
+            st.info("No sessions yet — upload some PDFs above to get started.")
+        else:
+            nomi_squadre_disponibili = [s['nome'] for s in st.session_state['squadre_allenate']]
+            for idx_sessione, sessione in enumerate(st.session_state['sessioni_allenamento']):
+                chiave_sess = sessione['id']
+                with st.expander(f"📄 {sessione['nome_sessione']}"):
+                    nuovo_nome_sessione = st.text_input("Session name", value=sessione['nome_sessione'], key=f"nome_sess_{chiave_sess}")
+                    if nuovo_nome_sessione.strip() and nuovo_nome_sessione.strip() != sessione['nome_sessione']:
+                        st.session_state['sessioni_allenamento'][idx_sessione]['nome_sessione'] = nuovo_nome_sessione.strip()
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        st.rerun()
+
+                    col_pdf1, col_pdf2 = st.columns(2)
+                    with col_pdf1:
+                        if sessione.get('pdf_bytes'):
+                            st.download_button("⬇️ View original PDF", data=sessione['pdf_bytes'],
+                                                file_name=f"{sessione['nome_sessione']}.pdf", mime="application/pdf",
+                                                key=f"dl_orig_{chiave_sess}")
+                        else:
+                            st.caption("No PDF attached.")
+                    with col_pdf2:
+                        nuovo_pdf = st.file_uploader("Replace PDF", type=['pdf'], key=f"replace_pdf_{chiave_sess}")
+                        if nuovo_pdf is not None:
+                            st.session_state['sessioni_allenamento'][idx_sessione]['pdf_bytes'] = nuovo_pdf.read()
+                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            st.success("PDF replaced.")
+                            st.rerun()
+
+                    st.markdown("**Exercise video links**")
+                    for i_link, link in enumerate(sessione['link_list']):
+                        col_l1, col_l2, col_l3 = st.columns([2, 4, 1])
+                        col_l1.caption(link['nome'])
+                        col_l2.caption(link['url'])
+                        if col_l3.button("🗑️", key=f"del_link_{chiave_sess}_{i_link}"):
+                            st.session_state['sessioni_allenamento'][idx_sessione]['link_list'].pop(i_link)
+                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            st.rerun()
+                    col_nl1, col_nl2, col_nl3 = st.columns([2, 4, 1])
+                    nome_link_nuovo = col_nl1.text_input("Label", key=f"nuovo_link_nome_{chiave_sess}", label_visibility="collapsed", placeholder="Exercise 1")
+                    url_link_nuovo = col_nl2.text_input("URL", key=f"nuovo_link_url_{chiave_sess}", label_visibility="collapsed", placeholder="https://...")
+                    if col_nl3.button("➕", key=f"add_link_{chiave_sess}"):
+                        if nome_link_nuovo.strip() and url_link_nuovo.strip():
+                            st.session_state['sessioni_allenamento'][idx_sessione]['link_list'].append(
+                                {'nome': nome_link_nuovo.strip(), 'url': url_link_nuovo.strip()})
+                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            st.rerun()
+
+                    nota_generale_nuova = st.text_area("Session notes (max 1000 characters)", value=sessione['note_generali'],
+                                                        max_chars=1000, key=f"nota_gen_{chiave_sess}")
+                    if nota_generale_nuova != sessione['note_generali']:
+                        st.session_state['sessioni_allenamento'][idx_sessione]['note_generali'] = nota_generale_nuova
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+
+                    st.markdown("**Assign to a team & date (optional, repeatable)**")
+                    for i_ass, assegnazione in enumerate(sessione['assegnazioni']):
+                        col_a1, col_a2, col_a3 = st.columns([3, 1, 1])
+                        etichetta_ass = f"{assegnazione.get('squadra') or '(no team)'} — {assegnazione.get('data') or '(no date)'}"
+                        col_a1.caption(etichetta_ass)
+                        if col_a2.button("📄 Export", key=f"export_ass_{chiave_sess}_{i_ass}"):
+                            pdf_finale = genera_pdf_sessione_allenamento(sessione, assegnazione, st.session_state['squadre_allenate'])
+                            st.download_button("⬇️ Download", data=pdf_finale,
+                                                file_name=f"{sessione['nome_sessione']}_{assegnazione.get('squadra') or 'session'}.pdf",
+                                                mime="application/pdf", key=f"dl_ass_{chiave_sess}_{i_ass}")
+                        if col_a3.button("🗑️", key=f"del_ass_{chiave_sess}_{i_ass}"):
+                            st.session_state['sessioni_allenamento'][idx_sessione]['assegnazioni'].pop(i_ass)
+                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            st.rerun()
+
+                    with st.form(key=f"form_nuova_ass_{chiave_sess}", clear_on_submit=True):
+                        squadra_ass = st.selectbox("Team (optional)", ["(none)"] + nomi_squadre_disponibili, key=f"squadra_ass_{chiave_sess}")
+                        specifica_data = st.checkbox("Specify a date", key=f"specifica_data_{chiave_sess}")
+                        data_ass = st.date_input("Date", value=datetime.now(), key=f"data_ass_{chiave_sess}") if specifica_data else None
+                        nota_ass = st.text_area("Notes for this team/date (max 1000 characters)", max_chars=1000, key=f"nota_ass_{chiave_sess}")
+                        if st.form_submit_button("➕ Add assignment"):
+                            st.session_state['sessioni_allenamento'][idx_sessione]['assegnazioni'].append({
+                                'squadra': None if squadra_ass == "(none)" else squadra_ass,
+                                'data': str(data_ass) if data_ass else None,
+                                'nota': nota_ass,
+                            })
+                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            st.rerun()
+
+                    st.markdown("---")
+                    if st.button("📄 Export session (no team/date)", key=f"export_plain_{chiave_sess}"):
+                        pdf_semplice = genera_pdf_sessione_allenamento(sessione, None, st.session_state['squadre_allenate'])
+                        st.download_button("⬇️ Download", data=pdf_semplice,
+                                            file_name=f"{sessione['nome_sessione']}.pdf", mime="application/pdf",
+                                            key=f"dl_plain_{chiave_sess}")
+
+                    conferma_del_sessione = st.checkbox("I confirm I want to delete this session (irreversible)", key=f"conferma_del_sess_{chiave_sess}")
+                    if st.button("🗑️ Delete this session", key=f"del_sess_{chiave_sess}", disabled=not conferma_del_sessione):
+                        st.session_state['sessioni_allenamento'].pop(idx_sessione)
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        st.success(f"Session '{sessione['nome_sessione']}' deleted.")
+                        st.rerun()
