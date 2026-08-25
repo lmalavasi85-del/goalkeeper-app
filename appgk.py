@@ -1399,6 +1399,15 @@ def elabora_file_tiratori(df_raw):
     df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
     df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
 
+    # Gol in porta vuota (rilevati dalla colonna THROW SECTOR): contano SOLO se il tiro è un vero
+    # gol (non su save/miss). Non tocco RESULT/statistiche di riga: sono un flag informativo che
+    # verrà usato per escludere questi eventi dal report stagionale del giocatore (dato non
+    # rilevante per la sua abilità di tiro), mantenendoli invece nel report di partita singola.
+    if 'EMPTY_GOAL' in df.columns:
+        df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool) & df['RESULT_CLEAN'].isin(['goal', 'g'])
+    else:
+        df['Is_Empty_Goal'] = False
+
     colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
     for chiave, nome_colonna in colonne_avanzate_trovate.items():
         df[f'TAG_{chiave}'] = df_raw[nome_colonna].apply(dividi_tag_multipli)
@@ -1525,14 +1534,14 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
 
         if tiratore:
             riga_tir = {'TIRATORE': tiratore, 'TIRO': tiro, 'GOAL SECTOR': goal_sector,
-                        'RESULT': result, 'TIMELINE': timeline}
+                        'RESULT': result, 'TIMELINE': timeline, 'EMPTY_GOAL': porta_vuota}
             riga_tir.update(valori_avanzati_tir)
             (righe_tir_home if squadra_tiratore == 'home' else righe_tir_away).append(riga_tir)
 
         if portiere and tiratore:
             riga_h2h = {
                 'PORTIERE': portiere, 'TIRATORE': tiratore, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline,
-                'GOAL SECTOR': goal_sector,
+                'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota,
                 'Squadra_Portiere': squadra_home if squadra_portiere == 'home' else squadra_away,
                 'Squadra_Tiratore': squadra_home if squadra_tiratore == 'home' else squadra_away,
             }
@@ -1565,6 +1574,8 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h['RESULT_CLEAN'] = df_h2h['RESULT'].astype(str).str.lower().str.strip()
         df_h2h['GOAL_SECTOR_CLEAN'] = df_h2h['GOAL SECTOR'].astype(str).str.strip() if 'GOAL SECTOR' in df_h2h.columns else ''
         df_h2h['macro_settore_tir'] = df_h2h['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+        df_h2h['Is_Empty_Goal'] = (df_h2h['EMPTY_GOAL'].fillna(False).astype(bool) & df_h2h['RESULT_CLEAN'].isin(['goal', 'g'])
+                                    if 'EMPTY_GOAL' in df_h2h.columns else False)
         minuti_list, scarti_list = [], []
         for val in df_h2h['TIMELINE']:
             m_tot, _, sc, _ = analizza_timeline(val)
@@ -1574,7 +1585,8 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h['Scarto_Punteggio'] = scarti_list
         df_h2h['Is_Money_Time'] = df_h2h.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
         colonne_base_h2h = ['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
-                             'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']
+                             'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Is_Empty_Goal',
+                             'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']
         colonne_avanzate_h2h = trova_colonne_tagging_avanzato(df_h2h.columns)
         for chiave, nome_colonna in colonne_avanzate_h2h.items():
             df_h2h[f'TAG_{chiave}'] = df_h2h[nome_colonna].apply(dividi_tag_multipli)
@@ -1582,7 +1594,8 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h = df_h2h[colonne_base_h2h]
     else:
         df_h2h = pd.DataFrame(columns=['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
-                                        'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time'])
+                                        'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Is_Empty_Goal',
+                                        'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time'])
 
     if righe_tiro_portiere:
         df_tiro_portiere = pd.DataFrame(righe_tiro_portiere)
@@ -1600,6 +1613,23 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_tiro_portiere = pd.DataFrame(columns=['PORTIERE_CLEAN', 'PORTIERE_ID', 'Squadra_Portiere', 'ESITO', 'Minuti_Gara', 'Tempo_Visuale'])
 
     return df_gk_home, df_gk_away, df_tir_home, df_tir_away, df_h2h, df_tiro_portiere
+
+def escludi_empty_goal_stagionale(elenco_partite):
+    """Restituisce una copia dell'elenco partite con gli eventi 'Empty Goal' esclusi dai dati
+    tiratori: irrilevanti per il report STAGIONALE del giocatore (non riflettono una vera
+    occasione realizzativa), a differenza del report di partita singola dove restano inclusi
+    perché il totale deve tornare con il risultato reale della gara."""
+    risultato = []
+    for m in elenco_partite:
+        df = m['dati']
+        if 'Is_Empty_Goal' in df.columns:
+            df_filtrato = df[~df['Is_Empty_Goal'].fillna(False)]
+        else:
+            df_filtrato = df
+        m_nuovo = dict(m)
+        m_nuovo['dati'] = df_filtrato
+        risultato.append(m_nuovo)
+    return risultato
 
 def calcola_metriche_tiratori_gruppo(df):
     """(goal, totale, pct realizzazione) per un qualsiasi sottoinsieme di tiri di tiratori."""
@@ -2593,6 +2623,8 @@ def _backfill_id_h2h(df):
             df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
         else:
             df['macro_settore_tir'] = None
+    if 'Is_Empty_Goal' not in df.columns:
+        df['Is_Empty_Goal'] = False
     return df
 
 def carica_h2h_da_disco():
@@ -3160,6 +3192,7 @@ if 'db_tiratori' not in st.session_state:
     st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
     for _m in st.session_state['db_tiratori']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'TIRATORE_CLEAN', 'TIRATORE_ID')
+        _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'note_tiratori' not in st.session_state:
     st.session_state['note_tiratori'] = carica_note_da_disco()
 if 'foto_giocatori' not in st.session_state:
@@ -5129,6 +5162,10 @@ with tab4:
                 st.warning("No matches fall within this championship's team/date filters — showing All Data & All Time instead.")
                 db_tir = st.session_state['db_tiratori']
 
+            # Il report stagionale esclude i gol in porta vuota (irrilevanti per l'abilità di
+            # tiro): restano invece inclusi nel report di partita singola (Single Game Analysis).
+            db_tir = escludi_empty_goal_stagionale(db_tir)
+
             squadre_tir = sorted(set(m['squadra'] for m in db_tir))
             giocatori_tir = sorted(set(
                 g for m in db_tir for g in m['dati']['TIRATORE_ID'].dropna().unique()
@@ -5227,6 +5264,8 @@ with tab4:
                                          if (m['nome'], str(m['data'])) in _chiavi_match_trend]
                 df_h2h_trend = pd.concat(_frammenti_h2h_trend, ignore_index=True) if _frammenti_h2h_trend else pd.DataFrame(
                     columns=['PORTIERE_ID', 'TIRATORE_ID', 'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN'])
+                if 'Is_Empty_Goal' in df_h2h_trend.columns:
+                    df_h2h_trend = df_h2h_trend[~df_h2h_trend['Is_Empty_Goal'].fillna(False)]
 
                 if modalita_tir == "Player":
                     avversario_tir = selettore_avversario(df_h2h_trend, giocatore_scelto_tir, False, key_prefix="tir_shared")
