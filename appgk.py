@@ -448,6 +448,23 @@ def esito_tiro_portiere(valore):
         return 'no_goal'
     return None
 
+def e_risultato_valido(valore):
+    """Vero se il valore rappresenta un vero esito di tiro (save/goal/miss, tollerante a
+    maiuscole/minuscole e alle abbreviazioni s/g/m). Una riga senza un esito valido non è un
+    vero tiro — spesso sono annotazioni libere per la videoanalisi lasciate nella stessa colonna
+    — e va ignorata ovunque nel software (timeline, grafici, statistiche)."""
+    if pd.isna(valore):
+        return False
+    testo = str(valore).strip().lower()
+    return testo in ('save', 's', 'goal', 'g', 'miss', 'm')
+
+def e_porta_vuota(valore_throw_sector):
+    """Vero se il valore della colonna THROW SECTOR indica un gol in porta vuota (nessun
+    portiere a difendere): in questo caso il tiro non è una vera occasione da parata."""
+    if pd.isna(valore_throw_sector):
+        return False
+    return 'empty goal' in str(valore_throw_sector).strip().lower()
+
 def _chiave_css_sicura(testo):
     """Rende una stringa sicura da usare sia come key di Streamlit sia come classe CSS
 
@@ -663,16 +680,12 @@ def analizza_timeline(timeline_str):
 
             timeline_normalizzata = f"{minuti_totali}'{secondi:02d}'' - {punteggio_pulito}"
         else:
-            # Fallback: nessun tempo riconoscibile, provo comunque a leggere il punteggio da solo
-            match_punti = re.findall(r"(\d{1,3})\s*[-–—]\s*(\d{1,3})", t_str)
-            if match_punti:
-                pts = match_punti[-1]
-                p1, p2 = int(pts[0]), int(pts[1])
-                scarto = p1 - p2
-                punteggio_pulito = f"{p1}-{p2}"
-            timeline_normalizzata = t_str
+            # Nessun tempo riconoscibile: non è una vera timeline (probabilmente solo testo
+            # libero per la videoanalisi, es. "non perdiamo palla, ma non voglio questo lancio").
+            # Il punteggio isolato (senza tempo) non ha comunque senso come timeline: scarto tutto.
+            timeline_normalizzata = ""
     except Exception:
-        timeline_normalizzata = t_str
+        timeline_normalizzata = ""
 
     return minuti_totali, timeline_normalizzata, scarto, punteggio_pulito
 
@@ -1008,11 +1021,14 @@ def _disegna_grafico_timeline_pdf(df_match, output_path):
     y_values = df_match['GPI_Progressivo_Disegno'].values
     gpi_tiro = df_match['GPI_Tiro'].values
     is_stress = df_match['Is_Stress_Test'].values
+    flag_empty_goal = df_match['Is_Empty_Goal'].values if 'Is_Empty_Goal' in df_match.columns else [False] * n
 
     colori_punti = []
     marker_shapes = []
     for i in range(n):
-        if is_stress[i]:
+        if flag_empty_goal[i]:
+            colori_punti.append('#888888')
+        elif is_stress[i]:
             colori_punti.append('#ffcc00')
         elif gpi_tiro[i] >= 0:
             colori_punti.append('#2ca02c')
@@ -1028,7 +1044,7 @@ def _disegna_grafico_timeline_pdf(df_match, output_path):
     for i in range(n):
         ax.scatter(x[i], y_values[i], color=colori_punti[i], marker=marker_shapes[i],
                    s=170, zorder=3, edgecolors='none')
-        testo = f"+{gpi_tiro[i]:g}" if gpi_tiro[i] > 0 else f"{gpi_tiro[i]:g}"
+        testo = 'eg' if flag_empty_goal[i] else (f"+{gpi_tiro[i]:g}" if gpi_tiro[i] > 0 else f"{gpi_tiro[i]:g}")
         ax.annotate(testo, (x[i], y_values[i]), textcoords='offset points', xytext=(0, 9),
                     ha='center', fontsize=10, fontweight='bold', color='black')
 
@@ -1274,6 +1290,10 @@ def elabora_file_portieri(df_raw):
         raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
 
     df = df_raw.copy()
+    # Rete di sicurezza: scarta righe senza un vero esito (save/goal/miss) — non sono tiri veri,
+    # anche se questo file viene usato al di fuori del percorso principale (elabora_file_unificato).
+    df = df[df[c_res].apply(e_risultato_valido)].reset_index(drop=True)
+
     df['PORTIERE_CLEAN'] = df[c_gk].astype(str).str.strip()
     df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
     df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
@@ -1304,6 +1324,16 @@ def elabora_file_portieri(df_raw):
         stress_list.append(str_bool)
     df['GPI_Tiro'] = gpi_list
     df['Is_Stress_Test'] = stress_list
+
+    # Gol in porta vuota (rilevati dalla colonna THROW SECTOR, se presente): NON tocco GPI_Tiro
+    # né macro_settore, che restano quelli reali per tutte le statistiche (stagione, tabelle per
+    # settore, % di parata...). Segno solo un flag: conta SOLO quando il tiro è un vero gol (non
+    # save/miss) — l'override "eg / valore 0" si applica poi esclusivamente al disegno del
+    # grafico GPI del match singolo, mai ai dati sottostanti.
+    if 'EMPTY_GOAL' in df.columns:
+        df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool) & df['RESULT_CLEAN'].isin(['goal', 'g'])
+    else:
+        df['Is_Empty_Goal'] = False
 
     df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
 
@@ -1347,6 +1377,9 @@ def elabora_file_tiratori(df_raw):
         raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
 
     df = df_raw.copy()
+    # Rete di sicurezza: scarta righe senza un vero esito (save/goal/miss) — non sono tiri veri.
+    df = df[df[c_result].apply(e_risultato_valido)].reset_index(drop=True)
+
     df['TIRATORE_CLEAN'] = df[c_tiratore].astype(str).str.strip()
     df['TIRATORE_ID'] = df['TIRATORE_CLEAN'].apply(identita_giocatore)
     df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
@@ -1407,6 +1440,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
     c_tiro = _trova_colonna(['tiro', 'shot'])
     c_result = _trova_colonna(['result', 'esito', 'risultato'])
     c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
+    c_throwsector = _trova_colonna(['throw sector', 'throw_sector'])
     c_time = _trova_colonna(['timeline', 'tempo', 'minut', 'note'])
     c_tiro_portiere = trova_colonna_tiro_portiere(df_raw.columns)
     colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
@@ -1468,14 +1502,24 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         tiro = r[c_tiro]
         result = r[c_result]
         timeline = r[c_time]
+
+        # Una riga senza un vero esito (save/goal/miss) non è un tiro — spesso è solo
+        # un'annotazione libera lasciata nella stessa colonna per la videoanalisi — e va
+        # ignorata ovunque: non entra né nei dati portieri, né tiratori, né nel testa a testa.
+        if not e_risultato_valido(result):
+            continue
+
         goal_sector = r[c_goalsector] if c_goalsector is not None else None
+        throw_sector = r[c_throwsector] if c_throwsector is not None else None
+        porta_vuota = e_porta_vuota(throw_sector)
         valori_avanzati_gk = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
                                if chiave in DIMENSIONI_TAGGING_PORTIERE}
         valori_avanzati_tir = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
                                 if chiave in DIMENSIONI_TAGGING_TIRATORE}
 
         if portiere:
-            riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline, 'GOAL SECTOR': goal_sector}
+            riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline,
+                       'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
             riga_gk.update(valori_avanzati_gk)
             (righe_gk_home if squadra_portiere == 'home' else righe_gk_away).append(riga_gk)
 
@@ -3111,6 +3155,7 @@ if 'db' not in st.session_state:
     for _m in st.session_state['db']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
+        _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'db_tiratori' not in st.session_state:
     st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
     for _m in st.session_state['db_tiratori']:
@@ -4176,7 +4221,9 @@ with tab2:
         
             for idx, row in df_match.iterrows():
                 gk_attuale = row['PORTIERE_CLEAN']
-                punti_tiro = row['GPI_Tiro']
+                # Nel grafico (solo qui) un gol in porta vuota conta sempre 0, non il GPI reale
+                # della riga — che resta invece intatto per tutte le altre statistiche del match.
+                punti_tiro = 0.0 if row.get('Is_Empty_Goal', False) else row['GPI_Tiro']
             
                 if gk_attuale not in storico_portieri_gpi:
                     nuovo_valore = punti_tiro
@@ -4205,7 +4252,9 @@ with tab2:
         
             colori_punti = []
             for _, row in df_match.iterrows():
-                if row['Is_Stress_Test']:
+                if row.get('Is_Empty_Goal', False):
+                    colori_punti.append('#888888')
+                elif row['Is_Stress_Test']:
                     colori_punti.append('#ffcc00')
                 elif row['GPI_Tiro'] >= 0:
                     colori_punti.append('#2ca02c')
@@ -4234,7 +4283,8 @@ with tab2:
             
             fig_linee.add_trace(go.Scatter(
                 x=x_labels, y=y_values, mode='text', showlegend=False, hoverinfo='skip',
-                text=df_match['GPI_Tiro'].apply(lambda x: f"+{x}" if x > 0 else str(x)),
+                text=df_match.apply(lambda r: 'eg' if r.get('Is_Empty_Goal', False)
+                                     else (f"+{r['GPI_Tiro']}" if r['GPI_Tiro'] > 0 else str(r['GPI_Tiro'])), axis=1),
                 textposition="top center", textfont=dict(weight="bold", color="black")
             ))
             
