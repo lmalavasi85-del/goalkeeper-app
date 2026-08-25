@@ -4442,15 +4442,23 @@ with tab5:
                     if logo_b64:
                         st.image(foto_base64_a_bytes(logo_b64), width=60)
                     st.caption(squadra['nome'])
-                    nuovo_logo_file = st.file_uploader("Logo", type=['jpg', 'jpeg', 'png'], key=f"logo_compatto_{i}",
-                                                        label_visibility="collapsed")
-                    if nuovo_logo_file is not None:
-                        marcatore_logo = f"{nuovo_logo_file.name}-{nuovo_logo_file.size}"
-                        if st.session_state.get(f"_processato_logo_compatto_{i}") != marcatore_logo:
-                            st.session_state['loghi_squadre'][squadra['nome']] = elabora_foto_giocatore(nuovo_logo_file)
-                            salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
-                            st.session_state[f"_processato_logo_compatto_{i}"] = marcatore_logo
+
+                    key_mostra_uploader = f"_mostra_uploader_logo_{i}"
+                    if logo_b64 and not st.session_state.get(key_mostra_uploader):
+                        if st.button("✏️ Change logo", key=f"change_logo_{i}"):
+                            st.session_state[key_mostra_uploader] = True
                             st.rerun()
+                    else:
+                        nuovo_logo_file = st.file_uploader("Logo", type=['jpg', 'jpeg', 'png'], key=f"logo_compatto_{i}",
+                                                            label_visibility="collapsed")
+                        if nuovo_logo_file is not None:
+                            marcatore_logo = f"{nuovo_logo_file.name}-{nuovo_logo_file.size}"
+                            if st.session_state.get(f"_processato_logo_compatto_{i}") != marcatore_logo:
+                                st.session_state['loghi_squadre'][squadra['nome']] = elabora_foto_giocatore(nuovo_logo_file)
+                                salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+                                st.session_state[f"_processato_logo_compatto_{i}"] = marcatore_logo
+                                st.session_state[key_mostra_uploader] = False
+                                st.rerun()
                     if st.button("🗑️", key=f"del_squadra_training_{i}", help=f"Remove {squadra['nome']}"):
                         st.session_state['squadre_allenate'].pop(i)
                         salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
