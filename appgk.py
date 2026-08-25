@@ -1135,6 +1135,9 @@ def elabora_file_portieri(df_raw):
     Solleva ValueError se manca una colonna essenziale."""
     def _trova_colonna(parole_chiave):
         for c in df_raw.columns:
+            if str(c).strip().lower() in parole_chiave:
+                return c
+        for c in df_raw.columns:
             c_low = str(c).lower()
             if any(p in c_low for p in parole_chiave):
                 return c
@@ -1212,6 +1215,9 @@ def elabora_file_tiratori(df_raw):
     calcolate necessarie al resto dell'app. Solleva ValueError se manca una colonna essenziale."""
     def _trova_colonna(parole_chiave):
         for c in df_raw.columns:
+            if str(c).strip().lower() in parole_chiave:
+                return c
+        for c in df_raw.columns:
             c_low = str(c).lower()
             if any(p in c_low for p in parole_chiave):
                 return c
@@ -1270,6 +1276,13 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
     df_h2h porta anche il nome reale delle due squadre, necessario per il filtro squadra
     dell'analisi testa a testa."""
     def _trova_colonna(parole_chiave):
+        # Prima cerca una corrispondenza ESATTA (case-insensitive): risolve casi come "TIRO" vs
+        # "TIRO 7M/PASSIVO/RIM. VEL./2A FASE" o "LANCIO/TIRO PORTIERE/INTERCETTO", che contengono
+        # "tiro" come sottostringa ma non sono affatto la colonna del settore di tiro.
+        for c in df_raw.columns:
+            if str(c).strip().lower() in parole_chiave:
+                return c
+        # Solo se non c'è nessuna corrispondenza esatta, ripiega sulla ricerca per sottostringa.
         for c in df_raw.columns:
             c_low = str(c).lower()
             if any(p in c_low for p in parole_chiave):
