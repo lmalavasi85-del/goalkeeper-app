@@ -2485,6 +2485,17 @@ def _google_sheets_configurato():
     except Exception:
         return False
 
+def _scrivi_righe_a_blocchi(worksheet, righe, dimensione_blocco=200):
+    """Scrive 'righe' sul worksheet con append_rows suddivise in blocchi piccoli, invece che in
+    un'unica chiamata enorme. Con molti dati (es. decine di PDF corposi salvati come testo)
+    una singola richiesta può superare il limite di dimensione dell'API di Google Sheets e
+    fallire — spesso silenziosamente, lasciando i dati precedenti (es. i metadati) salvati ma il
+    resto perso. Blocchi piccoli evitano il problema."""
+    for inizio in range(0, len(righe), dimensione_blocco):
+        blocco = righe[inizio:inizio + dimensione_blocco]
+        if blocco:
+            worksheet.append_rows(blocco)
+
 def _diagnosi_google_sheets():
     """Restituisce una breve spiegazione di cosa manca nella configurazione, per aiutare il debug."""
     try:
@@ -3200,6 +3211,55 @@ def salva_profili_expected_su_disco(dati):
 TRAINING_ACCESS_CODE = "GigiGiamba2026"
 TRAINING_TEAMS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "training_teams.pkl")
 TRAINING_SESSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "training_sessions.pkl")
+TRAINING_GROUPS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "training_groups.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_gruppi_sessioni():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('TrainingGroups')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='TrainingGroups', rows=200, cols=1)
+        worksheet.append_row(['nome_gruppo'])
+    return worksheet
+
+def carica_gruppi_sessioni_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_gruppi_sessioni()
+            valori = worksheet.get_all_values()
+            return [riga[0] for riga in valori[1:] if riga and riga[0]]
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load training session groups from Google Sheets: {e}")
+            return []
+    if os.path.exists(TRAINING_GROUPS_FILE):
+        try:
+            with open(TRAINING_GROUPS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_gruppi_sessioni_su_disco(gruppi):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_gruppi_sessioni()
+            worksheet.clear()
+            worksheet.append_row(['nome_gruppo'])
+            righe = [[g] for g in gruppi]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save training session groups to Google Sheets: {e}")
+    with open(TRAINING_GROUPS_FILE, 'wb') as f:
+        pickle.dump(gruppi, f)
 DIMENSIONE_CHUNK_PDF = 40000  # caratteri base64 per riga: resta sotto il limite di una cella di Google Sheets
 
 @st.cache_resource
@@ -3277,8 +3337,10 @@ def _ottieni_worksheet_training_pdf():
     foglio = client.open_by_key(st.secrets['season_sheet_id'])
     try:
         worksheet = foglio.worksheet('TrainingSessionsPDF')
+        if worksheet.row_count < 20000:
+            worksheet.resize(rows=20000)
     except Exception:
-        worksheet = foglio.add_worksheet(title='TrainingSessionsPDF', rows=5000, cols=3)
+        worksheet = foglio.add_worksheet(title='TrainingSessionsPDF', rows=20000, cols=3)
         worksheet.append_row(['id', 'indice_chunk', 'chunk_base64'])
     return worksheet
 
@@ -3310,7 +3372,7 @@ def carica_sessioni_allenamento_da_disco():
                 sessioni.append({
                     'id': id_sessione, 'nome_sessione': nome_sessione, 'pdf_bytes': pdf_bytes,
                     'link_list': dati.get('link_list', []), 'note_generali': dati.get('note_generali', ''),
-                    'assegnazioni': dati.get('assegnazioni', []),
+                    'assegnazioni': dati.get('assegnazioni', []), 'gruppo': dati.get('gruppo'),
                 })
             return sessioni
         except Exception as e:
@@ -3332,10 +3394,10 @@ def salva_sessioni_allenamento_su_disco(lista_sessioni):
             worksheet_meta.append_row(['id', 'nome_sessione', 'dati_json'])
             righe_meta = [[
                 s['id'], s['nome_sessione'],
-                json.dumps({'link_list': s['link_list'], 'note_generali': s['note_generali'], 'assegnazioni': s['assegnazioni']})
+                json.dumps({'link_list': s['link_list'], 'note_generali': s['note_generali'],
+                            'assegnazioni': s['assegnazioni'], 'gruppo': s.get('gruppo')})
             ] for s in lista_sessioni]
-            if righe_meta:
-                worksheet_meta.append_rows(righe_meta)
+            _scrivi_righe_a_blocchi(worksheet_meta, righe_meta)
 
             worksheet_pdf = _ottieni_worksheet_training_pdf()
             worksheet_pdf.clear()
@@ -3347,8 +3409,11 @@ def salva_sessioni_allenamento_su_disco(lista_sessioni):
                 b64_completo = base64.b64encode(s['pdf_bytes']).decode('utf-8')
                 for indice, inizio in enumerate(range(0, len(b64_completo), DIMENSIONE_CHUNK_PDF)):
                     righe_pdf.append([s['id'], indice, b64_completo[inizio:inizio + DIMENSIONE_CHUNK_PDF]])
-            if righe_pdf:
-                worksheet_pdf.append_rows(righe_pdf)
+            # Scritto A BLOCCHI PICCOLI (non tutto insieme): con molte sessioni corpose (es. 40
+            # PDF scansionati) una singola chiamata enorme rischia di superare il limite di
+            # dimensione per richiesta di Google Sheets e fallire SILENZIOSAMENTE — lasciando i
+            # metadati delle sessioni salvati ma i PDF persi. Blocchi piccoli evitano il problema.
+            _scrivi_righe_a_blocchi(worksheet_pdf, righe_pdf, dimensione_blocco=40)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save training sessions to Google Sheets: {e}")
@@ -3498,6 +3563,8 @@ if 'squadre_allenate' not in st.session_state:
     st.session_state['squadre_allenate'] = carica_squadre_allenate_da_disco()
 if 'sessioni_allenamento' not in st.session_state:
     st.session_state['sessioni_allenamento'] = carica_sessioni_allenamento_da_disco()
+if 'gruppi_sessioni_allenamento' not in st.session_state:
+    st.session_state['gruppi_sessioni_allenamento'] = carica_gruppi_sessioni_da_disco()
 if 'loghi_squadre' not in st.session_state:
     st.session_state['loghi_squadre'] = carica_loghi_squadra_da_disco()
     # Migrazione: i loghi caricati finora dentro "Training Sessions" (per squadra) confluiscono
@@ -5133,6 +5200,9 @@ with tab2:
                     st.markdown("**By macro-zone**")
                     st.dataframe(tabella_macro_tiratori(df_selezione_match_tir), use_container_width=True, hide_index=True)
 
+                    st.markdown("**Shooters — Goal %**")
+                    st.dataframe(classifica_tiratori_per_volume(df_selezione_match_tir), use_container_width=True, hide_index=True)
+
                 nota_giocatore_mt = st.session_state['note_tiratori'].get(titolo_match_tir, '')
                 if nota_giocatore_mt:
                     st.markdown(f"**Notes:** {note_markup_a_html_streamlit(nota_giocatore_mt)}", unsafe_allow_html=True)
@@ -5160,10 +5230,18 @@ with tab2:
                     with st.spinner("Generating PDF..."):
                         try:
                             logo_squadra_mt = st.session_state['loghi_squadre'].get(titolo_match_tir) if modalita_match_tir == "Team" else None
+                            if modalita_match_tir == "Team":
+                                giocatori_pdf_mt = sorted(df_squadra_completa_mt['TIRATORE_ID'].dropna().unique())
+                                dati_pdf_giocatori_mt = {g: df_squadra_completa_mt[df_squadra_completa_mt['TIRATORE_ID'] == g]
+                                                          for g in giocatori_pdf_mt}
+                                note_pdf_mt = {g: st.session_state['note_tiratori'].get(g, '') for g in giocatori_pdf_mt}
+                            else:
+                                dati_pdf_giocatori_mt = {titolo_match_tir: df_selezione_match_tir}
+                                note_pdf_mt = {titolo_match_tir: st.session_state['note_tiratori'].get(titolo_match_tir, '')}
                             pdf_bytes_mt = genera_pdf_tiratori(
                                 f"{scelta} — {titolo_match_tir}",
-                                {titolo_match_tir: df_selezione_match_tir},
-                                {titolo_match_tir: st.session_state['note_tiratori'].get(titolo_match_tir, '')},
+                                dati_pdf_giocatori_mt,
+                                note_pdf_mt,
                                 df_squadra_riepilogo=(df_squadra_completa_mt if modalita_match_tir == "Team" else None),
                                 logo_squadra_b64=logo_squadra_mt,
                                 mappe_extra=mappe_match_tir_correnti
@@ -5637,6 +5715,45 @@ with tab4:
                         st.caption("Shots tagged 'Passivo' in Videocoach — a meaningful stat only over high shot volumes.")
                         st.markdown(f"**Goal %:** {pct_pas:.1f}%  |  **Shots:** {tot_pas}  |  **Goals:** {goal_pas}")
 
+                    # ---- Match History: solo le partite in cui ha effettuato almeno un tiro ----
+                    st.markdown("---")
+                    st.subheader(f"📅 Match History — {titolo_dashboard}")
+                    righe_storico_tir = []
+                    for m in match_rilevanti_ord:
+                        df_m_giocatore = m['dati'][m['dati']['TIRATORE_ID'] == giocatore_scelto_tir]
+                        if df_m_giocatore.empty:
+                            continue
+                        goal_m, tot_m, pct_m = calcola_metriche_tiratori_gruppo(df_m_giocatore)
+                        righe_storico_tir.append({
+                            'Match': f"{m['nome']} ({m['data']})", 'Shots': tot_m, 'Goals': goal_m,
+                            'Goal %': round(pct_m, 1), 'Result': f"{goal_m}/{tot_m} = {pct_m:.1f}%"
+                        })
+                    if not righe_storico_tir:
+                        st.caption("No matches with at least one shot for this player.")
+                    else:
+                        df_storico_tir = pd.DataFrame(righe_storico_tir)
+                        st.dataframe(df_storico_tir[['Match', 'Result']], use_container_width=True, hide_index=True)
+
+                        goal_cum, tot_cum, media_progressiva = 0, 0, []
+                        for r in righe_storico_tir:
+                            goal_cum += r['Goals']
+                            tot_cum += r['Shots']
+                            media_progressiva.append(round(goal_cum / tot_cum * 100, 1) if tot_cum > 0 else 0)
+                        fig_storico_tir = go.Figure()
+                        fig_storico_tir.add_trace(go.Scatter(
+                            x=df_storico_tir['Match'], y=df_storico_tir['Goal %'],
+                            mode='lines+markers', name='Match Goal %', line=dict(color='#1f77b4')
+                        ))
+                        fig_storico_tir.add_trace(go.Scatter(
+                            x=df_storico_tir['Match'], y=media_progressiva,
+                            mode='lines', name='Running average Goal %', line=dict(color='#ff7f0e', dash='dash')
+                        ))
+                        fig_storico_tir.update_layout(
+                            yaxis_title='Goal %', xaxis_title='Match', height=420, plot_bgcolor='white',
+                            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+                        )
+                        st.plotly_chart(fig_storico_tir, use_container_width=True, key='fig_storico_tir')
+
                 # ---- Shot Map: porta e pulsantiera affiancate ----
                 st.markdown("---")
                 st.subheader(f"🥅 Shot Map — {titolo_dashboard}")
@@ -6070,6 +6187,7 @@ with tab5:
                         'link_list': [],
                         'note_generali': '',
                         'assegnazioni': [],
+                        'gruppo': None,
                     })
                     nomi_esistenti.add(nome_finale)
                     aggiunte_sessioni += 1
@@ -6083,17 +6201,95 @@ with tab5:
                        "Add `pypdf` to requirements.txt to enable full merging.")
 
         st.markdown("---")
+        st.subheader("🗂️ Session groups")
+        st.caption("Group your sessions freely (e.g. 'Season 2026-27', 'World Cup Prep') to keep the "
+                   "library organized as it grows.")
+        with st.expander("➕ Create a group"):
+            nome_gruppo_nuovo = st.text_input("Group name", key="nuovo_gruppo_sessioni_nome")
+            if st.button("➕ Create group"):
+                nome_pulito_gruppo = nome_gruppo_nuovo.strip()
+                if not nome_pulito_gruppo:
+                    st.error("Give the group a name.")
+                elif nome_pulito_gruppo in st.session_state['gruppi_sessioni_allenamento']:
+                    st.error("A group with this name already exists.")
+                else:
+                    st.session_state['gruppi_sessioni_allenamento'].append(nome_pulito_gruppo)
+                    salva_gruppi_sessioni_su_disco(st.session_state['gruppi_sessioni_allenamento'])
+                    st.success(f"Group '{nome_pulito_gruppo}' created.")
+                    st.rerun()
+        if st.session_state['gruppi_sessioni_allenamento']:
+            for i_g, nome_g in enumerate(st.session_state['gruppi_sessioni_allenamento']):
+                col_g1, col_g2 = st.columns([5, 1])
+                col_g1.caption(nome_g)
+                if col_g2.button("🗑️", key=f"del_gruppo_{i_g}", help="Delete this group (sessions in it become ungrouped)"):
+                    st.session_state['gruppi_sessioni_allenamento'].pop(i_g)
+                    salva_gruppi_sessioni_su_disco(st.session_state['gruppi_sessioni_allenamento'])
+                    for s in st.session_state['sessioni_allenamento']:
+                        if s.get('gruppo') == nome_g:
+                            s['gruppo'] = None
+                    salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                    st.rerun()
+
+        st.markdown("---")
         st.subheader("📚 Your sessions")
         if not st.session_state['sessioni_allenamento']:
             st.info("No sessions yet — upload some PDFs above to get started.")
         else:
+            filtro_gruppo = st.selectbox(
+                "Filter by group:", ["(All sessions)"] + st.session_state['gruppi_sessioni_allenamento'] + ["(Ungrouped)"],
+                key="filtro_gruppo_sessioni"
+            )
+            if filtro_gruppo == "(All sessions)":
+                sessioni_visibili_idx = list(range(len(st.session_state['sessioni_allenamento'])))
+            elif filtro_gruppo == "(Ungrouped)":
+                sessioni_visibili_idx = [i for i, s in enumerate(st.session_state['sessioni_allenamento']) if not s.get('gruppo')]
+            else:
+                sessioni_visibili_idx = [i for i, s in enumerate(st.session_state['sessioni_allenamento']) if s.get('gruppo') == filtro_gruppo]
+
+            # ---- Eliminazione multipla ----
+            with st.expander("🗑️ Delete multiple sessions at once"):
+                opzioni_del = [st.session_state['sessioni_allenamento'][i]['nome_sessione'] for i in sessioni_visibili_idx]
+                sessioni_da_eliminare = st.multiselect("Select sessions to delete:", opzioni_del, key="sessioni_da_eliminare_multi")
+                col_delmulti1, col_delmulti2 = st.columns(2)
+                with col_delmulti1:
+                    conferma_multi = st.checkbox("I confirm I want to delete the selected sessions (irreversible)", key="conferma_del_multi")
+                    if st.button("🗑️ Delete selected", disabled=not (conferma_multi and sessioni_da_eliminare)):
+                        st.session_state['sessioni_allenamento'] = [
+                            s for s in st.session_state['sessioni_allenamento'] if s['nome_sessione'] not in sessioni_da_eliminare
+                        ]
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        st.success(f"{len(sessioni_da_eliminare)} session(s) deleted.")
+                        st.rerun()
+                with col_delmulti2:
+                    conferma_tutte = st.checkbox("I confirm I want to delete ALL sessions currently shown (irreversible)", key="conferma_del_tutte")
+                    if st.button(f"🗑️ Delete ALL shown ({len(opzioni_del)})", disabled=not (conferma_tutte and opzioni_del)):
+                        nomi_da_rimuovere = set(opzioni_del)
+                        st.session_state['sessioni_allenamento'] = [
+                            s for s in st.session_state['sessioni_allenamento'] if s['nome_sessione'] not in nomi_da_rimuovere
+                        ]
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        st.success(f"{len(nomi_da_rimuovere)} session(s) deleted.")
+                        st.rerun()
+
             nomi_squadre_disponibili = sorted(s['nome'] for s in st.session_state['squadre_allenate'])
-            for idx_sessione, sessione in enumerate(st.session_state['sessioni_allenamento']):
+            for idx_sessione in sessioni_visibili_idx:
+                sessione = st.session_state['sessioni_allenamento'][idx_sessione]
                 chiave_sess = sessione['id']
-                with st.expander(f"📄 {sessione['nome_sessione']}"):
+                with st.expander(f"📄 {sessione['nome_sessione']}" + (f" [{sessione['gruppo']}]" if sessione.get('gruppo') else "")):
                     nuovo_nome_sessione = st.text_input("Session name", value=sessione['nome_sessione'], key=f"nome_sess_{chiave_sess}")
                     if nuovo_nome_sessione.strip() and nuovo_nome_sessione.strip() != sessione['nome_sessione']:
                         st.session_state['sessioni_allenamento'][idx_sessione]['nome_sessione'] = nuovo_nome_sessione.strip()
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        st.rerun()
+
+                    opzioni_gruppo_sess = ["(no group)"] + st.session_state['gruppi_sessioni_allenamento']
+                    gruppo_attuale = sessione.get('gruppo') or "(no group)"
+                    gruppo_scelto = st.selectbox("Group", opzioni_gruppo_sess,
+                                                  index=opzioni_gruppo_sess.index(gruppo_attuale) if gruppo_attuale in opzioni_gruppo_sess else 0,
+                                                  key=f"gruppo_sess_{chiave_sess}")
+                    nuovo_gruppo_valore = None if gruppo_scelto == "(no group)" else gruppo_scelto
+                    if nuovo_gruppo_valore != sessione.get('gruppo'):
+                        st.session_state['sessioni_allenamento'][idx_sessione]['gruppo'] = nuovo_gruppo_valore
                         salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
                         st.rerun()
 
