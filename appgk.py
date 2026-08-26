@@ -1741,6 +1741,45 @@ def calcola_metriche_tiratori_gruppo(df):
     pct = (goal / tot * 100) if tot > 0 else 0.0
     return goal, tot, pct
 
+# ============================================================
+# GIOCO PASSIVO: isola i tiri taggati "Passivo" nella colonna "TIRO 7M/PASSIVO/RIM. VEL./2A
+# FASE" (dimensione di tagging avanzato CONTESTO_TIRO, catturata sia per portieri sia per
+# tiratori). Statistica interessante solo su volumi alti: mostrata sempre in Seasonal Report
+# (portieri) e Shooting Trend Analysis (tiratori, squadra e singolo), mai nel report di partita
+# singola.
+# ============================================================
+def e_tiro_passivo(lista_tag_contesto):
+    """Vero se tra i tag di TAG_CONTESTO_TIRO di una riga compare 'Passivo' (tollerante a
+    maiuscole/minuscole)."""
+    if not isinstance(lista_tag_contesto, list):
+        return False
+    return any(str(t).strip().lower() == 'passivo' for t in lista_tag_contesto)
+
+def filtra_tiri_passivi(df):
+    """Filtra un dataframe (portieri o tiratori, già con la colonna TAG_CONTESTO_TIRO) ai soli
+    eventi in regime di gioco passivo. Restituisce un dataframe vuoto (stesso schema) se quella
+    colonna non è presente nel file caricato (nessun impatto sul resto dell'app)."""
+    if df.empty or 'TAG_CONTESTO_TIRO' not in df.columns:
+        return df.iloc[0:0]
+    return df[df['TAG_CONTESTO_TIRO'].apply(e_tiro_passivo)]
+
+def tabelle_passivo_tiratori(df_squadra):
+    """Da un dataframe di tiratori (squadra o selezione), isola i tiri 'Passivo' e restituisce
+    due DataFrame: uno ordinato per volume di tiro decrescente, uno per % realizzativa
+    decrescente. Entrambi vuoti se non ci sono tiri passivi nella selezione."""
+    df_passivi = filtra_tiri_passivi(df_squadra)
+    if df_passivi.empty:
+        vuoto = pd.DataFrame(columns=['Player', 'Shots', 'Goals', 'Goal %'])
+        return vuoto, vuoto
+    righe = []
+    for giocatore, df_g in df_passivi.groupby('TIRATORE_ID'):
+        goal, tot, pct = calcola_metriche_tiratori_gruppo(df_g)
+        righe.append({'Player': giocatore, 'Shots': tot, 'Goals': goal, 'Goal %': round(pct, 1)})
+    df_base = pd.DataFrame(righe)
+    df_per_volume = df_base.sort_values('Shots', ascending=False).reset_index(drop=True)
+    df_per_pct = df_base.sort_values('Goal %', ascending=False).reset_index(drop=True)
+    return df_per_volume, df_per_pct
+
 def costruisci_conteggi_porta(df, esiti_successo=('goal', 'g')):
     """dict settore-porta(T1..T9) -> totale tiri, dict -> esiti di successo (default: gol segnati;
     per i portieri si passa esiti_successo=('save','s') per contare le parate). Se il dataframe
@@ -5303,6 +5342,12 @@ with tab3:
                     split_casa = calcola_split_casa_trasferta(dati_per_portiere.get(gk, []), 'saves', 'tiri')
                     st.markdown(f"**Home/Away Save %:** {formatta_riga_casa_trasferta(split_casa)}")
 
+                    df_gk_passivo = filtra_tiri_passivi(df_gk_tot)
+                    if not df_gk_passivo.empty:
+                        s_pas, g_pas, m_pas, pct_pas, eff_pas = calcola_metriche_gruppo(df_gk_passivo)
+                        st.markdown(f"**Passive Play:** Saves: {s_pas}  |  Goals Conceded: {g_pas}  |  "
+                                    f"Save %: {pct_pas:.1f}%  |  Efficiency: {eff_pas:.1f}%")
+
                     # ---- Tiri effettuati dal portiere stesso (Tiro +/-), sull'intera selezione ----
                     _frammenti_tp_stagione = [
                         m['dati'] for m in st.session_state.get('db_tiro_portiere', [])
@@ -5568,6 +5613,29 @@ with tab4:
                     with cc2:
                         st.markdown("**By Money Time shot volume**")
                         st.dataframe(classifica_tiratori_per_volume(df_selezione, solo_money_time=True), use_container_width=True, hide_index=True)
+
+                    st.markdown("---")
+                    st.subheader(f"🎯 Passive Play — {titolo_dashboard}")
+                    st.caption("Shots tagged 'Passivo' in Videocoach — a meaningful stat only over high shot volumes.")
+                    df_passivo_vol, df_passivo_pct = tabelle_passivo_tiratori(df_selezione)
+                    if df_passivo_vol.empty:
+                        st.caption("No passive-play shots in this selection.")
+                    else:
+                        cp1, cp2 = st.columns(2)
+                        with cp1:
+                            st.markdown("**By shot volume**")
+                            st.dataframe(df_passivo_vol, use_container_width=True, hide_index=True)
+                        with cp2:
+                            st.markdown("**By Goal %**")
+                            st.dataframe(df_passivo_pct, use_container_width=True, hide_index=True)
+                else:
+                    df_passivo_giocatore = filtra_tiri_passivi(df_selezione)
+                    if not df_passivo_giocatore.empty:
+                        goal_pas, tot_pas, pct_pas = calcola_metriche_tiratori_gruppo(df_passivo_giocatore)
+                        st.markdown("---")
+                        st.subheader(f"🎯 Passive Play — {titolo_dashboard}")
+                        st.caption("Shots tagged 'Passivo' in Videocoach — a meaningful stat only over high shot volumes.")
+                        st.markdown(f"**Goal %:** {pct_pas:.1f}%  |  **Shots:** {tot_pas}  |  **Goals:** {goal_pas}")
 
                 # ---- Shot Map: porta e pulsantiera affiancate ----
                 st.markdown("---")
