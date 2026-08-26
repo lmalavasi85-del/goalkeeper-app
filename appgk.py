@@ -345,6 +345,102 @@ def identita_giocatore(nome_completo):
     _, nome_base = estrai_numero_e_nome_base(nome_completo)
     return nome_base
 
+# ============================================================
+# IDENTIFY PLAYERS: collegamento manuale di nomi scritti diversamente (comune con le squadre
+# straniere, o quando non si ricorda come un giocatore fu registrato in precedenza) che sono in
+# realtà lo stesso giocatore. Una volta collegati, l'app li tratta come un'unica identità
+# ovunque (portieri e tiratori), fondendo le statistiche, e mostra sempre tutti i nomi collegati
+# uniti da " = " (es. "Mario = Giacomo = Antonio").
+# ============================================================
+def unisci_gruppi_alias(gruppi_esistenti, nomi_da_collegare):
+    """Aggiunge un collegamento tra nomi_da_collegare (lista di identità grezze) alla lista di
+    gruppi esistenti, unendo automaticamente con eventuali gruppi che condividono già almeno un
+    nome (transitività: se A=B esiste già e collego B=C, il risultato è un unico gruppo A=B=C).
+    Mantiene un ordine stabile (nomi già noti per primi, nell'ordine in cui apparivano)."""
+    nomi_da_collegare = [n for n in nomi_da_collegare if n]
+    nuovo_insieme = set(nomi_da_collegare)
+    gruppi_rimanenti = []
+    ordine_accumulato = []
+    for gruppo in gruppi_esistenti:
+        if set(gruppo) & nuovo_insieme:
+            nuovo_insieme |= set(gruppo)
+            for nome in gruppo:
+                if nome not in ordine_accumulato:
+                    ordine_accumulato.append(nome)
+        else:
+            gruppi_rimanenti.append(gruppo)
+    for nome in nomi_da_collegare:
+        if nome not in ordine_accumulato:
+            ordine_accumulato.append(nome)
+    gruppi_rimanenti.append(ordine_accumulato)
+    return gruppi_rimanenti
+
+def costruisci_mappa_alias(gruppi_alias):
+    """gruppi_alias: lista di liste di identità grezze equivalenti. Restituisce un dict
+    {identita_grezza: 'Nome1 = Nome2 = Nome3'} per una sostituzione rapida ovunque serva."""
+    mappa = {}
+    for gruppo in gruppi_alias:
+        if len(gruppo) < 2:
+            continue
+        etichetta_canonica = ' = '.join(gruppo)
+        for nome in gruppo:
+            mappa[nome] = etichetta_canonica
+    return mappa
+
+def applica_alias_a_colonna(df, colonna, mappa_alias):
+    """Rimappa in-place i valori di una colonna identità (PORTIERE_ID/TIRATORE_ID) secondo
+    mappa_alias. Chi non fa parte di nessun gruppo resta invariato. Non fa nulla se la colonna
+    non esiste o non ci sono alias definiti."""
+    if mappa_alias and colonna in df.columns:
+        df[colonna] = df[colonna].apply(lambda v: mappa_alias.get(v, v))
+    return df
+
+def migra_foto_note_per_alias(nomi_gruppo, etichetta_canonica):
+    """Quando si collegano dei nomi insieme, la foto e la nota associate a uno qualsiasi dei
+    nomi grezzi (la prima trovata, in ordine) diventano quelle dell'identità canonica risultante
+    (es. 'Mario = Giacomo'); le voci grezze ormai orfane vengono rimosse."""
+    foto_dict = st.session_state.get('foto_giocatori', {})
+    note_dict = st.session_state.get('note_tiratori', {})
+    foto_trovata = next((foto_dict[n] for n in nomi_gruppo if n in foto_dict), None)
+    nota_trovata = next((note_dict[n] for n in nomi_gruppo if n in note_dict), None)
+    cambiato = False
+    for n in nomi_gruppo:
+        if n in foto_dict and n != etichetta_canonica:
+            del foto_dict[n]
+            cambiato = True
+        if n in note_dict and n != etichetta_canonica:
+            del note_dict[n]
+            cambiato = True
+    if foto_trovata and foto_dict.get(etichetta_canonica) != foto_trovata:
+        foto_dict[etichetta_canonica] = foto_trovata
+        cambiato = True
+    if nota_trovata and note_dict.get(etichetta_canonica) != nota_trovata:
+        note_dict[etichetta_canonica] = nota_trovata
+        cambiato = True
+    return cambiato
+
+def riapplica_alias_a_tutti_i_dati():
+    """Ricalcola la mappa di alias dai gruppi correnti e la applica SUBITO a tutte le partite già
+    in memoria (portieri, tiratori, H2H, tiri portiere), così un nuovo collegamento ha effetto
+    immediato senza dover ricaricare i file. Salva anche su disco i dati così aggiornati."""
+    mappa_alias = costruisci_mappa_alias(st.session_state.get('gruppi_alias', []))
+    st.session_state['mappa_alias_corrente'] = mappa_alias
+    if not mappa_alias:
+        return
+    for m in st.session_state.get('db', []):
+        applica_alias_a_colonna(m['dati'], 'PORTIERE_ID', mappa_alias)
+    for m in st.session_state.get('db_tiratori', []):
+        applica_alias_a_colonna(m['dati'], 'TIRATORE_ID', mappa_alias)
+    for m in st.session_state.get('db_h2h', []):
+        applica_alias_a_colonna(m['dati'], 'PORTIERE_ID', mappa_alias)
+        applica_alias_a_colonna(m['dati'], 'TIRATORE_ID', mappa_alias)
+    for m in st.session_state.get('db_tiro_portiere', []):
+        applica_alias_a_colonna(m['dati'], 'PORTIERE_ID', mappa_alias)
+    salva_stagione_su_disco(st.session_state['db'])
+    salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+    salva_h2h_su_disco(st.session_state['db_h2h'])
+    salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
+
 def assicura_colonna_id(df, colonna_clean, colonna_id):
     """Rete di sicurezza: garantisce che 'df' abbia la colonna_id (PORTIERE_ID/TIRATORE_ID),
     calcolandola al volo da colonna_clean se manca (dati salvati prima che l'identità
@@ -1296,6 +1392,7 @@ def elabora_file_portieri(df_raw):
 
     df['PORTIERE_CLEAN'] = df[c_gk].astype(str).str.strip()
     df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
+    applica_alias_a_colonna(df, 'PORTIERE_ID', st.session_state.get('mappa_alias_corrente', {}))
     df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
     df['RESULT_CLEAN'] = df[c_res].astype(str).str.lower().str.strip()
     if c_goalsector is not None:
@@ -1382,6 +1479,7 @@ def elabora_file_tiratori(df_raw):
 
     df['TIRATORE_CLEAN'] = df[c_tiratore].astype(str).str.strip()
     df['TIRATORE_ID'] = df['TIRATORE_CLEAN'].apply(identita_giocatore)
+    applica_alias_a_colonna(df, 'TIRATORE_ID', st.session_state.get('mappa_alias_corrente', {}))
     df['TIRO_CLEAN'] = df[c_tiro].astype(str).str.strip()
     df['GOAL_SECTOR_CLEAN'] = df[c_goalsector].astype(str).str.strip()
     df['RESULT_CLEAN'] = df[c_result].astype(str).str.lower().str.strip()
@@ -1570,6 +1668,9 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h['TIRATORE_CLEAN'] = df_h2h['TIRATORE'].astype(str).str.strip()
         df_h2h['PORTIERE_ID'] = df_h2h['PORTIERE_CLEAN'].apply(identita_giocatore)
         df_h2h['TIRATORE_ID'] = df_h2h['TIRATORE_CLEAN'].apply(identita_giocatore)
+        _mappa_alias_h2h = st.session_state.get('mappa_alias_corrente', {})
+        applica_alias_a_colonna(df_h2h, 'PORTIERE_ID', _mappa_alias_h2h)
+        applica_alias_a_colonna(df_h2h, 'TIRATORE_ID', _mappa_alias_h2h)
         df_h2h['TIRO_CLEAN'] = df_h2h['TIRO'].astype(str).str.strip()
         df_h2h['RESULT_CLEAN'] = df_h2h['RESULT'].astype(str).str.lower().str.strip()
         df_h2h['GOAL_SECTOR_CLEAN'] = df_h2h['GOAL SECTOR'].astype(str).str.strip() if 'GOAL SECTOR' in df_h2h.columns else ''
@@ -2833,6 +2934,59 @@ def calcola_statistica_tiro_portiere(df_tiro_portiere, identita_portiere=None):
     return goal, tot, (goal / tot * 100 if tot > 0 else 0.0)
 
 # ============================================================
+# STORAGE "IDENTIFY PLAYERS": salvataggio persistente dei gruppi di alias.
+# ============================================================
+PLAYER_ALIASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_aliases.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_alias_giocatori():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('PlayerAliases')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='PlayerAliases', rows=200, cols=1)
+        worksheet.append_row(['gruppo_json'])
+    return worksheet
+
+def carica_alias_giocatori_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_alias_giocatori()
+            valori = worksheet.get_all_values()
+            return [json.loads(riga[0]) for riga in valori[1:] if riga and riga[0]]
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load player aliases from Google Sheets: {e}")
+            return []
+    if os.path.exists(PLAYER_ALIASES_FILE):
+        try:
+            with open(PLAYER_ALIASES_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_alias_giocatori_su_disco(gruppi_alias):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_alias_giocatori()
+            worksheet.clear()
+            worksheet.append_row(['gruppo_json'])
+            righe = [[json.dumps(gruppo)] for gruppo in gruppi_alias]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save player aliases to Google Sheets: {e}")
+    with open(PLAYER_ALIASES_FILE, 'wb') as f:
+        pickle.dump(gruppi_alias, f)
+
+# ============================================================
 # CAMPIONATI: raggruppamenti di partite salvati con un nome, filtrabili per squadra e per
 # intervallo di date (con "Sine Die" = senza data di fine, si aggiornano da sole man mano che
 # carichi nuove partite). Disponibili sia nel Seasonal Report (portieri) sia in Shooting Trend
@@ -3294,6 +3448,9 @@ if 'db_tiro_portiere' not in st.session_state:
     st.session_state['db_tiro_portiere'] = carica_tiro_portiere_da_disco()
     for _m in st.session_state['db_tiro_portiere']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
+if 'gruppi_alias' not in st.session_state:
+    st.session_state['gruppi_alias'] = carica_alias_giocatori_da_disco()
+    riapplica_alias_a_tutti_i_dati()
 if 'campionati' not in st.session_state:
     st.session_state['campionati'] = carica_campionati_da_disco()
 if 'profili_expected_stato' not in st.session_state:
@@ -3907,6 +4064,55 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     st.warning(f'{duplicati} match(es) skipped because already present (same name, date and team). Rename the "Game Name" if this is actually a different match.')
                 if not aggiunte and not duplicati:
                     st.info('No matches to add.')
+
+        st.markdown("---")
+        st.subheader("🔗 Identify Players")
+        st.caption("If the same real player was ever entered under different spellings across "
+                   "rosters — common with foreign teams, especially African ones, or simply when "
+                   "you can't remember exactly how a name was typed before — link the names here. "
+                   "The app will treat them as one single player everywhere (goalkeepers and "
+                   "shooters alike), merging all their stats, and will always display every name "
+                   "you've linked, e.g. \"Mario = Giacomo = Antonio\".")
+
+        with st.expander("➕ Link names together"):
+            nomi_disponibili_alias = sorted(set(
+                [g for m in st.session_state['db'] for g in m['dati']['PORTIERE_ID'].dropna().unique()] +
+                [g for m in st.session_state['db_tiratori'] for g in m['dati']['TIRATORE_ID'].dropna().unique()]
+            ))
+            nomi_scelti_alias = st.multiselect(
+                "Select 2 or more names that are actually the same player:",
+                nomi_disponibili_alias, key="nomi_scelti_alias"
+            )
+            if st.button("🔗 Link these names"):
+                if len(nomi_scelti_alias) < 2:
+                    st.error("Select at least 2 names to link.")
+                else:
+                    st.session_state['gruppi_alias'] = unisci_gruppi_alias(st.session_state['gruppi_alias'], nomi_scelti_alias)
+                    salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'])
+                    etichetta_canonica_nuova = next(
+                        (' = '.join(g) for g in st.session_state['gruppi_alias'] if set(nomi_scelti_alias) <= set(g)),
+                        ' = '.join(nomi_scelti_alias)
+                    )
+                    migra_foto_note_per_alias(nomi_scelti_alias, etichetta_canonica_nuova)
+                    salva_foto_su_disco(st.session_state['foto_giocatori'])
+                    salva_note_su_disco(st.session_state['note_tiratori'])
+                    riapplica_alias_a_tutti_i_dati()
+                    st.success(f"Linked: {etichetta_canonica_nuova}")
+                    st.rerun()
+
+        if st.session_state['gruppi_alias']:
+            st.markdown("**Existing links**")
+            for i, gruppo in enumerate(st.session_state['gruppi_alias']):
+                col_al1, col_al2 = st.columns([5, 1])
+                col_al1.caption(' = '.join(gruppo))
+                if col_al2.button("🗑️", key=f"del_alias_{i}", help="Unlink these names (they'll go back to being separate players)"):
+                    st.session_state['gruppi_alias'].pop(i)
+                    salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'])
+                    riapplica_alias_a_tutti_i_dati()
+                    st.success("Names unlinked.")
+                    st.rerun()
+        else:
+            st.caption("No names linked yet.")
 
         st.markdown("---")
         st.subheader("🏆 Championships")
