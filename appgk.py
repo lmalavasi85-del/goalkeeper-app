@@ -1715,6 +1715,93 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
 
     return df_gk_home, df_gk_away, df_tir_home, df_tir_away, df_h2h, df_tiro_portiere
 
+def elabora_file_tag_go(df_raw):
+    """Parsing dedicato a Tag & Go Analysis: un file di soli tiri estrapolati da video diversi,
+    senza concetto di partita/squadra home-away. Una sola colonna 'Team' identifica chi è stato
+    taggato riga per riga, con la STESSA regola [G] = portiere usata ovunque nel resto dell'app.
+    Nessun testa a testa (una riga = un solo attore, non si sa mai chi c'era dall'altra parte) e
+    nessuna Money Time/GPI (non c'è un vero minuto di gara). Restituisce (df_gk, df_tir)."""
+    def _trova_colonna(parole_chiave):
+        for c in df_raw.columns:
+            if str(c).strip().lower() in parole_chiave:
+                return c
+        for c in df_raw.columns:
+            if any(p in str(c).lower() for p in parole_chiave):
+                return c
+        return None
+
+    c_team = _trova_colonna(['team'])
+    c_tiro = _trova_colonna(['tiro', 'shot'])
+    c_result = _trova_colonna(['result', 'esito', 'risultato'])
+    c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
+    c_throwsector = _trova_colonna(['throw sector', 'throw_sector'])
+    colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
+
+    mancanti = [nome for nome, val in [('TEAM', c_team), ('TIRO', c_tiro), ('RESULT', c_result)] if val is None]
+    if mancanti:
+        raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
+
+    righe_gk, righe_tir = [], []
+    for _, r in df_raw.iterrows():
+        val = str(r[c_team]).strip() if pd.notna(r[c_team]) else ''
+        if not val:
+            continue
+        result = r[c_result]
+        if not e_risultato_valido(result):
+            continue
+
+        goal_sector = r[c_goalsector] if c_goalsector is not None else None
+        throw_sector = r[c_throwsector] if c_throwsector is not None else None
+        porta_vuota = e_porta_vuota(throw_sector)
+        valori_avanzati = {nome_colonna: r[nome_colonna] for nome_colonna in colonne_avanzate_trovate.values()}
+
+        if _e_portiere(val):
+            riga_gk = {'PORTIERE': val, 'TIRO': r[c_tiro], 'RESULT': result, 'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
+            riga_gk.update({k: v for k, v in valori_avanzati.items()
+                             if any(k == nc for chiave, nc in colonne_avanzate_trovate.items() if chiave in DIMENSIONI_TAGGING_PORTIERE)})
+            righe_gk.append(riga_gk)
+        else:
+            riga_tir = {'TIRATORE': val, 'TIRO': r[c_tiro], 'RESULT': result, 'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
+            riga_tir.update({k: v for k, v in valori_avanzati.items()
+                              if any(k == nc for chiave, nc in colonne_avanzate_trovate.items() if chiave in DIMENSIONI_TAGGING_TIRATORE)})
+            righe_tir.append(riga_tir)
+
+    df_gk = pd.DataFrame(righe_gk)
+    if not df_gk.empty:
+        df_gk['PORTIERE_CLEAN'] = df_gk['PORTIERE'].astype(str).str.strip()
+        df_gk['PORTIERE_ID'] = df_gk['PORTIERE_CLEAN'].apply(identita_giocatore)
+        applica_alias_a_colonna(df_gk, 'PORTIERE_ID', st.session_state.get('mappa_alias_corrente', {}))
+        df_gk['TIRO_CLEAN'] = df_gk['TIRO'].astype(str).str.strip()
+        df_gk['RESULT_CLEAN'] = df_gk['RESULT'].astype(str).str.lower().str.strip()
+        df_gk['GOAL_SECTOR_CLEAN'] = df_gk['GOAL SECTOR'].astype(str).str.strip() if 'GOAL SECTOR' in df_gk.columns else ''
+        df_gk['macro_settore'] = df_gk['TIRO_CLEAN'].apply(mappa_macro_settore)
+        df_gk['Is_Empty_Goal'] = df_gk['EMPTY_GOAL'].fillna(False).astype(bool) & df_gk['RESULT_CLEAN'].isin(['goal', 'g'])
+        for chiave, nome_colonna in colonne_avanzate_trovate.items():
+            if chiave in DIMENSIONI_TAGGING_PORTIERE and nome_colonna in df_gk.columns:
+                df_gk[f'TAG_{chiave}'] = df_gk[nome_colonna].apply(dividi_tag_multipli)
+    else:
+        df_gk = pd.DataFrame(columns=['PORTIERE_CLEAN', 'PORTIERE_ID', 'TIRO_CLEAN', 'RESULT_CLEAN',
+                                       'GOAL_SECTOR_CLEAN', 'macro_settore', 'Is_Empty_Goal'])
+
+    df_tir = pd.DataFrame(righe_tir)
+    if not df_tir.empty:
+        df_tir['TIRATORE_CLEAN'] = df_tir['TIRATORE'].astype(str).str.strip()
+        df_tir['TIRATORE_ID'] = df_tir['TIRATORE_CLEAN'].apply(identita_giocatore)
+        applica_alias_a_colonna(df_tir, 'TIRATORE_ID', st.session_state.get('mappa_alias_corrente', {}))
+        df_tir['TIRO_CLEAN'] = df_tir['TIRO'].astype(str).str.strip()
+        df_tir['RESULT_CLEAN'] = df_tir['RESULT'].astype(str).str.lower().str.strip()
+        df_tir['GOAL_SECTOR_CLEAN'] = df_tir['GOAL SECTOR'].astype(str).str.strip() if 'GOAL SECTOR' in df_tir.columns else ''
+        df_tir['macro_settore_tir'] = df_tir['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+        df_tir['Is_Empty_Goal'] = df_tir['EMPTY_GOAL'].fillna(False).astype(bool) & df_tir['RESULT_CLEAN'].isin(['goal', 'g'])
+        for chiave, nome_colonna in colonne_avanzate_trovate.items():
+            if chiave in DIMENSIONI_TAGGING_TIRATORE and nome_colonna in df_tir.columns:
+                df_tir[f'TAG_{chiave}'] = df_tir[nome_colonna].apply(dividi_tag_multipli)
+    else:
+        df_tir = pd.DataFrame(columns=['TIRATORE_CLEAN', 'TIRATORE_ID', 'TIRO_CLEAN', 'RESULT_CLEAN',
+                                        'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Is_Empty_Goal'])
+
+    return df_gk, df_tir
+
 def escludi_empty_goal_stagionale(elenco_partite):
     """Restituisce una copia dell'elenco partite con gli eventi 'Empty Goal' esclusi dai dati
     tiratori: irrilevanti per il report STAGIONALE del giocatore (non riflettono una vera
@@ -2495,6 +2582,98 @@ def _scrivi_righe_a_blocchi(worksheet, righe, dimensione_blocco=200):
         blocco = righe[inizio:inizio + dimensione_blocco]
         if blocco:
             worksheet.append_rows(blocco)
+
+# ============================================================
+# TAG & GO ANALYSIS: sezione completamente svincolata dal resto dell'app (i suoi dati non
+# entrano MAI nelle statistiche generali, nel Full Backup, né in Reset All Data). Storage isolato
+# in worksheet dedicati. Pensata per analizzare un video di soli tiri estrapolati da più partite
+# diverse: si carica, si analizza, si esporta il PDF, e "Export and Delete" cancella tutto.
+# ============================================================
+TAG_GO_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_go_data.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_tag_go():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('TagGoAnalysis')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='TagGoAnalysis', rows=200, cols=2)
+        worksheet.append_row(['chiave', 'valore_json'])
+    return worksheet
+
+def carica_tag_go_da_disco():
+    """Restituisce lo stato salvato di Tag & Go (df_gk/df_tir come JSON, note, mappe salvate,
+    nome analisi), o uno stato vuoto se non c'è nulla di salvato."""
+    stato_vuoto = {'df_gk_json': None, 'df_tir_json': None, 'note_giocatori': {}, 'nome_analisi': ''}
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_tag_go()
+            valori = worksheet.get_all_values()
+            dati = {riga[0]: riga[1] for riga in valori[1:] if riga and riga[0]}
+            if not dati:
+                return stato_vuoto
+            return {
+                'df_gk_json': dati.get('df_gk_json') or None,
+                'df_tir_json': dati.get('df_tir_json') or None,
+                'note_giocatori': json.loads(dati['note_giocatori']) if dati.get('note_giocatori') else {},
+                'nome_analisi': dati.get('nome_analisi', ''),
+            }
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load Tag & Go data from Google Sheets: {e}")
+            return stato_vuoto
+    if os.path.exists(TAG_GO_FILE):
+        try:
+            with open(TAG_GO_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return stato_vuoto
+    return stato_vuoto
+
+def salva_tag_go_su_disco(df_gk, df_tir, note_giocatori, nome_analisi):
+    stato = {
+        'df_gk_json': df_gk.to_json(orient='split', date_format='iso') if df_gk is not None and not df_gk.empty else None,
+        'df_tir_json': df_tir.to_json(orient='split', date_format='iso') if df_tir is not None and not df_tir.empty else None,
+        'note_giocatori': note_giocatori,
+        'nome_analisi': nome_analisi,
+    }
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_tag_go()
+            worksheet.clear()
+            worksheet.append_row(['chiave', 'valore_json'])
+            righe = [
+                ['df_gk_json', stato['df_gk_json'] or ''],
+                ['df_tir_json', stato['df_tir_json'] or ''],
+                ['note_giocatori', json.dumps(note_giocatori)],
+                ['nome_analisi', nome_analisi],
+            ]
+            _scrivi_righe_a_blocchi(worksheet, righe, dimensione_blocco=4)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save Tag & Go data to Google Sheets: {e}")
+    with open(TAG_GO_FILE, 'wb') as f:
+        pickle.dump(stato, f)
+
+def elimina_tag_go_da_disco():
+    """Cancella definitivamente tutto lo stato salvato di Tag & Go (usato da 'Export and Delete')."""
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_tag_go()
+            worksheet.clear()
+            worksheet.append_row(['chiave', 'valore_json'])
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not clear Tag & Go data on Google Sheets: {e}")
+    if os.path.exists(TAG_GO_FILE):
+        try:
+            os.remove(TAG_GO_FILE)
+        except Exception:
+            pass
 
 def _diagnosi_google_sheets():
     """Restituisce una breve spiegazione di cosa manca nella configurazione, per aiutare il debug."""
@@ -3555,6 +3734,15 @@ if 'db_tiro_portiere' not in st.session_state:
 if 'gruppi_alias' not in st.session_state:
     st.session_state['gruppi_alias'] = carica_alias_giocatori_da_disco()
     riapplica_alias_a_tutti_i_dati()
+if 'tag_go_df_gk' not in st.session_state:
+    _stato_tag_go = carica_tag_go_da_disco()
+    st.session_state['tag_go_df_gk'] = (pd.read_json(io.StringIO(_stato_tag_go['df_gk_json']), orient='split')
+                                         if _stato_tag_go['df_gk_json'] else pd.DataFrame())
+    st.session_state['tag_go_df_tir'] = (pd.read_json(io.StringIO(_stato_tag_go['df_tir_json']), orient='split')
+                                          if _stato_tag_go['df_tir_json'] else pd.DataFrame())
+    st.session_state['tag_go_note_giocatori'] = _stato_tag_go['note_giocatori']
+    st.session_state['tag_go_nome_analisi'] = _stato_tag_go['nome_analisi']
+    st.session_state['tag_go_mappe_salvate'] = []
 if 'campionati' not in st.session_state:
     st.session_state['campionati'] = carica_campionati_da_disco()
 if 'profili_expected_stato' not in st.session_state:
@@ -3623,6 +3811,66 @@ def _blocco_porta_tastiera_pdf(df, esiti_successo, titolo=None, larghezza_porta_
     blocco = Table([[img_porta, img_tast]], colWidths=[(larghezza_porta_cm + 0.5) * cm, (larghezza_tastiera_cm + 0.5) * cm])
     blocco.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
     return blocco
+
+def genera_pdf_tag_go_portieri(nome_analisi, dati_per_portiere, note_dict=None, mappe_extra=None):
+    """PDF per il lato portieri di Tag & Go Analysis: nessun concetto di partita/data/GPI (i tiri
+    sono estrapolati da video diversi, senza un vero minuto di gara) — solo porta+tastiera+
+    statistiche per settore, note, ed eventuali mappe salvate su misura. dati_per_portiere: dict
+    {nome_portiere: df_filtrato}."""
+    note_dict = note_dict or {}
+    stili = getSampleStyleSheet()
+    titolo_stile = ParagraphStyle('TitoloTagGoGK', parent=stili['Title'], fontSize=20, textColor=COLORE_ACCENTO)
+    sottotitolo_stile = ParagraphStyle('SottotitoloTagGoGK', parent=stili['Heading3'], fontSize=13, textColor=colors.HexColor('#555555'))
+    sezione_stile = ParagraphStyle('SezioneTagGoGK', parent=stili['Heading2'], spaceBefore=8, spaceAfter=6, textColor=COLORE_ACCENTO)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
+                             leftMargin=1.2 * cm, rightMargin=1.2 * cm)
+    elementi = []
+    dim_logo = 2.6 * cm
+    blocco_titolo = Table(
+        [[RLImage(io.BytesIO(LOGO_BYTES), width=dim_logo, height=dim_logo),
+          [Paragraph("TAG &amp; GO ANALYSIS", titolo_stile), Paragraph(nome_analisi, sottotitolo_stile)]]],
+        colWidths=[dim_logo + 0.4 * cm, None]
+    )
+    blocco_titolo.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elementi.append(blocco_titolo)
+    elementi.append(Spacer(1, 0.5 * cm))
+
+    for gk, df_gk in dati_per_portiere.items():
+        if df_gk.empty:
+            continue
+        s, g, m, pct, eff = calcola_metriche_gruppo(df_gk)
+        elementi.append(KeepTogether([
+            Paragraph(gk, sezione_stile),
+            Paragraph(f"Saves: {s}  |  Goals Conceded: {g}  |  Miss: {m}  |  Save %: {pct:.1f}%  |  Efficiency: {eff:.1f}%", stili['Normal']),
+            Spacer(1, 0.2 * cm),
+        ]))
+        blocco = _blocco_porta_tastiera_pdf(df_gk, esiti_successo=('save', 's'), titolo=gk, larghezza_porta_cm=7, larghezza_tastiera_cm=10)
+        blocco.hAlign = 'CENTER'
+        elementi.append(blocco)
+        nota = note_dict.get(gk, '')
+        if nota:
+            elementi.append(Spacer(1, 0.2 * cm))
+            elementi.append(Paragraph("Notes", sezione_stile))
+            elementi.append(Paragraph(note_markup_a_reportlab(nota), stili['Normal']))
+        elementi.append(_separatore())
+
+    mappe_valide = [m for m in (mappe_extra or []) if not m['df'].empty]
+    if mappe_valide:
+        elementi.append(Paragraph("Saved Shot Maps", sezione_stile))
+        for mappa in mappe_valide:
+            blocco_m = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=('save', 's'), titolo=mappa['titolo'],
+                                                    larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
+            blocco_m.hAlign = 'CENTER'
+            elementi.append(KeepTogether([blocco_m, Spacer(1, 0.3 * cm)]))
+
+    doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, nota_html=None):
     """Costruisce gli elementi ReportLab (porta, tastiera, tabella macro-zone, note) per UN
@@ -3983,7 +4231,7 @@ else:
     st.sidebar.caption("💻 Storage: local file")
     st.sidebar.caption(f"ℹ️ {_diagnosi_google_sheets()}")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🏋️ Training Sessions'])
+tab1, tab2, tab3, tab4, tab6, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🎬 Tag & Go Analysis', '🏋️ Training Sessions'])
 
 with tab1:
     st.header('Upload Game Data')
@@ -6459,3 +6707,368 @@ with tab5:
                         salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
                         st.success(f"Session '{sessione['nome_sessione']}' deleted.")
                         st.rerun()
+
+with tab6:
+    st.header("🎬 Tag & Go Analysis")
+    st.caption("A completely separate scratchpad — never counted in any other statistics, never "
+               "included in Full Backup, never touched by Reset All Data. Analyze a video of "
+               "shots pulled from different matches, build a PDF for the coach, then wipe it clean.")
+
+    if 'tag_go_authorized' not in st.session_state:
+        st.session_state['tag_go_authorized'] = False
+
+    if not st.session_state['tag_go_authorized']:
+        st.info("🔒 This section is reserved for authorized staff.")
+        with st.form(key="form_tag_go_access", clear_on_submit=True):
+            codice_tag_go = st.text_input("Access code", type="password", key="codice_tag_go")
+            sbloccato_tag_go = st.form_submit_button("Unlock")
+        if sbloccato_tag_go:
+            if codice_tag_go == TRAINING_ACCESS_CODE:
+                st.session_state['tag_go_authorized'] = True
+                st.rerun()
+            else:
+                st.error("Incorrect code.")
+    else:
+        df_gk_tg = st.session_state['tag_go_df_gk']
+        df_tir_tg = st.session_state['tag_go_df_tir']
+
+        if df_gk_tg.empty and df_tir_tg.empty:
+            # ============================================================
+            # SCHERMATA DI CARICAMENTO (nessun dato in memoria)
+            # ============================================================
+            st.subheader("📥 Upload shots file")
+            st.caption("💡 One-line rule: rename the roster column to exactly **'Team'** — goalkeepers "
+                       "must be tagged with **'[G]'** (e.g. 'Kabashi [G]'), everyone else is treated as "
+                       "a shooter. No HOME/AWAY, no match name or date needed — just the shots.")
+            nome_analisi_input = st.text_input("Analysis name (used as the PDF title)", key="tag_go_nome_input")
+            file_tag_go = st.file_uploader("Upload the Excel file", type=['xlsx', 'xls'], key="tag_go_upload")
+            if file_tag_go is not None:
+                if st.button("➕ Load this file"):
+                    try:
+                        df_raw_tg = pd.read_excel(file_tag_go)
+                        nuovo_gk, nuovo_tir = elabora_file_tag_go(df_raw_tg)
+                        st.session_state['tag_go_df_gk'] = nuovo_gk
+                        st.session_state['tag_go_df_tir'] = nuovo_tir
+                        st.session_state['tag_go_nome_analisi'] = nome_analisi_input.strip() or "Tag & Go Analysis"
+                        salva_tag_go_su_disco(nuovo_gk, nuovo_tir, st.session_state['tag_go_note_giocatori'],
+                                               st.session_state['tag_go_nome_analisi'])
+                        st.success(f"Loaded: {len(nuovo_gk)} goalkeeper shot(s), {len(nuovo_tir)} shooter shot(s).")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error processing file: {e}")
+        else:
+            # ============================================================
+            # PANNELLO DI ANALISI
+            # ============================================================
+            st.subheader(f"🎬 {st.session_state['tag_go_nome_analisi'] or 'Tag & Go Analysis'}")
+            st.caption(f"{len(df_gk_tg)} goalkeeper shot(s)  |  {len(df_tir_tg)} shooter shot(s)")
+
+            with st.expander("➕ Add more shots to this analysis"):
+                st.caption("Upload another file tagged the same way (a 'Team' column) — its shots "
+                           "are added to what's already loaded, not replaced.")
+                altro_file_tg = st.file_uploader("Upload another Excel file", type=['xlsx', 'xls'], key="tag_go_upload_altro")
+                if altro_file_tg is not None:
+                    if st.button("➕ Add these shots"):
+                        try:
+                            df_raw_altro = pd.read_excel(altro_file_tg)
+                            altro_gk, altro_tir = elabora_file_tag_go(df_raw_altro)
+                            st.session_state['tag_go_df_gk'] = pd.concat([df_gk_tg, altro_gk], ignore_index=True) if not altro_gk.empty else df_gk_tg
+                            st.session_state['tag_go_df_tir'] = pd.concat([df_tir_tg, altro_tir], ignore_index=True) if not altro_tir.empty else df_tir_tg
+                            salva_tag_go_su_disco(st.session_state['tag_go_df_gk'], st.session_state['tag_go_df_tir'],
+                                                   st.session_state['tag_go_note_giocatori'], st.session_state['tag_go_nome_analisi'])
+                            st.success(f"Added {len(altro_gk)} goalkeeper shot(s), {len(altro_tir)} shooter shot(s).")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error processing file: {e}")
+
+            st.markdown("---")
+            vista_tag_go = st.radio("View:", ["Shooters", "Goalkeepers"], horizontal=True, key="tag_go_vista")
+            st.markdown("---")
+
+            if 'tag_go_mappe_salvate' not in st.session_state:
+                st.session_state['tag_go_mappe_salvate'] = []
+
+            # ------------------------------------------------------------
+            # VISTA TIRATORI
+            # ------------------------------------------------------------
+            if vista_tag_go == "Shooters":
+                if df_tir_tg.empty:
+                    st.info("No shooter shots in this analysis.")
+                else:
+                    giocatori_tg_tir = sorted(df_tir_tg['TIRATORE_ID'].dropna().unique())
+                    modalita_tg_tir = st.radio("View:", ["All Players", "Single Player"], horizontal=True, key="tag_go_modalita_tir")
+                    if modalita_tg_tir == "All Players":
+                        df_sel_tg = df_tir_tg
+                        titolo_tg = st.session_state['tag_go_nome_analisi'] or "All Players"
+                    else:
+                        giocatore_tg = st.selectbox("Select player:", giocatori_tg_tir, key="tag_go_giocatore_scelto")
+                        df_sel_tg = df_tir_tg[df_tir_tg['TIRATORE_ID'] == giocatore_tg]
+                        titolo_tg = giocatore_tg
+
+                    goal_tg, tot_tg, pct_tg = calcola_metriche_tiratori_gruppo(df_sel_tg)
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Shots", tot_tg)
+                    c2.metric("Goals", goal_tg)
+                    c3.metric("Goal %", f"{pct_tg:.1f}%")
+
+                    if modalita_tg_tir == "All Players":
+                        st.markdown("**Shooters — Goal %**")
+                        st.dataframe(classifica_tiratori_per_volume(df_sel_tg), use_container_width=True, hide_index=True)
+
+                    df_passivo_tg = filtra_tiri_passivi(df_sel_tg)
+                    if not df_passivo_tg.empty:
+                        goal_p, tot_p, pct_p = calcola_metriche_tiratori_gruppo(df_passivo_tg)
+                        st.markdown(f"**Passive Play:** Goal %: {pct_p:.1f}%  |  Shots: {tot_p}  |  Goals: {goal_p}")
+
+                    st.markdown("---")
+                    st.subheader(f"🥅 Shot Map — {titolo_tg}")
+                    chiave_tg_sicura = _chiave_css_sicura(f"tir_{titolo_tg}")
+                    col_macro_tg, _ = st.columns(2)
+                    with col_macro_tg:
+                        macro_key_tg = selettore_macro_zona(key_prefix=f"tag_go_tir_{chiave_tg_sicura}")
+                    filtri_tg = selettore_filtri_avanzati(df_sel_tg, key_prefix=f"tag_go_tir_{chiave_tg_sicura}")
+                    df_tg_filtrato = applica_filtri_avanzati(df_sel_tg, filtri_tg)
+                    df_tg_filtrato = filtra_per_macro_zona(df_tg_filtrato, macro_key_tg)
+
+                    key_focus_tg = f"tasto_focus_tag_go_tir_{chiave_tg_sicura}"
+                    if key_focus_tg not in st.session_state:
+                        st.session_state[key_focus_tg] = None
+                    if st.session_state[key_focus_tg] not in TUTTI_I_TASTI_TIRATORI:
+                        st.session_state[key_focus_tg] = None
+                    tasto_sel_tg = st.session_state[key_focus_tg]
+
+                    if tasto_sel_tg:
+                        df_porta_tg = df_tg_filtrato[df_tg_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_tg]
+                        g_sel_tg, t_sel_tg, pct_sel_tg = calcola_metriche_tiratori_gruppo(df_porta_tg)
+                        expected_sel_tg = ottieni_expected_goal_pct(tasto_sel_tg)
+                        colore_cornice_tg = _colore_expected(pct_sel_tg if t_sel_tg > 0 else None, expected_sel_tg)
+                    else:
+                        df_porta_tg = df_tg_filtrato
+                        colore_cornice_tg = None
+
+                    tot_porta_tg, goal_porta_tg = costruisci_conteggi_porta(df_porta_tg)
+                    fig_porta_tg = disegna_porta(tot_porta_tg, goal_porta_tg, colore_cornice=colore_cornice_tg)
+                    tot_tast_tg, goal_tast_tg = costruisci_conteggi_tastiera(df_tg_filtrato)
+
+                    col_p_tg, col_t_tg = st.columns([1, 2])
+                    with col_p_tg:
+                        st.pyplot(fig_porta_tg)
+                    with col_t_tg:
+                        tasto_cliccato_tg = pulsantiera_settori_campo(tot_tast_tg, goal_tast_tg, tasto_sel_tg,
+                                                                       key_prefix=f"tag_go_tir_pulsantiera_{chiave_tg_sicura}")
+                        if tasto_cliccato_tg:
+                            st.session_state[key_focus_tg] = None if tasto_cliccato_tg == tasto_sel_tg else tasto_cliccato_tg
+                            st.rerun()
+                        if tasto_sel_tg:
+                            if st.button("↺ Reset — show all sectors", key=f"reset_tag_go_tir_{chiave_tg_sicura}"):
+                                st.session_state[key_focus_tg] = None
+                                st.rerun()
+
+                    titolo_mappa_tg = f"{titolo_tg} — {descrivi_filtri_attivi(macro_key_tg, tasto_sel_tg, filtri_tg)}"
+                    if st.button("💾 Save this map for PDF", key=f"salva_mappa_tag_go_tir_{chiave_tg_sicura}"):
+                        st.session_state['tag_go_mappe_salvate'].append({'titolo': titolo_mappa_tg, 'df': df_porta_tg.copy(), 'ruolo': 'tiratore'})
+                        st.success(f"Map '{titolo_mappa_tg}' saved for the PDF export below.")
+
+                    st.markdown("---")
+                    st.subheader(f"📝 Notes — {titolo_tg}")
+                    nota_tg_attuale = st.session_state['tag_go_note_giocatori'].get(titolo_tg, '')
+                    nota_tg_nuova = st.text_area("Notes (max 1000 characters)", value=nota_tg_attuale, max_chars=1000, key=f"nota_tag_go_{chiave_tg_sicura}")
+                    if nota_tg_nuova != nota_tg_attuale:
+                        st.session_state['tag_go_note_giocatori'][titolo_tg] = nota_tg_nuova
+                        salva_tag_go_su_disco(df_gk_tg, df_tir_tg, st.session_state['tag_go_note_giocatori'], st.session_state['tag_go_nome_analisi'])
+
+            # ------------------------------------------------------------
+            # VISTA PORTIERI
+            # ------------------------------------------------------------
+            else:
+                if df_gk_tg.empty:
+                    st.info("No goalkeeper shots in this analysis.")
+                else:
+                    portieri_tg = sorted(df_gk_tg['PORTIERE_ID'].dropna().unique())
+                    modalita_tg_gk = st.radio("View:", ["All Goalkeepers", "Single Goalkeeper"], horizontal=True, key="tag_go_modalita_gk")
+                    if modalita_tg_gk == "All Goalkeepers":
+                        df_sel_tg_gk = df_gk_tg
+                        titolo_tg_gk = st.session_state['tag_go_nome_analisi'] or "All Goalkeepers"
+                    else:
+                        gk_tg = st.selectbox("Select goalkeeper:", portieri_tg, key="tag_go_gk_scelto")
+                        df_sel_tg_gk = df_gk_tg[df_gk_tg['PORTIERE_ID'] == gk_tg]
+                        titolo_tg_gk = gk_tg
+
+                    s_tg, g_tg, m_tg, pct_tg_gk, eff_tg_gk = calcola_metriche_gruppo(df_sel_tg_gk)
+                    c1g, c2g, c3g, c4g = st.columns(4)
+                    c1g.metric("Saves", s_tg)
+                    c2g.metric("Goals Conceded", g_tg)
+                    c3g.metric("Save %", f"{pct_tg_gk:.1f}%")
+                    c4g.metric("Efficiency", f"{eff_tg_gk:.1f}%")
+
+                    df_passivo_tg_gk = filtra_tiri_passivi(df_sel_tg_gk)
+                    if not df_passivo_tg_gk.empty:
+                        s_p, g_p, m_p, pct_p_gk, eff_p_gk = calcola_metriche_gruppo(df_passivo_tg_gk)
+                        st.markdown(f"**Passive Play:** Saves: {s_p}  |  Goals Conceded: {g_p}  |  "
+                                    f"Save %: {pct_p_gk:.1f}%  |  Efficiency: {eff_p_gk:.1f}%")
+
+                    st.markdown("---")
+                    st.subheader(f"🥅 Shot Map — {titolo_tg_gk}")
+                    chiave_tg_gk_sicura = _chiave_css_sicura(f"gk_{titolo_tg_gk}")
+                    col_macro_tg_gk, _ = st.columns(2)
+                    with col_macro_tg_gk:
+                        macro_key_tg_gk = selettore_macro_zona(key_prefix=f"tag_go_gk_{chiave_tg_gk_sicura}")
+                    filtri_tg_gk = selettore_filtri_avanzati(df_sel_tg_gk, key_prefix=f"tag_go_gk_{chiave_tg_gk_sicura}")
+                    df_tg_gk_filtrato = applica_filtri_avanzati(df_sel_tg_gk, filtri_tg_gk)
+                    df_tg_gk_filtrato = filtra_per_macro_zona(df_tg_gk_filtrato, macro_key_tg_gk)
+
+                    key_focus_tg_gk = f"tasto_focus_tag_go_gk_{chiave_tg_gk_sicura}"
+                    if key_focus_tg_gk not in st.session_state:
+                        st.session_state[key_focus_tg_gk] = None
+                    if st.session_state[key_focus_tg_gk] not in TUTTI_I_TASTI_TIRATORI:
+                        st.session_state[key_focus_tg_gk] = None
+                    tasto_sel_tg_gk = st.session_state[key_focus_tg_gk]
+
+                    if tasto_sel_tg_gk:
+                        df_porta_tg_gk = df_tg_gk_filtrato[df_tg_gk_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_tg_gk]
+                        expected_sel_tg_gk = ottieni_expected_pct(tasto_sel_tg_gk)
+                        s_reale, g_reale, m_reale, pct_reale, eff_reale = calcola_metriche_gruppo(df_porta_tg_gk)
+                        colore_cornice_tg_gk = _colore_expected(pct_reale if len(df_porta_tg_gk) > 0 else None, expected_sel_tg_gk)
+                    else:
+                        df_porta_tg_gk = df_tg_gk_filtrato
+                        colore_cornice_tg_gk = None
+
+                    tot_porta_tg_gk, salvate_porta_tg_gk = costruisci_conteggi_porta(df_porta_tg_gk, esiti_successo=('save', 's'))
+                    fig_porta_tg_gk = disegna_porta(tot_porta_tg_gk, salvate_porta_tg_gk, colore_cornice=colore_cornice_tg_gk)
+                    tot_tast_tg_gk, salvate_tast_tg_gk = costruisci_conteggi_tastiera(df_tg_gk_filtrato, esiti_successo=('save', 's'))
+
+                    col_p_tg_gk, col_t_tg_gk = st.columns([1, 2])
+                    with col_p_tg_gk:
+                        st.pyplot(fig_porta_tg_gk)
+                    with col_t_tg_gk:
+                        tasto_cliccato_tg_gk = pulsantiera_settori_campo(tot_tast_tg_gk, salvate_tast_tg_gk, tasto_sel_tg_gk,
+                                                                          key_prefix=f"tag_go_gk_pulsantiera_{chiave_tg_gk_sicura}")
+                        if tasto_cliccato_tg_gk:
+                            st.session_state[key_focus_tg_gk] = None if tasto_cliccato_tg_gk == tasto_sel_tg_gk else tasto_cliccato_tg_gk
+                            st.rerun()
+                        if tasto_sel_tg_gk:
+                            if st.button("↺ Reset — show all sectors", key=f"reset_tag_go_gk_{chiave_tg_gk_sicura}"):
+                                st.session_state[key_focus_tg_gk] = None
+                                st.rerun()
+
+                    titolo_mappa_tg_gk = f"{titolo_tg_gk} — {descrivi_filtri_attivi(macro_key_tg_gk, tasto_sel_tg_gk, filtri_tg_gk)}"
+                    if st.button("💾 Save this map for PDF", key=f"salva_mappa_tag_go_gk_{chiave_tg_gk_sicura}"):
+                        st.session_state['tag_go_mappe_salvate'].append({'titolo': titolo_mappa_tg_gk, 'df': df_porta_tg_gk.copy(), 'ruolo': 'portiere'})
+                        st.success(f"Map '{titolo_mappa_tg_gk}' saved for the PDF export below.")
+
+                    st.markdown("---")
+                    st.subheader(f"📝 Notes — {titolo_tg_gk}")
+                    nota_tg_gk_attuale = st.session_state['tag_go_note_giocatori'].get(titolo_tg_gk, '')
+                    nota_tg_gk_nuova = st.text_area("Notes (max 1000 characters)", value=nota_tg_gk_attuale, max_chars=1000, key=f"nota_tag_go_gk_{chiave_tg_gk_sicura}")
+                    if nota_tg_gk_nuova != nota_tg_gk_attuale:
+                        st.session_state['tag_go_note_giocatori'][titolo_tg_gk] = nota_tg_gk_nuova
+                        salva_tag_go_su_disco(df_gk_tg, df_tir_tg, st.session_state['tag_go_note_giocatori'], st.session_state['tag_go_nome_analisi'])
+
+            # ------------------------------------------------------------
+            # MAPPE SALVATE + AZIONI FINALI
+            # ------------------------------------------------------------
+            if st.session_state['tag_go_mappe_salvate']:
+                st.markdown("---")
+                st.subheader("🗺️ Saved maps for the PDF")
+                for i_m, mappa in enumerate(st.session_state['tag_go_mappe_salvate']):
+                    col_m1, col_m2 = st.columns([5, 1])
+                    col_m1.caption(f"[{mappa['ruolo']}] {mappa['titolo']} — {len(mappa['df'])} shot(s)")
+                    if col_m2.button("🗑️", key=f"del_mappa_tag_go_{i_m}"):
+                        st.session_state['tag_go_mappe_salvate'].pop(i_m)
+                        st.rerun()
+
+            st.markdown("---")
+            st.subheader("📤 Export")
+
+            mappe_gk_pdf = [m for m in st.session_state['tag_go_mappe_salvate'] if m['ruolo'] == 'portiere']
+            mappe_tir_pdf = [m for m in st.session_state['tag_go_mappe_salvate'] if m['ruolo'] == 'tiratore']
+
+            def _costruisci_pdf_tag_go():
+                pdf_pezzi = []
+                if not df_tir_tg.empty:
+                    giocatori_pdf_tg = sorted(df_tir_tg['TIRATORE_ID'].dropna().unique())
+                    dati_pdf_tir_tg = {g: df_tir_tg[df_tir_tg['TIRATORE_ID'] == g] for g in giocatori_pdf_tg}
+                    note_pdf_tir_tg = {g: st.session_state['tag_go_note_giocatori'].get(g, '') for g in giocatori_pdf_tg}
+                    pdf_tir_bytes = genera_pdf_tiratori(
+                        st.session_state['tag_go_nome_analisi'] or "Tag & Go Analysis",
+                        dati_pdf_tir_tg, note_pdf_tir_tg,
+                        df_squadra_riepilogo=df_tir_tg, mappe_extra=mappe_tir_pdf
+                    )
+                    pdf_pezzi.append(('shooters', pdf_tir_bytes))
+                if not df_gk_tg.empty:
+                    portieri_pdf_tg = sorted(df_gk_tg['PORTIERE_ID'].dropna().unique())
+                    dati_pdf_gk_tg = {g: df_gk_tg[df_gk_tg['PORTIERE_ID'] == g] for g in portieri_pdf_tg}
+                    note_pdf_gk_tg = {g: st.session_state['tag_go_note_giocatori'].get(g, '') for g in portieri_pdf_tg}
+                    pdf_gk_bytes = genera_pdf_tag_go_portieri(
+                        st.session_state['tag_go_nome_analisi'] or "Tag & Go Analysis",
+                        dati_pdf_gk_tg, note_pdf_gk_tg, mappe_extra=mappe_gk_pdf
+                    )
+                    pdf_pezzi.append(('goalkeepers', pdf_gk_bytes))
+                if len(pdf_pezzi) == 2 and _PYPDF_DISPONIBILE:
+                    writer = PdfWriter()
+                    for _, pdf_bytes in pdf_pezzi:
+                        for pagina in PdfReader(io.BytesIO(pdf_bytes)).pages:
+                            writer.add_page(pagina)
+                    buffer_unito = io.BytesIO()
+                    writer.write(buffer_unito)
+                    buffer_unito.seek(0)
+                    return buffer_unito.getvalue()
+                elif pdf_pezzi:
+                    return pdf_pezzi[0][1]
+                return None
+
+            col_exp1, col_exp2 = st.columns(2)
+            with col_exp1:
+                if st.button("👁️ Watch Preview"):
+                    with st.spinner("Generating preview..."):
+                        pdf_anteprima = _costruisci_pdf_tag_go()
+                        if pdf_anteprima:
+                            st.download_button(
+                                "⬇️ Download preview PDF", data=pdf_anteprima,
+                                file_name=f"{(st.session_state['tag_go_nome_analisi'] or 'tag_go_analysis').replace(' ', '_')}_preview.pdf",
+                                mime="application/pdf", key="dl_tag_go_preview"
+                            )
+                            st.info("This is a preview only — nothing has been deleted. Data stays until you use 'Export and Delete' below.")
+                        else:
+                            st.warning("No data to export yet.")
+
+            with col_exp2:
+                if st.button("📝 Export Notes Only"):
+                    if st.session_state['tag_go_note_giocatori']:
+                        testo_note = "\n\n".join(
+                            f"{nome}\n{'-' * len(nome)}\n{nota}"
+                            for nome, nota in st.session_state['tag_go_note_giocatori'].items() if nota.strip()
+                        )
+                        st.download_button(
+                            "⬇️ Download notes (.txt)", data=testo_note.encode('utf-8'),
+                            file_name=f"{(st.session_state['tag_go_nome_analisi'] or 'tag_go_analysis').replace(' ', '_')}_notes.txt",
+                            mime="text/plain", key="dl_tag_go_notes"
+                        )
+                    else:
+                        st.warning("No notes written yet.")
+
+            st.markdown("---")
+            st.markdown("**⚠️ Export and Delete** — generates the final PDF, then permanently wipes this entire analysis "
+                         "(shots, notes, saved maps) so it doesn't take up space. This cannot be undone: use "
+                         "'Watch Preview' first if you're not sure, and remember to use 'Export Notes Only' "
+                         "beforehand if you still need the notes separately.")
+            conferma_export_delete = st.checkbox("I confirm I have reviewed the analysis and want to export the final "
+                                                  "PDF and permanently delete everything in Tag & Go (this action is irreversible)",
+                                                  key="conferma_tag_go_export_delete")
+            if st.button("🗑️ Export and Delete", disabled=not conferma_export_delete):
+                with st.spinner("Generating final PDF..."):
+                    pdf_finale_tg = _costruisci_pdf_tag_go()
+                if pdf_finale_tg:
+                    st.download_button(
+                        "⬇️ Download final PDF (do this before leaving this page)", data=pdf_finale_tg,
+                        file_name=f"{(st.session_state['tag_go_nome_analisi'] or 'tag_go_analysis').replace(' ', '_')}_final.pdf",
+                        mime="application/pdf", key="dl_tag_go_final"
+                    )
+                st.session_state['tag_go_df_gk'] = pd.DataFrame()
+                st.session_state['tag_go_df_tir'] = pd.DataFrame()
+                st.session_state['tag_go_note_giocatori'] = {}
+                st.session_state['tag_go_nome_analisi'] = ''
+                st.session_state['tag_go_mappe_salvate'] = []
+                elimina_tag_go_da_disco()
+                st.success("Analysis exported and deleted. Tag & Go is back to a blank slate.")
+                st.rerun()
