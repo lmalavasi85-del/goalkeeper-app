@@ -1851,6 +1851,42 @@ def _tabella_metriche_pdf(voci, stili, larghezza_totale_cm=25.5):
     ]))
     return t
 
+def _tabella_giocatori_con_foto(righe, font_size=8, larghezza_foto_cm=1.5):
+    """Costruisce una tabella ReportLab con una colonna foto (se caricata) accanto al nome del
+    giocatore/portiere, per qualsiasi tabella riassuntiva che ne elenca uno o più (Total
+    Match/Season GPI per Goalkeeper, classifiche tiratori per volume...). righe: lista di dict;
+    la prima chiave deve essere il nome, con o senza un prefisso emoji colorato (es.
+    '🔵 Kabashi' o semplicemente 'Kabashi')."""
+    simboli_colore_prefisso = ('🔵', '🔴', '🟢', '🟡', '🟣')
+    if not righe:
+        return Paragraph("No data.", getSampleStyleSheet()['Normal'])
+    colonne = list(righe[0].keys())
+    colonna_nome = colonne[0]
+    dati_righe = [[''] + colonne]
+    dimensione_foto = larghezza_foto_cm - 0.3
+    for riga in righe:
+        etichetta = str(riga[colonna_nome])
+        if etichetta[:1] in simboli_colore_prefisso and ' ' in etichetta:
+            nome_raw = etichetta.split(' ', 1)[1]
+        else:
+            nome_raw = etichetta
+        foto_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(nome_raw))
+        cella_foto = RLImage(io.BytesIO(foto_base64_a_bytes(foto_b64)), width=dimensione_foto * cm, height=dimensione_foto * cm) if foto_b64 else ''
+        dati_righe.append([cella_foto] + [str(riga[c]) for c in colonne])
+    larghezze = [larghezza_foto_cm * cm] + [None] * len(colonne)
+    t = Table(dati_righe, colWidths=larghezze, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTSIZE', (0, 0), (-1, -1), font_size),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f2f2f2')]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ]))
+    return t
+
 def _df_to_reportlab_table(df_in, col_widths=None, font_size=8):
     dati = [list(df_in.columns)] + df_in.astype(str).values.tolist()
     t = Table(dati, colWidths=col_widths, repeatRows=1)
@@ -1945,12 +1981,14 @@ def _separatore():
                        spaceBefore=10, spaceAfter=10)
 
 def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_portieri, df_blocchi, df_match, fig_blocchi,
-                        includi_mappa_generale=True, includi_mappe_per_portiere=True, mappe_extra=None):
+                        includi_mappa_generale=True, includi_mappe_per_portiere=True, mappe_extra=None,
+                        squadra_home=None, squadra_away=None):
     """Costruisce il PDF completo della pagina Single Game Analysis e lo restituisce come bytes.
     includi_mappa_generale: aggiunge la porta con tutti i tiri del match (tutti i portieri insieme).
     includi_mappe_per_portiere: aggiunge una porta per ciascun portiere che ha subito almeno un tiro.
     mappe_extra: lista opzionale di dict {'titolo': str, 'df': dataframe già filtrato} per mappe su
-    misura (es. filtrate per tipologia di tiro/traiettoria/settore specifico)."""
+    misura (es. filtrate per tipologia di tiro/traiettoria/settore specifico).
+    squadra_home/squadra_away: se fornite, i loro loghi (se caricati) compaiono in copertina."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6*cm, bottomMargin=1.4*cm,
                              leftMargin=1.2*cm, rightMargin=1.2*cm)
@@ -1964,15 +2002,27 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     elementi = []
 
     dimensione_logo_copertina = 2.6*cm
-    blocco_titolo = Table(
-        [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo_copertina, height=dimensione_logo_copertina),
-          [Paragraph("GOALKEEPER PERFORMANCE REPORT", titolo_stile),
-           Paragraph(titolo_partita, sottotitolo_stile)]]],
-        colWidths=[dimensione_logo_copertina + 0.4*cm, None]
-    )
+    dimensione_logo_squadra_cover = 2.2*cm
+    logo_home_b64 = st.session_state.get('loghi_squadre', {}).get(squadra_home) if squadra_home else None
+    logo_away_b64 = st.session_state.get('loghi_squadre', {}).get(squadra_away) if squadra_away else None
+
+    celle_cover = [RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo_copertina, height=dimensione_logo_copertina),
+                   [Paragraph("GOALKEEPER PERFORMANCE REPORT", titolo_stile), Paragraph(titolo_partita, sottotitolo_stile)]]
+    larghezze_cover = [dimensione_logo_copertina + 0.4*cm, None]
+    if logo_home_b64:
+        celle_cover.append([RLImage(io.BytesIO(foto_base64_a_bytes(logo_home_b64)), width=dimensione_logo_squadra_cover, height=dimensione_logo_squadra_cover),
+                             Paragraph(f"Home: {squadra_home}", stili['Normal'])])
+        larghezze_cover.append(dimensione_logo_squadra_cover + 2.2*cm)
+    if logo_away_b64:
+        celle_cover.append([RLImage(io.BytesIO(foto_base64_a_bytes(logo_away_b64)), width=dimensione_logo_squadra_cover, height=dimensione_logo_squadra_cover),
+                             Paragraph(f"Away: {squadra_away}", stili['Normal'])])
+        larghezze_cover.append(dimensione_logo_squadra_cover + 2.2*cm)
+
+    blocco_titolo = Table([celle_cover], colWidths=larghezze_cover)
     blocco_titolo.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('ALIGN', (2, 0), (-1, -1), 'CENTER'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0),
         ('TOPPADDING', (0, 0), (-1, -1), 0),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
@@ -1981,10 +2031,9 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     elementi.append(Spacer(1, 0.5*cm))
 
     # Total GPI per goalkeeper
-    df_gpi = pd.DataFrame(righe_gpi_totale)
     elementi.append(KeepTogether([
         Paragraph("Total Match GPI per Goalkeeper", sezione_stile),
-        _df_to_reportlab_table(df_gpi)
+        _tabella_giocatori_con_foto(righe_gpi_totale)
     ]))
     elementi.append(_separatore())
 
@@ -2172,10 +2221,9 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     elementi.append(_separatore())
 
     # Total season GPI per goalkeeper
-    df_gpi = pd.DataFrame(righe_gpi_stagione)
     elementi.append(KeepTogether([
         Paragraph("Total Season GPI per Goalkeeper", sezione_stile),
-        _df_to_reportlab_table(df_gpi)
+        _tabella_giocatori_con_foto(righe_gpi_stagione)
     ]))
     elementi.append(_separatore())
 
@@ -2227,8 +2275,22 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
         if df_gk_tot.empty:
             continue
         info = calcola_dettaglio_portiere(df_gk_tot, lista_partite=lista)
+        foto_gk_stag_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk))
+        if foto_gk_stag_b64:
+            intestazione_gk_stag = Table(
+                [[RLImage(io.BytesIO(foto_base64_a_bytes(foto_gk_stag_b64)), width=1.8 * cm, height=1.8 * cm),
+                  Paragraph(f"Detailed Season Statistics — {gk}", sezione_stile)]],
+                colWidths=[2.1 * cm, None]
+            )
+            intestazione_gk_stag.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+            ]))
+        else:
+            intestazione_gk_stag = Paragraph(f"Detailed Season Statistics — {gk}", sezione_stile)
         elementi.append(KeepTogether([
-            Paragraph(f"Detailed Season Statistics — {gk}", sezione_stile),
+            intestazione_gk_stag,
             Paragraph(
                 f"Total Season GPI: {info['gpi_totale']:+.1f}   |   Saves: {info['parate']}   |   "
                 f"Goals Conceded: {info['gol']}   |   Save %: {info['pct']:.1f}%   |   Efficiency: {info['eff']:.1f}%",
@@ -3408,13 +3470,13 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
 
         # Pagina 2: tiratori per volume di tiro (tabelle affiancate) + statistiche per macro-zona
         intest_volume_tot = Paragraph("By total shot volume", intestazione_tabella_stile)
-        tabella_volume_tot = _df_to_reportlab_table(
-            classifica_tiratori_per_volume(df_squadra_riepilogo), col_widths=[7*cm, 2*cm, 2*cm, 2*cm], font_size=7
+        tabella_volume_tot = _tabella_giocatori_con_foto(
+            classifica_tiratori_per_volume(df_squadra_riepilogo).to_dict('records'), font_size=7, larghezza_foto_cm=1.2
         )
         intest_volume_mt = Paragraph("By Money Time shot volume", intestazione_tabella_stile)
-        tabella_volume_mt = _df_to_reportlab_table(
-            classifica_tiratori_per_volume(df_squadra_riepilogo, solo_money_time=True),
-            col_widths=[7 * cm, 2 * cm, 2 * cm, 2 * cm], font_size=7
+        tabella_volume_mt = _tabella_giocatori_con_foto(
+            classifica_tiratori_per_volume(df_squadra_riepilogo, solo_money_time=True).to_dict('records'),
+            font_size=7, larghezza_foto_cm=1.2
         )
         riga_volume = Table(
             [[[intest_volume_tot, tabella_volume_tot], [intest_volume_mt, tabella_volume_mt]]],
@@ -4258,6 +4320,8 @@ with tab2:
 
         nome_match_sel = st.session_state['db'][idx_match]['nome']
         data_match_sel = st.session_state['db'][idx_match]['data']
+        squadra_home_match = st.session_state['db'][idx_match].get('squadra_home')
+        squadra_away_match = st.session_state['db'][idx_match].get('squadra_away')
         _match_tp = [m['dati'] for m in st.session_state.get('db_tiro_portiere', [])
                      if m['nome'] == nome_match_sel and str(m['data']) == str(data_match_sel)]
         df_tiro_portiere_match = pd.concat(_match_tp, ignore_index=True) if _match_tp else pd.DataFrame(
@@ -4685,7 +4749,9 @@ with tab2:
                             fig_blocchi=fig_blocchi,
                             includi_mappa_generale=includi_generale_pdf,
                             includi_mappe_per_portiere=includi_per_gk_pdf,
-                            mappe_extra=st.session_state.get('mappe_extra_pdf_match', {}).get(scelta, [])
+                            mappe_extra=st.session_state.get('mappe_extra_pdf_match', {}).get(scelta, []),
+                            squadra_home=squadra_home_match,
+                            squadra_away=squadra_away_match
                         )
                         nome_file_pdf = f"Report_{scelta}".replace(' ', '_').replace('/', '-') + ".pdf"
                         st.download_button(
