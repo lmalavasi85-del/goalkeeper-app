@@ -108,7 +108,7 @@ st.set_page_config(
 
 # ============================================================
 # CODICE DI ACCESSO PER CARICARE FILE / GESTIRE LA STAGIONE
-# Chi conosce questo codice può caricare partite e usare "Reset Season".
+# Chi conosce questo codice può caricare partite e usare "Reset All Data".
 # Chi non lo conosce può comunque vedere liberamente Single Game Analysis
 # e Seasonal Report. Cambia questo valore quando vuoi (es. a inizio stagione).
 # ============================================================
@@ -2470,7 +2470,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
 
 
 # I dati di tutte le partite caricate restano salvati anche se l'app viene
-# chiusa e riaperta, finché non si preme "Reset Season". Se sono configurati
+# chiusa e riaperta, finché non si preme "Reset All Data". Se sono configurati
 # i Secrets di Google (season_sheet_id + gcp_service_account), i dati vengono
 # salvati su Google Sheets (permanenti, indipendenti dal server dell'app).
 # Altrimenti si usa un file locale come riserva (utile per test in locale).
@@ -2602,7 +2602,7 @@ def salva_stagione_su_disco(db):
 # STORAGE STAGIONALE SEPARATO PER I TIRATORI (seconda "app" nella app)
 # Stessa identica logica di persistenza dei portieri (Google Sheets se configurato,
 # altrimenti file locale), ma su un worksheet/file dedicato, cosicché le due stagioni
-# (portieri e tiratori) restino indipendenti pur condividendo lo stesso "Reset Season".
+# (portieri e tiratori) restino indipendenti pur condividendo lo stesso "Reset All Data".
 # ============================================================
 SHOOTER_SEASON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_data_shooters.pkl")
 SHOOTER_NOTES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shooter_notes.pkl")
@@ -4393,10 +4393,12 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
         st.markdown("---")
         st.subheader("💾 Full Backup")
         st.caption("Download a backup file of everything in this app — matches (goalkeepers + "
-                   "shooters + head-to-head), player photos, coach notes, championships, and "
-                   "Expected Values profiles — anytime, and keep it on your computer. If anything "
-                   "ever goes wrong with the online app, or before a Reset Season, you can restore "
-                   "everything from this file.")
+                   "shooters + head-to-head), player photos, coach notes, championships, "
+                   "Expected Values profiles, teams you coach, training sessions and groups, team "
+                   "logos, and linked player names — anytime, and keep it on your computer. If "
+                   "anything ever goes wrong with the online app, or before a Reset All Data, you "
+                   "can restore everything from this file. Tag & Go Analysis is a self-contained "
+                   "scratchpad and is never included in this backup.")
 
         col_backup1, col_backup2 = st.columns(2)
         with col_backup1:
@@ -4404,7 +4406,9 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
             esiste_qualcosa_da_salvare = (
                 st.session_state['db'] or st.session_state['db_tiratori'] or st.session_state['db_h2h']
                 or st.session_state['foto_giocatori'] or st.session_state['note_tiratori']
-                or st.session_state.get('db_tiro_portiere')
+                or st.session_state.get('db_tiro_portiere') or st.session_state.get('squadre_allenate')
+                or st.session_state.get('sessioni_allenamento') or st.session_state.get('loghi_squadre')
+                or st.session_state.get('gruppi_alias')
             )
             if esiste_qualcosa_da_salvare:
                 backup_bytes = pickle.dumps({
@@ -4416,6 +4420,11 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     'note_tiratori': st.session_state['note_tiratori'],
                     'campionati': st.session_state['campionati'],
                     'profili_expected_stato': st.session_state['profili_expected_stato'],
+                    'squadre_allenate': st.session_state.get('squadre_allenate', []),
+                    'sessioni_allenamento': st.session_state.get('sessioni_allenamento', []),
+                    'gruppi_sessioni_allenamento': st.session_state.get('gruppi_sessioni_allenamento', []),
+                    'loghi_squadre': st.session_state.get('loghi_squadre', {}),
+                    'gruppi_alias': st.session_state.get('gruppi_alias', []),
                 })
                 nome_backup = f"full_backup_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pkl"
                 st.download_button(
@@ -4444,6 +4453,11 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                             note_ripristinate = contenuto_backup.get('note_tiratori', {})
                             campionati_ripristinati = contenuto_backup.get('campionati', [])
                             profili_expected_ripristinati = contenuto_backup.get('profili_expected_stato', None)
+                            squadre_allenate_ripristinate = contenuto_backup.get('squadre_allenate', [])
+                            sessioni_allenamento_ripristinate = contenuto_backup.get('sessioni_allenamento', [])
+                            gruppi_sessioni_ripristinati = contenuto_backup.get('gruppi_sessioni_allenamento', [])
+                            loghi_squadre_ripristinati = contenuto_backup.get('loghi_squadre', {})
+                            gruppi_alias_ripristinati = contenuto_backup.get('gruppi_alias', [])
                         else:
                             db_gk_ripristinato = contenuto_backup
                             db_tir_ripristinato = []
@@ -4453,6 +4467,11 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                             note_ripristinate = {}
                             campionati_ripristinati = []
                             profili_expected_ripristinati = None
+                            squadre_allenate_ripristinate = []
+                            sessioni_allenamento_ripristinate = []
+                            gruppi_sessioni_ripristinati = []
+                            loghi_squadre_ripristinati = {}
+                            gruppi_alias_ripristinati = []
 
                         chiavi_gk = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
                         agg_gk = 0
@@ -4524,6 +4543,38 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                                     # S.P. Value: il backup non sovrascrive mai la versione attuale automaticamente
                                     pass
 
+                        nomi_squadre_allenate_esistenti = {s['nome'] for s in st.session_state.get('squadre_allenate', [])}
+                        agg_squadre_allenate = 0
+                        for squadra in squadre_allenate_ripristinate:
+                            if squadra['nome'] not in nomi_squadre_allenate_esistenti:
+                                st.session_state['squadre_allenate'].append(squadra)
+                                nomi_squadre_allenate_esistenti.add(squadra['nome'])
+                                agg_squadre_allenate += 1
+
+                        id_sessioni_esistenti = {s['id'] for s in st.session_state.get('sessioni_allenamento', [])}
+                        agg_sessioni = 0
+                        for sessione in sessioni_allenamento_ripristinate:
+                            if sessione['id'] not in id_sessioni_esistenti:
+                                st.session_state['sessioni_allenamento'].append(sessione)
+                                id_sessioni_esistenti.add(sessione['id'])
+                                agg_sessioni += 1
+
+                        gruppi_sessioni_esistenti = set(st.session_state.get('gruppi_sessioni_allenamento', []))
+                        for gruppo_s in gruppi_sessioni_ripristinati:
+                            if gruppo_s not in gruppi_sessioni_esistenti:
+                                st.session_state['gruppi_sessioni_allenamento'].append(gruppo_s)
+                                gruppi_sessioni_esistenti.add(gruppo_s)
+
+                        agg_loghi = 0
+                        for nome_sq, logo in loghi_squadre_ripristinati.items():
+                            if nome_sq not in st.session_state.get('loghi_squadre', {}):
+                                st.session_state['loghi_squadre'][nome_sq] = logo
+                                agg_loghi += 1
+
+                        for gruppo_a in gruppi_alias_ripristinati:
+                            if gruppo_a not in st.session_state.get('gruppi_alias', []):
+                                st.session_state['gruppi_alias'].append(gruppo_a)
+
                         salva_stagione_su_disco(st.session_state['db'])
                         salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
                         salva_h2h_su_disco(st.session_state['db_h2h'])
@@ -4532,10 +4583,18 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                         salva_note_su_disco(st.session_state['note_tiratori'])
                         salva_campionati_su_disco(st.session_state['campionati'])
                         salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
+                        salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        salva_gruppi_sessioni_su_disco(st.session_state['gruppi_sessioni_allenamento'])
+                        salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+                        salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'])
+                        riapplica_alias_a_tutti_i_dati()
                         st.success(f"Restored {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
                                    f"{agg_h2h} head-to-head match(es), {agg_tp} goalkeeper own-shot match(es), "
                                    f"{agg_foto} photo(s), {agg_note} note(s), "
-                                   f"{agg_camp} championship(s), {agg_profili} Expected Values profile(s) from the backup file.")
+                                   f"{agg_camp} championship(s), {agg_profili} Expected Values profile(s), "
+                                   f"{agg_squadre_allenate} coached team(s), {agg_sessioni} training session(s), "
+                                   f"{agg_loghi} team logo(s) from the backup file.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Could not read this backup file: {e}")
@@ -4589,34 +4648,55 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
             st.caption("No matches to delete yet.")
 
         st.markdown("---")
-        st.subheader("⚠️ Reset Season")
-        st.caption("This resets the ENTIRE app season: goalkeepers AND shooters (Shooting Trend "
-                   "Analysis), including player notes. Use this only at the start of a new season.")
-        st.caption(f"Goalkeeper matches currently saved: **{len(st.session_state['db'])}**  |  "
-                   f"Shooter matches currently saved: **{len(st.session_state.get('db_tiratori', []))}**")
-        conferma_reset = st.checkbox("I confirm I want to delete ALL season data — goalkeepers and shooters — (this action is irreversible)")
-        if st.button("🔄 Reset Season (goalkeepers + shooters)", disabled=not conferma_reset):
+        st.subheader("⚠️ Reset All Data")
+        st.caption("This resets the ENTIRE app to its starting point: goalkeepers, shooters, "
+                   "head-to-head, player photos and notes, championships, team logos, teams you "
+                   "coach, training sessions and groups, and player name links. S.P. Value (the "
+                   "baseline Expected Values, external to the app) is kept, but any computed "
+                   "profile (GPIA General Data, custom ones) is cleared. Tag & Go Analysis is a "
+                   "self-contained scratchpad and is not affected. Use this only to start completely fresh.")
+        st.caption(f"Currently saved: **{len(st.session_state['db'])}** goalkeeper record(s)  |  "
+                   f"**{len(st.session_state.get('db_tiratori', []))}** shooter record(s)  |  "
+                   f"**{len(st.session_state.get('sessioni_allenamento', []))}** training session(s)")
+        conferma_reset = st.checkbox("I confirm I want to delete ALL data in the app — everywhere — (this action is irreversible)")
+        if st.button("🔄 Reset All Data", disabled=not conferma_reset):
             st.session_state['db'] = []
             salva_stagione_su_disco(st.session_state['db'])
-            if os.path.exists(SEASON_FILE):
-                os.remove(SEASON_FILE)
             st.session_state['db_tiratori'] = []
             salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
-            if os.path.exists(SHOOTER_SEASON_FILE):
-                os.remove(SHOOTER_SEASON_FILE)
             st.session_state['db_tiro_portiere'] = []
             salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
-            if os.path.exists(TIRO_PORTIERE_FILE):
-                os.remove(TIRO_PORTIERE_FILE)
-            st.session_state['note_tiratori'] = {}
-            salva_note_su_disco(st.session_state['note_tiratori'])
-            if os.path.exists(SHOOTER_NOTES_FILE):
-                os.remove(SHOOTER_NOTES_FILE)
             st.session_state['db_h2h'] = []
             salva_h2h_su_disco(st.session_state['db_h2h'])
-            if os.path.exists(H2H_FILE):
-                os.remove(H2H_FILE)
-            st.success("Season reset. All data (goalkeepers and shooters) has been deleted.")
+            st.session_state['note_tiratori'] = {}
+            salva_note_su_disco(st.session_state['note_tiratori'])
+            st.session_state['foto_giocatori'] = {}
+            salva_foto_su_disco(st.session_state['foto_giocatori'])
+            st.session_state['campionati'] = []
+            salva_campionati_su_disco(st.session_state['campionati'])
+            st.session_state['squadre_allenate'] = []
+            salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
+            st.session_state['sessioni_allenamento'] = []
+            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+            st.session_state['gruppi_sessioni_allenamento'] = []
+            salva_gruppi_sessioni_su_disco(st.session_state['gruppi_sessioni_allenamento'])
+            st.session_state['loghi_squadre'] = {}
+            salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+            st.session_state['gruppi_alias'] = []
+            salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'])
+            st.session_state['mappa_alias_corrente'] = {}
+            # S.P. Value viene sempre mantenuto: azzero solo i profili CALCOLATI dai dati.
+            st.session_state['profili_expected_stato'] = {
+                'profili': {'S.P. Value': st.session_state['profili_expected_stato']['profili'].get('S.P. Value', dict(SP_VALUE_DEFAULT))},
+                'attivo': 'S.P. Value'
+            }
+            salva_profili_expected_su_disco(st.session_state['profili_expected_stato'])
+            for _file_da_rimuovere in (SEASON_FILE, SHOOTER_SEASON_FILE, SHOOTER_NOTES_FILE, TIRO_PORTIERE_FILE,
+                                        H2H_FILE, PLAYER_PHOTOS_FILE, CHAMPIONSHIPS_FILE, TRAINING_TEAMS_FILE,
+                                        TRAINING_SESSIONS_FILE, TRAINING_GROUPS_FILE, TEAM_LOGOS_FILE, PLAYER_ALIASES_FILE):
+                if os.path.exists(_file_da_rimuovere):
+                    os.remove(_file_da_rimuovere)
+            st.success("All data has been reset. The app is back to its starting point.")
             st.rerun()
 
 with tab2:
