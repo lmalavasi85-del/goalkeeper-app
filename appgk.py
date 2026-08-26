@@ -107,12 +107,12 @@ st.set_page_config(
 )
 
 # ============================================================
-# CODICE DI ACCESSO PER CARICARE FILE / GESTIRE LA STAGIONE
-# Chi conosce questo codice può caricare partite e usare "Reset All Data".
-# Chi non lo conosce può comunque vedere liberamente Single Game Analysis
-# e Seasonal Report. Cambia questo valore quando vuoi (es. a inizio stagione).
+# CODICE DI ACCESSO UNICO PER L'INTERA APP
+# Un solo codice sblocca tutto: caricamento file, Single Game Analysis, Seasonal Report,
+# Shooting Trend Analysis, Tag & Go Analysis, Training Sessions. Cambia questo valore quando
+# vuoi (es. a inizio stagione).
 # ============================================================
-UPLOAD_ACCESS_CODE = "gkmethod2026"
+APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
 APP_VERSION = "v31 - 2026-08-21 - Total Season Statistics: aggiunta Efficiency %, riquadro più grande in stile dashboard nel PDF, meno spazio vuoto in prima pagina"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
@@ -120,6 +120,29 @@ st.sidebar.caption("If you don't see this version, the app hasn't been restarted
 
 st.title("🤾‍♂️ Goalkeeper Performance Index Analytics")
 st.markdown("Upload Excel sheets exported from *Videocoach (Sportimization)* to generate tactical charts and reports.")
+
+# ---- Gate unico: nessuna sezione dell'app è visibile finché non si inserisce il codice ----
+if 'app_authorized' not in st.session_state:
+    st.session_state['app_authorized'] = False
+
+if not st.session_state['app_authorized']:
+    st.info("🔒 This app is password-protected. Enter the access code to continue.")
+    with st.form(key="form_app_access", clear_on_submit=True):
+        codice_app_inserito = st.text_input("Access code", type="password", key="codice_app_input")
+        sbloccato_app = st.form_submit_button("Unlock")
+    if sbloccato_app:
+        if codice_app_inserito == APP_ACCESS_CODE:
+            st.session_state['app_authorized'] = True
+            # Un solo codice sblocca anche i vecchi gate interni delle singole sezioni, così
+            # compare un'unica richiesta di password per l'intera app.
+            st.session_state['upload_authorized'] = True
+            st.session_state['staff_authorized'] = True
+            st.session_state['training_authorized'] = True
+            st.session_state['tag_go_authorized'] = True
+            st.rerun()
+        else:
+            st.error("Incorrect code.")
+    st.stop()
 
 # 1. PARSING FUNCTIONS & LOGIC
 def mappa_macro_settore(s):
@@ -864,7 +887,11 @@ def raccogli_stagione_per_squadra(elenco_partite, nome_squadra):
     """Filtra le partite della squadra indicata e raccoglie, per ciascuna identità di portiere
     che vi ha giocato, il proprio storico stagionale (stessa logica di raccogli_stagione_per_portiere)."""
     partite_squadra = sorted([p for p in elenco_partite if p['squadra'] == nome_squadra], key=lambda p: p['data'])
-    frammenti = [m['dati'] for m in partite_squadra]
+    frammenti = []
+    for m in partite_squadra:
+        df_m = m['dati'].copy()
+        df_m['Match_Label'] = f"{m['nome']} ({m['data']})"
+        frammenti.append(df_m)
     df_aggregato = pd.concat(frammenti, ignore_index=True) if frammenti else pd.DataFrame()
 
     portieri_unici = sorted(set(
@@ -3901,22 +3928,22 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore)
     fig_tast = disegna_tastiera(tot_tast, goal_tast)
 
-    img_porta = _immagine_da_figura_matplotlib(fig_porta, 7.5, 6.5)
-    img_tast = _immagine_da_figura_matplotlib(fig_tast, 11, 7.5)
+    img_porta = _immagine_da_figura_matplotlib(fig_porta, 11, 9.6)
+    img_tast = _immagine_da_figura_matplotlib(fig_tast, 16.5, 11.4)
+
+    riga_mappe = Table([[img_porta, img_tast]], colWidths=[11.5 * cm, 17 * cm])
+    riga_mappe.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.5 * cm)]))
+    elementi.append(riga_mappe)
+    elementi.append(Spacer(1, 0.5 * cm))
 
     df_macro = tabella_macro_tiratori(df_giocatore)
-    stile_intestazione_macro = ParagraphStyle('IntestazioneMacroPdf', parent=stili['Heading4'], fontSize=9, spaceAfter=4)
+    stile_intestazione_macro = ParagraphStyle('IntestazioneMacroPdf', parent=stili['Heading4'], fontSize=11, spaceAfter=6)
     if not df_macro.empty:
-        blocco_macro = [
-            Paragraph("By macro-zone", stile_intestazione_macro),
-            _df_to_reportlab_table(df_macro, col_widths=[2.7 * cm, 1.5 * cm, 1.5 * cm, 2.3 * cm], font_size=7)
-        ]
+        elementi.append(Paragraph("By macro-zone", stile_intestazione_macro))
+        elementi.append(_df_to_reportlab_table(df_macro, font_size=10))
     else:
-        blocco_macro = [Paragraph("By macro-zone", stile_intestazione_macro), Paragraph("No shots recorded.", stili['Normal'])]
-
-    riga_layout = Table([[img_porta, img_tast, blocco_macro]], colWidths=[8 * cm, 11.5 * cm, 8 * cm])
-    riga_layout.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
-    elementi.append(riga_layout)
+        elementi.append(Paragraph("By macro-zone", stile_intestazione_macro))
+        elementi.append(Paragraph("No shots recorded.", stili['Normal']))
     elementi.append(Spacer(1, 0.3 * cm))
 
     if nota_html:
@@ -4245,7 +4272,7 @@ with tab1:
             codice_inserito = st.text_input("Access code", type="password", key="codice_upload")
             sbloccato = st.form_submit_button("Unlock")
         if sbloccato:
-            if codice_inserito == UPLOAD_ACCESS_CODE:
+            if codice_inserito == APP_ACCESS_CODE:
                 st.session_state['upload_authorized'] = True
                 st.rerun()
             else:
@@ -5897,7 +5924,7 @@ with tab4:
             codice_staff = st.text_input("Access code", type="password", key="codice_staff")
             sbloccato_staff = st.form_submit_button("Unlock")
         if sbloccato_staff:
-            if codice_staff == STAFF_ACCESS_CODE:
+            if codice_staff == APP_ACCESS_CODE:
                 st.session_state['staff_authorized'] = True
                 st.rerun()
             else:
@@ -6425,7 +6452,7 @@ with tab5:
             codice_training = st.text_input("Access code", type="password", key="codice_training")
             sbloccato_training = st.form_submit_button("Unlock")
         if sbloccato_training:
-            if codice_training == TRAINING_ACCESS_CODE:
+            if codice_training == APP_ACCESS_CODE:
                 st.session_state['training_authorized'] = True
                 st.rerun()
             else:
@@ -6723,7 +6750,7 @@ with tab6:
             codice_tag_go = st.text_input("Access code", type="password", key="codice_tag_go")
             sbloccato_tag_go = st.form_submit_button("Unlock")
         if sbloccato_tag_go:
-            if codice_tag_go == TRAINING_ACCESS_CODE:
+            if codice_tag_go == APP_ACCESS_CODE:
                 st.session_state['tag_go_authorized'] = True
                 st.rerun()
             else:
