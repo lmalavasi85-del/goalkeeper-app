@@ -2109,7 +2109,8 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
 
     # Detailed statistics per goalkeeper
     for gk, info in dati_portieri.items():
-        foto_gk_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk))
+        gk_raw_foto = gk.split(' ', 1)[1] if ' ' in gk else gk
+        foto_gk_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk_raw_foto))
         if foto_gk_b64:
             intestazione_gk = Table(
                 [[RLImage(io.BytesIO(foto_base64_a_bytes(foto_gk_b64)), width=1.8 * cm, height=1.8 * cm),
