@@ -7334,24 +7334,36 @@ with tab7:
             df_distribuzione = tabella_distribuzione_macro_universale(df_sorgente)
             with col_torta:
                 fig_torta = disegna_torta_macro_universale(df_distribuzione, titolo=titolo_torta)
-                st.pyplot(fig_torta)
+                st.pyplot(fig_torta, use_container_width=True)
             with col_tabella:
                 st.markdown(f"**Goal % by macro-zone — {titolo_torta}**")
                 if df_distribuzione.empty:
                     st.caption("No shots in this selection.")
                 else:
                     st.dataframe(df_distribuzione[['Macro-Zone', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}),
-                                 use_container_width=True, hide_index=True)
+                                 use_container_width=True, hide_index=True, key=f"tabella_{chiave}")
+
+        def _filtra_money_time(df):
+            if df.empty or 'Is_Stress_Test' not in df.columns:
+                return df.iloc[0:0]
+            return df[df['Is_Stress_Test'] == True]
 
         # ============================================================
-        # SEZIONE 1: TUTTE LE SQUADRE
+        # SEZIONE 1: TUTTE LE SQUADRE (generale + tiri passivi + tiri in Money Time)
         # ============================================================
         st.markdown("---")
         st.subheader("📊 All Teams")
         _mostra_torta_e_tabella(df_universale, "All Teams", "us_all")
 
+        st.markdown("**🎯 Passive Shots — All Teams**")
+        _mostra_torta_e_tabella(filtra_tiri_passivi(df_universale), "Passive Shots — All Teams", "us_all_passive")
+
+        st.markdown("**⏱️ Money Time Shots — All Teams**")
+        _mostra_torta_e_tabella(_filtra_money_time(df_universale), "Money Time Shots — All Teams", "us_all_moneytime")
+
         # ============================================================
-        # SEZIONE 2: SQUADRA SPECIFICA (menù a tendina)
+        # SEZIONE 2: SQUADRA SPECIFICA (menù a tendina) — generale + tiri passivi + tiri in
+        # Money Time, tutti isolati sulla sola squadra scelta.
         # ============================================================
         st.markdown("---")
         st.subheader("📊 By Team")
@@ -7362,22 +7374,11 @@ with tab7:
                 [m['dati'] for m in partite_filtrate_us if m['squadra'] == squadra_scelta_us], ignore_index=True
             )
             _mostra_torta_e_tabella(df_squadra_us, squadra_scelta_us, "us_team")
+
+            st.markdown(f"**🎯 Passive Shots — {squadra_scelta_us}**")
+            _mostra_torta_e_tabella(filtra_tiri_passivi(df_squadra_us), f"Passive Shots — {squadra_scelta_us}", "us_team_passive")
+
+            st.markdown(f"**⏱️ Money Time Shots — {squadra_scelta_us}**")
+            _mostra_torta_e_tabella(_filtra_money_time(df_squadra_us), f"Money Time Shots — {squadra_scelta_us}", "us_team_moneytime")
         else:
             st.info("No teams in this selection.")
-
-        # ============================================================
-        # SEZIONE 3: TIRI PASSIVI E TIRI IN MONEY TIME (sugli stessi filtri di cui sopra,
-        # non ristretti alla squadra selezionata nella sezione precedente)
-        # ============================================================
-        st.markdown("---")
-        st.subheader("🎯 Passive Shots")
-        df_passivi_us = filtra_tiri_passivi(df_universale)
-        _mostra_torta_e_tabella(df_passivi_us, "Passive Shots", "us_passive")
-
-        st.markdown("---")
-        st.subheader("⏱️ Money Time Shots")
-        if not df_universale.empty and 'Is_Stress_Test' in df_universale.columns:
-            df_moneytime_us = df_universale[df_universale['Is_Stress_Test'] == True]
-        else:
-            df_moneytime_us = df_universale.iloc[0:0]
-        _mostra_torta_e_tabella(df_moneytime_us, "Money Time Shots", "us_moneytime")
