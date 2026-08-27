@@ -781,8 +781,10 @@ def analizza_timeline(timeline_str):
     timeline_normalizzata = ""
 
     try:
-        # Minuti e secondi: un numero, un apice (dritto o "storto"), un altro numero, 0-2 apici di chiusura
-        match_tempo = re.search(r"(\d{1,3})\s*['’´`]\s*(\d{1,2})\s*['’´`]{0,2}", t_str)
+        # Minuti e secondi: un numero, un apice (dritto o "storto", o una vocale accentata per
+        # refuso da autocorrezione tastiera — es. "14ì03''" invece di "14'03''"), un altro
+        # numero, 0-2 apici di chiusura.
+        match_tempo = re.search(r"(\d{1,3})\s*['’´`ìèòàù]\s*(\d{1,2})\s*['’´`ìèòàù]{0,2}", t_str)
         if match_tempo:
             minuti_totali = int(match_tempo.group(1))
             secondi = int(match_tempo.group(2))
@@ -2141,10 +2143,10 @@ def _tabella_giocatori_con_foto(righe, font_size=8, larghezza_foto_cm=1.5):
     ]))
     return t
 
-def _df_to_reportlab_table(df_in, col_widths=None, font_size=8):
+def _df_to_reportlab_table(df_in, col_widths=None, font_size=8, padding_verticale=None):
     dati = [list(df_in.columns)] + df_in.astype(str).values.tolist()
     t = Table(dati, colWidths=col_widths, repeatRows=1)
-    stile = TableStyle([
+    stile = [
         ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('FONTSIZE', (0, 0), (-1, -1), font_size),
@@ -2153,8 +2155,11 @@ def _df_to_reportlab_table(df_in, col_widths=None, font_size=8):
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f2f2f2')]),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-    ])
-    t.setStyle(stile)
+    ]
+    if padding_verticale is not None:
+        stile.append(('TOPPADDING', (0, 0), (-1, -1), padding_verticale))
+        stile.append(('BOTTOMPADDING', (0, 0), (-1, -1), padding_verticale))
+    t.setStyle(TableStyle(stile))
     return t
 
 COLORE_EXPECTED_SOPRA = colors.HexColor('#c6efce')
@@ -2284,10 +2289,12 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     elementi.append(blocco_titolo)
     elementi.append(Spacer(1, 0.5*cm))
 
-    # Total GPI per goalkeeper
+    # Total GPI per goalkeeper — ingrandita: di solito solo 1-3 portieri per partita, quindi
+    # c'è ampio spazio per una tabella grande invece che minuscola con pagina mezza vuota sotto.
     elementi.append(KeepTogether([
         Paragraph("Total Match GPI per Goalkeeper", sezione_stile),
-        _tabella_giocatori_con_foto(righe_gpi_totale)
+        Spacer(1, 0.2 * cm),
+        _tabella_giocatori_con_foto(righe_gpi_totale, font_size=13, larghezza_foto_cm=2.8)
     ]))
     elementi.append(_separatore())
 
@@ -2387,13 +2394,13 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             ),
             Spacer(1, 0.2*cm),
             Paragraph("By specific shot zone", stili['Heading4']),
+            _tabella_settore_reportlab(info['tabella_settore'], font_size=7),
         ]))
-        elementi.append(_tabella_settore_reportlab(info['tabella_settore'], font_size=7))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
             Paragraph("By aggregated macro-zone", stili['Heading4']),
+            _df_to_reportlab_table(info['tabella_macro'], font_size=7),
         ]))
-        elementi.append(_df_to_reportlab_table(info['tabella_macro'], font_size=7))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(Paragraph(
             f"Money Time (from the 50th minute onward, score margin between -5 and +5): {info['money_time_riassunto']}", stili['Normal']
@@ -2475,10 +2482,19 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
     ]))
     elementi.append(_separatore())
 
-    # Total season GPI per goalkeeper
+    # Total season GPI per goalkeeper — ingrandita, con dimensionamento adattivo al numero di
+    # portieri (in stagione possono essere molti di più che in una singola partita).
+    n_portieri_stagione = len(righe_gpi_stagione)
+    if n_portieri_stagione <= 6:
+        font_gpi_stag, foto_gpi_stag = 13, 2.8
+    elif n_portieri_stagione <= 12:
+        font_gpi_stag, foto_gpi_stag = 10, 2
+    else:
+        font_gpi_stag, foto_gpi_stag = 8, 1.5
     elementi.append(KeepTogether([
         Paragraph("Total Season GPI per Goalkeeper", sezione_stile),
-        _tabella_giocatori_con_foto(righe_gpi_stagione)
+        Spacer(1, 0.2 * cm),
+        _tabella_giocatori_con_foto(righe_gpi_stagione, font_size=font_gpi_stag, larghezza_foto_cm=foto_gpi_stag)
     ]))
     elementi.append(_separatore())
 
@@ -2553,13 +2569,13 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
             ),
             Spacer(1, 0.2*cm),
             Paragraph("By specific shot zone", stili['Heading4']),
+            _tabella_settore_reportlab(info['tabella_settore'], font_size=7),
         ]))
-        elementi.append(_tabella_settore_reportlab(info['tabella_settore'], font_size=7))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
             Paragraph("By aggregated macro-zone", stili['Heading4']),
+            _df_to_reportlab_table(info['tabella_macro'], font_size=7),
         ]))
-        elementi.append(_df_to_reportlab_table(info['tabella_macro'], font_size=7))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(Paragraph(
             f"Money Time (from the 50th minute onward, score margin between -5 and +5): {info['money_time_riassunto']}", stili['Normal']
@@ -4007,30 +4023,58 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         pagina1.append(riga_mappa)
         blocchi_pagine.append(pagina1)
 
-        # Pagina 2: tiratori per volume di tiro (tabelle affiancate) + statistiche per macro-zona
-        intest_volume_tot = Paragraph("By total shot volume", intestazione_tabella_stile)
-        tabella_volume_tot = _tabella_giocatori_con_foto(
-            classifica_tiratori_per_volume(df_squadra_riepilogo).to_dict('records'), font_size=7, larghezza_foto_cm=1.2
-        )
-        intest_volume_mt = Paragraph("By Money Time shot volume", intestazione_tabella_stile)
-        tabella_volume_mt = _tabella_giocatori_con_foto(
-            classifica_tiratori_per_volume(df_squadra_riepilogo, solo_money_time=True).to_dict('records'),
-            font_size=7, larghezza_foto_cm=1.2
-        )
-        riga_volume = Table(
-            [[[intest_volume_tot, tabella_volume_tot], [intest_volume_mt, tabella_volume_mt]]],
-            colWidths=[13.5 * cm, 13.5 * cm]
-        )
-        riga_volume.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
-        pagina2 = [
-            Paragraph("Shooters by Shot Volume", sezione_compatta_stile), Spacer(1, 0.1 * cm),
-            riga_volume,
-            Spacer(1, 0.2 * cm),
-            Paragraph("By Macro-Zone (team total)", sezione_compatta_stile), Spacer(1, 0.1 * cm),
-            _df_to_reportlab_table(tabella_macro_tiratori(df_squadra_riepilogo),
-                                    col_widths=[5 * cm, 3 * cm, 3 * cm, 3 * cm], font_size=7),
+        # Pagina 2: tiratori per volume di tiro (tabelle affiancate). Dimensioni scelte in base al
+        # numero di giocatori, per restare SEMPRE su una sola pagina senza mai rompere il PDF: con
+        # roster piccoli le tabelle sono grandi e con foto; man mano che il roster cresce, le foto
+        # spariscono e font/spaziatura si riducono; oltre una soglia di sicurezza (roster enormi,
+        # es. storico "All Data & All Time" di squadre con tantissimo turnover), le due tabelle
+        # passano su due pagine separate invece di rischiare di non entrarci affatto.
+        df_volume_tot_pdf = classifica_tiratori_per_volume(df_squadra_riepilogo)
+        df_volume_mt_pdf = classifica_tiratori_per_volume(df_squadra_riepilogo, solo_money_time=True)
+        n_righe_max_volume = max(len(df_volume_tot_pdf), len(df_volume_mt_pdf))
+
+        if n_righe_max_volume <= 18:
+            font_vol, foto_vol, con_foto = 10, 1.8, True
+        elif n_righe_max_volume <= 22:
+            font_vol, foto_vol, con_foto = 9, 1.5, True
+        elif n_righe_max_volume <= 25:
+            font_vol, padding_vol, con_foto = 7, 2, False
+        elif n_righe_max_volume <= 30:
+            font_vol, padding_vol, con_foto = 6, 1, False
+        else:
+            font_vol, padding_vol, con_foto = 8, 3, False
+
+        stile_intestazione_volume = ParagraphStyle('IntVol', parent=stili['Heading3'], fontSize=13, spaceAfter=8, textColor=COLORE_ACCENTO)
+        intest_volume_tot = Paragraph("By total shot volume", stile_intestazione_volume)
+        intest_volume_mt = Paragraph("By Money Time shot volume", stile_intestazione_volume)
+        if con_foto:
+            tabella_volume_tot = _tabella_giocatori_con_foto(df_volume_tot_pdf.to_dict('records'), font_size=font_vol, larghezza_foto_cm=foto_vol)
+            tabella_volume_mt = _tabella_giocatori_con_foto(df_volume_mt_pdf.to_dict('records'), font_size=font_vol, larghezza_foto_cm=foto_vol)
+        else:
+            tabella_volume_tot = _df_to_reportlab_table(df_volume_tot_pdf, font_size=font_vol, padding_verticale=padding_vol)
+            tabella_volume_mt = _df_to_reportlab_table(df_volume_mt_pdf, font_size=font_vol, padding_verticale=padding_vol)
+
+        if n_righe_max_volume <= 30:
+            # Roster di dimensioni normali: le due tabelle stanno affiancate su una sola pagina.
+            riga_volume = Table(
+                [[[intest_volume_tot, tabella_volume_tot], [intest_volume_mt, tabella_volume_mt]]],
+                colWidths=[13.5 * cm, 13.5 * cm]
+            )
+            riga_volume.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
+            blocchi_pagine.append([Paragraph("Shooters by Shot Volume", sezione_stile), Spacer(1, 0.3 * cm), riga_volume])
+        else:
+            # Roster eccezionalmente ampio: mai rischiare che il PDF si rompa — due pagine separate.
+            blocchi_pagine.append([Paragraph("Shooters by Shot Volume — By total shot volume", sezione_stile),
+                                    Spacer(1, 0.3 * cm), tabella_volume_tot])
+            blocchi_pagine.append([Paragraph("Shooters by Shot Volume — By Money Time shot volume", sezione_stile),
+                                    Spacer(1, 0.3 * cm), tabella_volume_mt])
+
+        # Pagina 3: statistiche per macro-zona di squadra (ingrandita, da sola)
+        pagina3 = [
+            Paragraph("By Macro-Zone (team total)", sezione_stile), Spacer(1, 0.3 * cm),
+            _df_to_reportlab_table(tabella_macro_tiratori(df_squadra_riepilogo), font_size=12),
         ]
-        blocchi_pagine.append(pagina2)
+        blocchi_pagine.append(pagina3)
 
     if mappe_extra:
         mappe_valide = [m for m in mappe_extra if not m['df'].empty]
@@ -5590,11 +5634,17 @@ with tab2:
                                 dati_pdf_giocatori_mt = {g: df_squadra_completa_mt[df_squadra_completa_mt['TIRATORE_ID'] == g]
                                                           for g in giocatori_pdf_mt}
                                 note_pdf_mt = {g: st.session_state['note_tiratori'].get(g, '') for g in giocatori_pdf_mt}
+                                # 'scelta' include già il nome squadra (es. "Match (data) - Italia"),
+                                # quindi in modalità Team non lo ripeto una seconda volta nel titolo.
+                                titolo_pdf_mt = scelta
+                                nome_file_pdf_mt = f"Shooting_Report_{scelta}"
                             else:
                                 dati_pdf_giocatori_mt = {titolo_match_tir: df_selezione_match_tir}
                                 note_pdf_mt = {titolo_match_tir: st.session_state['note_tiratori'].get(titolo_match_tir, '')}
+                                titolo_pdf_mt = f"{scelta} — {titolo_match_tir}"
+                                nome_file_pdf_mt = f"Shooting_Report_{scelta}_{titolo_match_tir}"
                             pdf_bytes_mt = genera_pdf_tiratori(
-                                f"{scelta} — {titolo_match_tir}",
+                                titolo_pdf_mt,
                                 dati_pdf_giocatori_mt,
                                 note_pdf_mt,
                                 df_squadra_riepilogo=(df_squadra_completa_mt if modalita_match_tir == "Team" else None),
@@ -5603,7 +5653,7 @@ with tab2:
                             )
                             st.download_button(
                                 label="⬇️ Download PDF", data=pdf_bytes_mt,
-                                file_name=f"Shooting_Report_{scelta}_{titolo_match_tir}".replace(' ', '_') + ".pdf",
+                                file_name=nome_file_pdf_mt.replace(' ', '_') + ".pdf",
                                 mime="application/pdf", key="dl_match_tir"
                             )
                             st.success("PDF generated! Click the button above to download it.")
