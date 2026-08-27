@@ -7256,30 +7256,45 @@ with tab6:
                         st.warning("No notes written yet.")
 
             st.markdown("---")
-            st.markdown("**⚠️ Export and Delete** — generates the final PDF, then permanently wipes this entire analysis "
-                         "(shots, notes, saved maps) so it doesn't take up space. This cannot be undone: use "
+            st.markdown("**⚠️ Export and Delete** — generates the final PDF; the analysis (shots, notes, "
+                         "saved maps) is permanently wiped only once you click the download button that "
+                         "appears below, so it doesn't take up space. This cannot be undone: use "
                          "'Watch Preview' first if you're not sure, and remember to use 'Export Notes Only' "
                          "beforehand if you still need the notes separately.")
             conferma_export_delete = st.checkbox("I confirm I have reviewed the analysis and want to export the final "
                                                   "PDF and permanently delete everything in Tag & Go (this action is irreversible)",
                                                   key="conferma_tag_go_export_delete")
+
+            if 'tag_go_pdf_pronto_per_delete' not in st.session_state:
+                st.session_state['tag_go_pdf_pronto_per_delete'] = None
+
             if st.button("🗑️ Export and Delete", disabled=not conferma_export_delete):
                 with st.spinner("Generating final PDF..."):
-                    pdf_finale_tg = _costruisci_pdf_tag_go()
-                if pdf_finale_tg:
-                    st.download_button(
-                        "⬇️ Download final PDF (do this before leaving this page)", data=pdf_finale_tg,
-                        file_name=f"{(st.session_state['tag_go_nome_analisi'] or 'tag_go_analysis').replace(' ', '_')}_final.pdf",
-                        mime="application/pdf", key="dl_tag_go_final"
-                    )
-                st.session_state['tag_go_df_gk'] = pd.DataFrame()
-                st.session_state['tag_go_df_tir'] = pd.DataFrame()
-                st.session_state['tag_go_note_giocatori'] = {}
-                st.session_state['tag_go_nome_analisi'] = ''
-                st.session_state['tag_go_mappe_salvate'] = []
-                elimina_tag_go_da_disco()
-                st.success("Analysis exported and deleted. Tag & Go is back to a blank slate.")
-                st.rerun()
+                    st.session_state['tag_go_pdf_pronto_per_delete'] = _costruisci_pdf_tag_go()
+                if not st.session_state['tag_go_pdf_pronto_per_delete']:
+                    st.warning("No data to export.")
+
+            if st.session_state['tag_go_pdf_pronto_per_delete']:
+                def _elimina_tag_go_dopo_download():
+                    # Eseguito SOLO quando l'utente clicca davvero il pulsante di download qui
+                    # sotto — non alla generazione del PDF — così non si rischia di perdere i
+                    # dati per aver premuto "Export and Delete" senza fare in tempo a scaricare.
+                    st.session_state['tag_go_df_gk'] = pd.DataFrame()
+                    st.session_state['tag_go_df_tir'] = pd.DataFrame()
+                    st.session_state['tag_go_note_giocatori'] = {}
+                    st.session_state['tag_go_nome_analisi'] = ''
+                    st.session_state['tag_go_mappe_salvate'] = []
+                    st.session_state['tag_go_pdf_pronto_per_delete'] = None
+                    elimina_tag_go_da_disco()
+
+                st.warning("⬇️ Click the button below to download your PDF — this will also permanently delete the analysis.")
+                st.download_button(
+                    "⬇️ Download final PDF (this deletes the analysis)",
+                    data=st.session_state['tag_go_pdf_pronto_per_delete'],
+                    file_name=f"{(st.session_state['tag_go_nome_analisi'] or 'tag_go_analysis').replace(' ', '_')}_final.pdf",
+                    mime="application/pdf", key="dl_tag_go_final",
+                    on_click=_elimina_tag_go_dopo_download
+                )
 
 with tab7:
     st.header("🌍 Universal Stats")
