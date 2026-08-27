@@ -2064,7 +2064,12 @@ def pulsante_salva_mappa_pdf(contenitore_mappe, chiave_contenitore, titolo_base,
 def classifica_tiratori_per_volume(df, solo_money_time=False, n=None):
     """Restituisce TUTTI i giocatori (o i primi n se specificato) ordinati per NUMERO di tiri
     presi (non per %), in ordine decrescente di volume, con relativa % di realizzazione."""
-    d = df[df['Is_Money_Time'] == True] if solo_money_time else df
+    if solo_money_time and 'Is_Money_Time' not in df.columns:
+        # Alcune fonti dati (es. Tag & Go, dove non esiste un vero minuto di gara) non calcolano
+        # affatto il Money Time: nessun tiro può appartenerci, quindi il risultato è vuoto.
+        d = df.iloc[0:0]
+    else:
+        d = df[df['Is_Money_Time'] == True] if solo_money_time else df
     if d.empty:
         return pd.DataFrame({'Player': [], 'Shots': [], 'Goals': [], 'Goal %': []})
     righe = []
