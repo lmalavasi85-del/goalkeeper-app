@@ -2332,7 +2332,8 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     liste_mappe_extra = [(m['titolo'], m['df']) for m in (mappe_extra or []) if not m['df'].empty]
 
     if (includi_mappa_generale and not df_match.empty) or liste_mappe_gk or liste_mappe_extra:
-        elementi.append(Paragraph("Shot Maps", sezione_stile))
+        titolo_shot_maps = Paragraph("Shot Maps", sezione_stile)
+        titolo_gia_posizionato = False
 
         if includi_mappa_generale and not df_match.empty:
             blocco_generale = _blocco_porta_tastiera_pdf(
@@ -2340,7 +2341,8 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
                 larghezza_porta_cm=9, larghezza_tastiera_cm=13
             )
             blocco_generale.hAlign = 'CENTER'
-            elementi.append(blocco_generale)
+            elementi.append(KeepTogether([titolo_shot_maps, blocco_generale]))
+            titolo_gia_posizionato = True
             elementi.append(Spacer(1, 0.4 * cm))
 
         if liste_mappe_gk:
@@ -2352,19 +2354,31 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
                 riga_gk = Table([blocchi_gk])
                 riga_gk.hAlign = 'CENTER'
                 riga_gk.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
-                elementi.append(riga_gk)
+                if not titolo_gia_posizionato:
+                    elementi.append(KeepTogether([titolo_shot_maps, riga_gk]))
+                    titolo_gia_posizionato = True
+                else:
+                    elementi.append(riga_gk)
             else:
-                for titolo_mappa, df_gk_pdf in liste_mappe_gk:
+                for i_gk, (titolo_mappa, df_gk_pdf) in enumerate(liste_mappe_gk):
                     blocco = _blocco_porta_tastiera_pdf(df_gk_pdf, ('save', 's'), titolo_mappa, 6, 8.5)
                     blocco.hAlign = 'CENTER'
-                    elementi.append(KeepTogether([blocco, Spacer(1, 0.25 * cm)]))
+                    if not titolo_gia_posizionato and i_gk == 0:
+                        elementi.append(KeepTogether([titolo_shot_maps, blocco, Spacer(1, 0.25 * cm)]))
+                        titolo_gia_posizionato = True
+                    else:
+                        elementi.append(KeepTogether([blocco, Spacer(1, 0.25 * cm)]))
             elementi.append(Spacer(1, 0.4 * cm))
 
-        for titolo_mappa, df_mappa in liste_mappe_extra:
+        for i_extra, (titolo_mappa, df_mappa) in enumerate(liste_mappe_extra):
             blocco_extra = _blocco_porta_tastiera_pdf(df_mappa, esiti_successo=('save', 's'), titolo=titolo_mappa,
                                                         larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
             blocco_extra.hAlign = 'CENTER'
-            elementi.append(KeepTogether([blocco_extra, Spacer(1, 0.3 * cm)]))
+            if not titolo_gia_posizionato and i_extra == 0:
+                elementi.append(KeepTogether([titolo_shot_maps, blocco_extra, Spacer(1, 0.3 * cm)]))
+                titolo_gia_posizionato = True
+            else:
+                elementi.append(KeepTogether([blocco_extra, Spacer(1, 0.3 * cm)]))
 
         elementi.append(_separatore())
 
@@ -2530,14 +2544,19 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
 
     # Saved custom shot maps (facoltative, salvate dall'utente durante la navigazione)
     if mappe_extra:
-        elementi.append(Paragraph("Saved Shot Maps", sezione_stile))
+        titolo_mappe_salvate = Paragraph("Saved Shot Maps", sezione_stile)
+        primo = True
         for mappa in mappe_extra:
             if mappa['df'].empty:
                 continue
             blocco_mappa = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=('save', 's'), titolo=mappa['titolo'],
                                                         larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
             blocco_mappa.hAlign = 'CENTER'
-            elementi.append(KeepTogether([blocco_mappa, Spacer(1, 0.3 * cm)]))
+            if primo:
+                elementi.append(KeepTogether([titolo_mappe_salvate, blocco_mappa, Spacer(1, 0.3 * cm)]))
+                primo = False
+            else:
+                elementi.append(KeepTogether([blocco_mappa, Spacer(1, 0.3 * cm)]))
         elementi.append(_separatore())
 
     # Detailed statistics per goalkeeper (season cumulative)
@@ -3887,29 +3906,36 @@ def genera_pdf_tag_go_portieri(nome_analisi, dati_per_portiere, note_dict=None, 
         if df_gk.empty:
             continue
         s, g, m, pct, eff = calcola_metriche_gruppo(df_gk)
+        blocco = _blocco_porta_tastiera_pdf(df_gk, esiti_successo=('save', 's'), titolo=gk, larghezza_porta_cm=7, larghezza_tastiera_cm=10)
+        blocco.hAlign = 'CENTER'
         elementi.append(KeepTogether([
             Paragraph(gk, sezione_stile),
             Paragraph(f"Saves: {s}  |  Goals Conceded: {g}  |  Miss: {m}  |  Save %: {pct:.1f}%  |  Efficiency: {eff:.1f}%", stili['Normal']),
             Spacer(1, 0.2 * cm),
+            blocco,
         ]))
-        blocco = _blocco_porta_tastiera_pdf(df_gk, esiti_successo=('save', 's'), titolo=gk, larghezza_porta_cm=7, larghezza_tastiera_cm=10)
-        blocco.hAlign = 'CENTER'
-        elementi.append(blocco)
         nota = note_dict.get(gk, '')
         if nota:
-            elementi.append(Spacer(1, 0.2 * cm))
-            elementi.append(Paragraph("Notes", sezione_stile))
-            elementi.append(Paragraph(note_markup_a_reportlab(nota), stili['Normal']))
+            elementi.append(KeepTogether([
+                Spacer(1, 0.2 * cm),
+                Paragraph("Notes", sezione_stile),
+                Paragraph(note_markup_a_reportlab(nota), stili['Normal']),
+            ]))
         elementi.append(_separatore())
 
     mappe_valide = [m for m in (mappe_extra or []) if not m['df'].empty]
     if mappe_valide:
-        elementi.append(Paragraph("Saved Shot Maps", sezione_stile))
+        titolo_mappe_tag_go = Paragraph("Saved Shot Maps", sezione_stile)
+        primo_tag_go = True
         for mappa in mappe_valide:
             blocco_m = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=('save', 's'), titolo=mappa['titolo'],
                                                     larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
             blocco_m.hAlign = 'CENTER'
-            elementi.append(KeepTogether([blocco_m, Spacer(1, 0.3 * cm)]))
+            if primo_tag_go:
+                elementi.append(KeepTogether([titolo_mappe_tag_go, blocco_m, Spacer(1, 0.3 * cm)]))
+                primo_tag_go = False
+            else:
+                elementi.append(KeepTogether([blocco_m, Spacer(1, 0.3 * cm)]))
 
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     buffer.seek(0)
@@ -4063,7 +4089,8 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
             riga_volume.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
             blocchi_pagine.append([Paragraph("Shooters by Shot Volume", sezione_stile), Spacer(1, 0.3 * cm), riga_volume])
         else:
-            # Roster eccezionalmente ampio: mai rischiare che il PDF si rompa — due pagine separate.
+            # Roster eccezionalmente ampio: mai rischiare che il PDF si rompa — due pagine separate,
+            # ciascuna col proprio titolo sempre insieme alla propria tabella.
             blocchi_pagine.append([Paragraph("Shooters by Shot Volume — By total shot volume", sezione_stile),
                                     Spacer(1, 0.3 * cm), tabella_volume_tot])
             blocchi_pagine.append([Paragraph("Shooters by Shot Volume — By Money Time shot volume", sezione_stile),
