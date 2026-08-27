@@ -153,6 +153,57 @@ def mappa_macro_settore(s):
     return None
 
 # ============================================================
+# UNIVERSAL STATS: distribuzione dei tiri per macro-settore su tutto il software (o su un
+# sottoinsieme filtrato per data/campionato/partite scelte), indipendente dal ruolo (portieri o
+# tiratori — stesso schema di colonne TIRO_CLEAN/RESULT_CLEAN). Riusa mappa_macro_settore, che
+# raggruppa già esattamente per LW/RW/6M/BT/9M/7M/FB come richiesto.
+# ============================================================
+ORDINE_MACRO_UNIVERSALE = ['7m', 'lw', 'rw', '6m', 'bt', '9m', 'fb']
+ETICHETTA_MACRO_UNIVERSALE = {'7m': '7m', 'lw': 'LW', 'rw': 'RW', '6m': '6M', 'bt': 'BT', '9m': '9M', 'fb': 'FB'}
+
+def tabella_distribuzione_macro_universale(df):
+    """df: dataframe con colonne TIRO_CLEAN e RESULT_CLEAN (va bene sia il formato portieri sia
+    quello tiratori). Restituisce un DataFrame con Macro-Zone/Goals/Shots/Goal %/Result, ordinato
+    per % realizzativa decrescente; a parità, per volume di tiri decrescente; a ulteriore parità,
+    in ordine alfabetico/numerico dell'etichetta. Macro-zone senza tiri non compaiono."""
+    if df.empty or 'TIRO_CLEAN' not in df.columns:
+        return pd.DataFrame(columns=['Macro-Zone', 'Goals', 'Shots', 'Goal %', 'Result'])
+    righe = []
+    macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore)
+    for macro in ORDINE_MACRO_UNIVERSALE:
+        df_m = df[macro_per_riga == macro]
+        tot = len(df_m)
+        if tot == 0:
+            continue
+        goal = len(df_m[df_m['RESULT_CLEAN'].isin(['goal', 'g'])])
+        pct = goal / tot * 100
+        righe.append({'Macro-Zone': ETICHETTA_MACRO_UNIVERSALE[macro], 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
+    df_r = pd.DataFrame(righe)
+    if df_r.empty:
+        return pd.DataFrame(columns=['Macro-Zone', 'Goals', 'Shots', 'Goal %', 'Result'])
+    df_r = df_r.sort_values(by=['Goal %', 'Shots', 'Macro-Zone'], ascending=[False, False, True]).reset_index(drop=True)
+    df_r['Result'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
+    return df_r
+
+def disegna_torta_macro_universale(df_distribuzione, titolo=None):
+    """Grafico a torta della distribuzione del VOLUME di tiri per macro-settore (non della %
+    realizzativa, che è già nella tabella accanto)."""
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    colori_torta = {'7m': '#d62728', 'LW': '#ffcc00', 'RW': '#1f77b4', '6M': '#ff7f0e',
+                     'BT': '#9467bd', '9M': '#2ca02c', 'FB': '#8c564b'}
+    if df_distribuzione.empty:
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14, color='gray')
+        ax.axis('off')
+    else:
+        colori = [colori_torta.get(m, '#cccccc') for m in df_distribuzione['Macro-Zone']]
+        ax.pie(df_distribuzione['Shots'], labels=df_distribuzione['Macro-Zone'], autopct='%1.1f%%',
+               colors=colori, startangle=90, textprops={'fontsize': 11})
+    if titolo:
+        ax.set_title(titolo, fontsize=13, color='#15304f', fontweight='bold')
+    fig.tight_layout()
+    return fig
+
+# ============================================================
 # HOME / AWAY: la prima squadra scritta nel nome del file è sempre "home",
 # la seconda è sempre "away" (es. "Merano-Brixen 23-8-2026" -> Merano=home, Brixen=away).
 # Usato sia per i portieri che per i tiratori.
@@ -2241,13 +2292,15 @@ def _separatore():
 
 def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_portieri, df_blocchi, df_match, fig_blocchi,
                         includi_mappa_generale=True, includi_mappe_per_portiere=True, mappe_extra=None,
-                        squadra_home=None, squadra_away=None):
+                        squadra_home=None, squadra_away=None, riga_gpi_squadra=None):
     """Costruisce il PDF completo della pagina Single Game Analysis e lo restituisce come bytes.
     includi_mappa_generale: aggiunge la porta con tutti i tiri del match (tutti i portieri insieme).
     includi_mappe_per_portiere: aggiunge una porta per ciascun portiere che ha subito almeno un tiro.
     mappe_extra: lista opzionale di dict {'titolo': str, 'df': dataframe già filtrato} per mappe su
     misura (es. filtrate per tipologia di tiro/traiettoria/settore specifico).
-    squadra_home/squadra_away: se fornite, i loro loghi (se caricati) compaiono in copertina."""
+    squadra_home/squadra_away: se fornite, i loro loghi (se caricati) compaiono in copertina.
+    riga_gpi_squadra: lista con un solo dict, dati aggregati di squadra (tutti i portieri di questa
+    partita insieme), mostrata in cima alla prima pagina sopra la tabella per singolo portiere."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6*cm, bottomMargin=1.4*cm,
                              leftMargin=1.2*cm, rightMargin=1.2*cm)
@@ -2289,12 +2342,23 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     elementi.append(blocco_titolo)
     elementi.append(Spacer(1, 0.5*cm))
 
-    # Total GPI per goalkeeper — ingrandita: di solito solo 1-3 portieri per partita, quindi
-    # c'è ampio spazio per una tabella grande invece che minuscola con pagina mezza vuota sotto.
+    # Totale di squadra (tutti i portieri di questa partita insieme), prima della tabella per
+    # singolo portiere — dà subito il quadro complessivo della gara.
+    if riga_gpi_squadra:
+        elementi.append(KeepTogether([
+            Paragraph("Total Match Performance — Team", sezione_stile),
+            Spacer(1, 0.2 * cm),
+            _df_to_reportlab_table(pd.DataFrame(riga_gpi_squadra), font_size=12)
+        ]))
+        elementi.append(Spacer(1, 0.4 * cm))
+
+    # Total match performance per goalkeeper — ingrandita: di solito solo 1-3 portieri per
+    # partita, quindi c'è ampio spazio per una tabella grande invece che minuscola con pagina
+    # mezza vuota sotto.
     elementi.append(KeepTogether([
-        Paragraph("Total Match GPI per Goalkeeper", sezione_stile),
+        Paragraph("Total Match Performance per Goalkeeper", sezione_stile),
         Spacer(1, 0.2 * cm),
-        _tabella_giocatori_con_foto(righe_gpi_totale, font_size=13, larghezza_foto_cm=2.8)
+        _tabella_giocatori_con_foto(righe_gpi_totale, font_size=12, larghezza_foto_cm=2.5)
     ]))
     elementi.append(_separatore())
 
@@ -4344,7 +4408,7 @@ else:
     st.sidebar.caption("💻 Storage: local file")
     st.sidebar.caption(f"ℹ️ {_diagnosi_google_sheets()}")
 
-tab1, tab2, tab3, tab4, tab6, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🎬 Tag & Go Analysis', '🏋️ Training Sessions'])
+tab1, tab2, tab3, tab4, tab7, tab6, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🌍 Universal Stats', '🎬 Tag & Go Analysis', '🏋️ Training Sessions'])
 
 with tab1:
     st.header('Upload Game Data')
@@ -5222,12 +5286,31 @@ with tab2:
             righe_gpi_totale = []
             for gk in portieri_unici:
                 df_gk_tot = df_match[df_match['PORTIERE_CLEAN'] == gk]
+                s_gk, g_gk, m_gk, pct_gk, eff_gk = calcola_metriche_gruppo(df_gk_tot)
+                gpi_tot_gk = round(df_gk_tot['GPI_Tiro'].sum(), 1)
+                shots_gk = len(df_gk_tot)
                 righe_gpi_totale.append({
                     'Goalkeeper': f"{mappa_colori_testo[gk]} {gk}",
-                    'Total Match GPI': round(df_gk_tot['GPI_Tiro'].sum(), 1),
-                    'Shots Faced': len(df_gk_tot)
+                    'Total Match GPI': gpi_tot_gk,
+                    'Avg GPI/Shot': round(gpi_tot_gk / shots_gk, 2) if shots_gk > 0 else 0.0,
+                    'Save %': round(pct_gk, 1),
+                    'Efficiency %': round(eff_gk, 1),
+                    'Shots Faced': shots_gk
                 })
             st.dataframe(pd.DataFrame(righe_gpi_totale), use_container_width=True, hide_index=True)
+
+            # Totale di squadra (tutti i portieri di questa partita insieme) — usato in cima alla
+            # prima pagina del PDF, sopra la tabella per singolo portiere.
+            s_sq, g_sq, m_sq, pct_sq, eff_sq = calcola_metriche_gruppo(df_match)
+            gpi_tot_squadra = round(df_match['GPI_Tiro'].sum(), 1)
+            shots_squadra = len(df_match)
+            riga_gpi_squadra = [{
+                'Total GPI': gpi_tot_squadra,
+                'Avg GPI/Shot': round(gpi_tot_squadra / shots_squadra, 2) if shots_squadra > 0 else 0.0,
+                'Save %': round(pct_sq, 1),
+                'Efficiency %': round(eff_sq, 1),
+                'Shots Faced': shots_squadra
+            }]
 
             # ============================================================
             # SEZIONE: STATISTICHE DETTAGLIATE PER PORTIERE
@@ -5496,6 +5579,7 @@ with tab2:
                         pdf_bytes = genera_pdf_partita(
                             titolo_partita=scelta,
                             righe_gpi_totale=righe_gpi_totale,
+                            riga_gpi_squadra=riga_gpi_squadra,
                             tabella_sequenza=tabella_sequenza,
                             dati_portieri=dati_pdf_portieri,
                             df_blocchi=df_blocchi,
@@ -7191,3 +7275,109 @@ with tab6:
                 elimina_tag_go_da_disco()
                 st.success("Analysis exported and deleted. Tag & Go is back to a blank slate.")
                 st.rerun()
+
+with tab7:
+    st.header("🌍 Universal Stats")
+    st.caption("Shot distribution across the whole software (or a filtered subset), broken down by "
+               "macro-zone (LW, RW, 6M, BT, 9M, 7m, FB) — independent of goalkeeper vs shooter role.")
+
+    if not st.session_state['db']:
+        st.info("No data yet — upload some match sheets first.")
+    else:
+        # ============================================================
+        # FILTRI CONDIVISI: stessi filtri usati per tutte le sezioni sotto (generale, per
+        # squadra, tiri passivi, tiri in Money Time).
+        # ============================================================
+        st.subheader("🔍 Filters")
+        modo_filtro_us = st.radio(
+            "Filter by:", ["All Data & All Time", "Championship", "Date Range", "Custom Match Selection"],
+            horizontal=True, key="us_modo_filtro"
+        )
+        partite_filtrate_us = st.session_state['db']
+
+        if modo_filtro_us == "Championship":
+            nomi_camp_us = [c['nome'] for c in st.session_state['campionati']]
+            if nomi_camp_us:
+                scelta_camp_us = st.selectbox("Championship:", nomi_camp_us, key="us_campionato_scelto")
+                campionato_us = next(c for c in st.session_state['campionati'] if c['nome'] == scelta_camp_us)
+                partite_filtrate_us = partite_in_campionato(st.session_state['db'], campionato_us)
+            else:
+                st.info("No championships created yet — showing All Data & All Time instead.")
+
+        elif modo_filtro_us == "Date Range":
+            date_disponibili_us = [m['data'] for m in st.session_state['db']]
+            data_min_us, data_max_us = min(date_disponibili_us), max(date_disponibili_us)
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                data_inizio_us = st.date_input("From:", value=data_min_us, key="us_data_inizio")
+            with col_d2:
+                data_fine_us = st.date_input("To:", value=data_max_us, key="us_data_fine")
+            partite_filtrate_us = [m for m in st.session_state['db'] if data_inizio_us <= m['data'] <= data_fine_us]
+
+        elif modo_filtro_us == "Custom Match Selection":
+            opzioni_match_us = [f"{p['nome']} ({p['data']}) - {p['squadra']}" for p in st.session_state['db']]
+            selezione_match_us = st.multiselect("Select matches:", opzioni_match_us, key="us_match_scelti")
+            if selezione_match_us:
+                etichette_us = {f"{p['nome']} ({p['data']}) - {p['squadra']}": p for p in st.session_state['db']}
+                partite_filtrate_us = [etichette_us[e] for e in selezione_match_us]
+            else:
+                st.info("No matches selected — showing All Data & All Time instead.")
+
+        if not partite_filtrate_us:
+            st.warning("No matches match this filter — showing All Data & All Time instead.")
+            partite_filtrate_us = st.session_state['db']
+
+        df_universale = pd.concat([m['dati'] for m in partite_filtrate_us], ignore_index=True) if partite_filtrate_us else pd.DataFrame()
+
+        def _mostra_torta_e_tabella(df_sorgente, titolo_torta, chiave):
+            col_torta, col_tabella = st.columns([1, 1])
+            df_distribuzione = tabella_distribuzione_macro_universale(df_sorgente)
+            with col_torta:
+                fig_torta = disegna_torta_macro_universale(df_distribuzione, titolo=titolo_torta)
+                st.pyplot(fig_torta)
+            with col_tabella:
+                st.markdown(f"**Goal % by macro-zone — {titolo_torta}**")
+                if df_distribuzione.empty:
+                    st.caption("No shots in this selection.")
+                else:
+                    st.dataframe(df_distribuzione[['Macro-Zone', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}),
+                                 use_container_width=True, hide_index=True)
+
+        # ============================================================
+        # SEZIONE 1: TUTTE LE SQUADRE
+        # ============================================================
+        st.markdown("---")
+        st.subheader("📊 All Teams")
+        _mostra_torta_e_tabella(df_universale, "All Teams", "us_all")
+
+        # ============================================================
+        # SEZIONE 2: SQUADRA SPECIFICA (menù a tendina)
+        # ============================================================
+        st.markdown("---")
+        st.subheader("📊 By Team")
+        squadre_us = sorted(set(m['squadra'] for m in partite_filtrate_us))
+        if squadre_us:
+            squadra_scelta_us = st.selectbox("Select team:", squadre_us, key="us_squadra_scelta")
+            df_squadra_us = pd.concat(
+                [m['dati'] for m in partite_filtrate_us if m['squadra'] == squadra_scelta_us], ignore_index=True
+            )
+            _mostra_torta_e_tabella(df_squadra_us, squadra_scelta_us, "us_team")
+        else:
+            st.info("No teams in this selection.")
+
+        # ============================================================
+        # SEZIONE 3: TIRI PASSIVI E TIRI IN MONEY TIME (sugli stessi filtri di cui sopra,
+        # non ristretti alla squadra selezionata nella sezione precedente)
+        # ============================================================
+        st.markdown("---")
+        st.subheader("🎯 Passive Shots")
+        df_passivi_us = filtra_tiri_passivi(df_universale)
+        _mostra_torta_e_tabella(df_passivi_us, "Passive Shots", "us_passive")
+
+        st.markdown("---")
+        st.subheader("⏱️ Money Time Shots")
+        if not df_universale.empty and 'Is_Stress_Test' in df_universale.columns:
+            df_moneytime_us = df_universale[df_universale['Is_Stress_Test'] == True]
+        else:
+            df_moneytime_us = df_universale.iloc[0:0]
+        _mostra_torta_e_tabella(df_moneytime_us, "Money Time Shots", "us_moneytime")
