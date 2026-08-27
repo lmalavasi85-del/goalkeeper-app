@@ -2382,8 +2382,9 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
 
         elementi.append(_separatore())
 
-    # Detailed statistics per goalkeeper
-    for gk, info in dati_portieri.items():
+    # Detailed statistics per goalkeeper — sempre su una pagina nuova per ciascun portiere.
+    for indice_gk, (gk, info) in enumerate(dati_portieri.items()):
+        elementi.append(PageBreak())
         gk_raw_foto = gk.split(' ', 1)[1] if ' ' in gk else gk
         foto_gk_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk_raw_foto))
         if foto_gk_b64:
@@ -2559,11 +2560,12 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
                 elementi.append(KeepTogether([blocco_mappa, Spacer(1, 0.3 * cm)]))
         elementi.append(_separatore())
 
-    # Detailed statistics per goalkeeper (season cumulative)
+    # Detailed statistics per goalkeeper (season cumulative) — sempre su una pagina nuova.
     for gk, lista in dati_portieri.items():
         df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_ID'] == gk]
         if df_gk_tot.empty:
             continue
+        elementi.append(PageBreak())
         info = calcola_dettaglio_portiere(df_gk_tot, lista_partite=lista)
         foto_gk_stag_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk))
         if foto_gk_stag_b64:
@@ -4059,18 +4061,22 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         df_volume_mt_pdf = classifica_tiratori_per_volume(df_squadra_riepilogo, solo_money_time=True)
         n_righe_max_volume = max(len(df_volume_tot_pdf), len(df_volume_mt_pdf))
 
-        if n_righe_max_volume <= 18:
+        # Soglie ricalibrate su un budget di altezza reale (foglio landscape, ~18cm utili sotto
+        # titolo+intestazioni): le foto (1.8cm/riga) sono molto più ingombranti del solo testo,
+        # quindi il numero di righe con foto a piena dimensione deve restare basso per avere
+        # sempre margine, altrimenti titolo e tabella rischiano di finire su pagine diverse.
+        if n_righe_max_volume <= 7:
             font_vol, foto_vol, con_foto = 10, 1.8, True
-        elif n_righe_max_volume <= 22:
-            font_vol, foto_vol, con_foto = 9, 1.5, True
-        elif n_righe_max_volume <= 25:
-            font_vol, padding_vol, con_foto = 7, 2, False
+        elif n_righe_max_volume <= 10:
+            font_vol, foto_vol, con_foto = 9, 1.3, True
+        elif n_righe_max_volume <= 14:
+            font_vol, foto_vol, con_foto = 8, 1.0, True
         elif n_righe_max_volume <= 30:
-            font_vol, padding_vol, con_foto = 6, 1, False
+            font_vol, padding_vol, con_foto = 7, 2, False
         else:
-            font_vol, padding_vol, con_foto = 8, 3, False
+            font_vol, padding_vol, con_foto = 6, 1, False
 
-        stile_intestazione_volume = ParagraphStyle('IntVol', parent=stili['Heading3'], fontSize=13, spaceAfter=8, textColor=COLORE_ACCENTO)
+        stile_intestazione_volume = ParagraphStyle('IntVol', parent=stili['Heading3'], fontSize=12, spaceAfter=4, textColor=COLORE_ACCENTO)
         intest_volume_tot = Paragraph("By total shot volume", stile_intestazione_volume)
         intest_volume_mt = Paragraph("By Money Time shot volume", stile_intestazione_volume)
         if con_foto:
@@ -4087,14 +4093,23 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
                 colWidths=[13.5 * cm, 13.5 * cm]
             )
             riga_volume.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
-            blocchi_pagine.append([Paragraph("Shooters by Shot Volume", sezione_stile), Spacer(1, 0.3 * cm), riga_volume])
+            # KeepTogether (non solo il salto pagina prima del blocco): se la tabella è alta quasi
+            # quanto la pagina, senza questo il titolo può restare da solo e la tabella slittare
+            # comunque alla pagina dopo, pur partendo già da una pagina fresca.
+            blocchi_pagine.append([KeepTogether([
+                Paragraph("Shooters by Shot Volume", sezione_stile), Spacer(1, 0.15 * cm), riga_volume
+            ])])
         else:
             # Roster eccezionalmente ampio: mai rischiare che il PDF si rompa — due pagine separate,
             # ciascuna col proprio titolo sempre insieme alla propria tabella.
-            blocchi_pagine.append([Paragraph("Shooters by Shot Volume — By total shot volume", sezione_stile),
-                                    Spacer(1, 0.3 * cm), tabella_volume_tot])
-            blocchi_pagine.append([Paragraph("Shooters by Shot Volume — By Money Time shot volume", sezione_stile),
-                                    Spacer(1, 0.3 * cm), tabella_volume_mt])
+            blocchi_pagine.append([KeepTogether([
+                Paragraph("Shooters by Shot Volume — By total shot volume", sezione_stile),
+                Spacer(1, 0.3 * cm), tabella_volume_tot
+            ])])
+            blocchi_pagine.append([KeepTogether([
+                Paragraph("Shooters by Shot Volume — By Money Time shot volume", sezione_stile),
+                Spacer(1, 0.3 * cm), tabella_volume_mt
+            ])])
 
         # Pagina 3: statistiche per macro-zona di squadra (ingrandita, da sola)
         pagina3 = [
