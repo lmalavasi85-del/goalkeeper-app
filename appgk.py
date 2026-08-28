@@ -185,6 +185,45 @@ def tabella_distribuzione_macro_universale(df):
     df_r['Result'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
     return df_r
 
+def tabella_distribuzione_micro_universale(df):
+    """Come tabella_distribuzione_macro_universale, ma per ogni singolo microsettore della
+    tastiera usata ovunque nel software (lw1, lw2, ... fb3), nell'ordine naturale della
+    pulsantiera. Per ciascun microsettore: % realizzativa, % sul totale di tutti i tiri della
+    selezione, e % sul totale del proprio macro-settore. Microsettori senza tiri non compaiono."""
+    colonne_vuote = ['Sector', 'Macro-Zone', 'Goal % (Shots)', '% of Total', '% of Macro-Zone']
+    if df.empty or 'TIRO_CLEAN' not in df.columns:
+        return pd.DataFrame(columns=colonne_vuote)
+    zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona)
+    macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore)
+    totale_tiri = len(df)
+    totali_macro = macro_per_riga.value_counts().to_dict()
+    righe = []
+    for settore in TUTTI_I_TASTI_TIRATORI:
+        df_s = df[zona_normalizzata == settore]
+        tot_s = len(df_s)
+        if tot_s == 0:
+            continue
+        goal_s = len(df_s[df_s['RESULT_CLEAN'].isin(['goal', 'g'])])
+        macro_s = mappa_macro_settore(settore)
+        tot_macro = totali_macro.get(macro_s, 0)
+        righe.append({
+            'Sector': settore, 'Macro-Zone': ETICHETTA_MACRO_UNIVERSALE.get(macro_s, macro_s or '—'),
+            'Goals': goal_s, 'Shots': tot_s, 'Goal %': round(goal_s / tot_s * 100, 1),
+            'TotShots': totale_tiri, 'MacroShots': tot_macro,
+        })
+    if not righe:
+        return pd.DataFrame(columns=colonne_vuote)
+    df_r = pd.DataFrame(righe)
+    ordine_map = {s: i for i, s in enumerate(TUTTI_I_TASTI_TIRATORI)}
+    df_r['_ord'] = df_r['Sector'].map(ordine_map)
+    df_r = df_r.sort_values('_ord').drop(columns='_ord').reset_index(drop=True)
+    df_r['Goal % (Shots)'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
+    df_r['% of Total'] = df_r.apply(
+        lambda r: f"{int(r['Shots'])}/{int(r['TotShots'])} = {r['Shots'] / r['TotShots'] * 100:.0f}%" if r['TotShots'] > 0 else "0/0 = 0%", axis=1)
+    df_r['% of Macro-Zone'] = df_r.apply(
+        lambda r: f"{int(r['Shots'])}/{int(r['MacroShots'])} = {r['Shots'] / r['MacroShots'] * 100:.0f}%" if r['MacroShots'] > 0 else "0/0 = 0%", axis=1)
+    return df_r[colonne_vuote]
+
 def disegna_torta_macro_universale(df_distribuzione, titolo=None):
     """Grafico a torta della distribuzione del VOLUME di tiri per macro-settore (non della %
     realizzativa, che è già nella tabella accanto)."""
@@ -4063,6 +4102,83 @@ def _blocco_porta_tastiera_pdf(df, esiti_successo, titolo=None, larghezza_porta_
     blocco.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
     return blocco
 
+def genera_pdf_universal_stats(titolo_report, sezioni):
+    """Costruisce il PDF per Universal Stats: solo gli elementi scelti dall'utente (checkbox
+    'Includi nel PDF' accanto a ciascuno). sezioni: lista ordinata di dict, ciascuno uno dei due
+    tipi:
+      {'tipo': 'torta_tabella', 'titolo': str, 'df': dataframe, 'micro': bool}
+      {'tipo': 'ranking', 'titolo': str, 'df_generale': dataframe, 'sotto_tabelle': dict, 'esiti_successo': tuple}
+    Foto giocatore/portiere incluse dove disponibili (stesso meccanismo usato ovunque nell'app),
+    e logo dell'associazione sempre in copertina."""
+    stili = getSampleStyleSheet()
+    titolo_stile = ParagraphStyle('TitoloUS', parent=stili['Title'], fontSize=20, textColor=COLORE_ACCENTO)
+    sottotitolo_stile = ParagraphStyle('SottotitoloUS', parent=stili['Heading3'], fontSize=13, textColor=colors.HexColor('#555555'))
+    sezione_stile = ParagraphStyle('SezioneUS', parent=stili['Heading2'], spaceBefore=8, spaceAfter=6, textColor=COLORE_ACCENTO)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
+                             leftMargin=1.2 * cm, rightMargin=1.2 * cm)
+    elementi = []
+    dim_logo = 2.6 * cm
+    blocco_titolo = Table(
+        [[RLImage(io.BytesIO(LOGO_BYTES), width=dim_logo, height=dim_logo),
+          [Paragraph("UNIVERSAL STATS", titolo_stile), Paragraph(titolo_report, sottotitolo_stile)]]],
+        colWidths=[dim_logo + 0.4 * cm, None]
+    )
+    blocco_titolo.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elementi.append(blocco_titolo)
+    elementi.append(Spacer(1, 0.5 * cm))
+
+    for sezione in sezioni:
+        if sezione['tipo'] == 'torta_tabella':
+            df_distribuzione = tabella_distribuzione_macro_universale(sezione['df'])
+            fig_torta = disegna_torta_macro_universale(df_distribuzione, titolo=None)
+            img_torta = _immagine_da_figura_matplotlib(fig_torta, 9, 8.3)
+            if df_distribuzione.empty:
+                tabella_macro = Paragraph("No shots in this selection.", stili['Normal'])
+            else:
+                tabella_macro = _df_to_reportlab_table(
+                    df_distribuzione[['Macro-Zone', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}), font_size=10)
+            riga = Table([[img_torta, tabella_macro]], colWidths=[9.5 * cm, 14 * cm])
+            riga.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+            elementi.append(KeepTogether([Paragraph(sezione['titolo'], sezione_stile), Spacer(1, 0.2 * cm), riga]))
+            elementi.append(Spacer(1, 0.3 * cm))
+            if sezione.get('micro') and not sezione['df'].empty:
+                df_micro = tabella_distribuzione_micro_universale(sezione['df'])
+                if not df_micro.empty:
+                    elementi.append(KeepTogether([
+                        Paragraph(f"{sezione['titolo']} — By specific sector", sezione_stile),
+                        Spacer(1, 0.2 * cm), _df_to_reportlab_table(df_micro, font_size=8)
+                    ]))
+            elementi.append(_separatore())
+
+        elif sezione['tipo'] == 'ranking':
+            if sezione['df_generale'].empty:
+                elementi.append(KeepTogether([
+                    Paragraph(sezione['titolo'], sezione_stile), Spacer(1, 0.2 * cm),
+                    Paragraph("No one meets the minimum shots threshold in this selection.", stili['Normal'])
+                ]))
+            else:
+                elementi.append(KeepTogether([
+                    Paragraph(sezione['titolo'], sezione_stile), Spacer(1, 0.2 * cm),
+                    _tabella_giocatori_con_foto(sezione['df_generale'].to_dict('records'), font_size=10, larghezza_foto_cm=1.8)
+                ]))
+                elementi.append(Spacer(1, 0.3 * cm))
+                for etichetta_macro, df_macro in sezione.get('sotto_tabelle', {}).items():
+                    elementi.append(KeepTogether([
+                        Paragraph(f"{sezione['titolo']} — {etichetta_macro}", sezione_stile), Spacer(1, 0.2 * cm),
+                        _tabella_giocatori_con_foto(df_macro.to_dict('records'), font_size=9, larghezza_foto_cm=1.5)
+                    ]))
+                    elementi.append(Spacer(1, 0.25 * cm))
+            elementi.append(_separatore())
+
+    doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
+    buffer.seek(0)
+    return buffer.getvalue()
+
 def genera_pdf_tag_go_portieri(nome_analisi, dati_per_portiere, note_dict=None, mappe_extra=None):
     """PDF per il lato portieri di Tag & Go Analysis: nessun concetto di partita/data/GPI (i tiri
     sono estrapolati da video diversi, senza un vero minuto di gara) — solo porta+tastiera+
@@ -7516,7 +7632,7 @@ with tab7:
         df_tiratori_universale = pd.concat([m['dati'] for m in partite_tir_filtrate_us], ignore_index=True) \
             if partite_tir_filtrate_us else pd.DataFrame()
 
-        def _mostra_torta_e_tabella(df_sorgente, titolo_torta, chiave):
+        def _mostra_torta_e_tabella(df_sorgente, titolo_torta, chiave, mostra_micro=False):
             col_torta, col_tabella = st.columns([1, 1])
             df_distribuzione = tabella_distribuzione_macro_universale(df_sorgente)
             with col_torta:
@@ -7529,6 +7645,13 @@ with tab7:
                 else:
                     st.dataframe(df_distribuzione[['Macro-Zone', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}),
                                  use_container_width=True, hide_index=True, key=f"tabella_{chiave}")
+            if mostra_micro:
+                st.markdown(f"**Goal % by specific sector — {titolo_torta}**")
+                df_micro = tabella_distribuzione_micro_universale(df_sorgente)
+                if df_micro.empty:
+                    st.caption("No shots in this selection.")
+                else:
+                    st.dataframe(df_micro, use_container_width=True, hide_index=True, key=f"tabella_micro_{chiave}")
 
         def _filtra_money_time(df):
             if df.empty or 'Is_Stress_Test' not in df.columns:
@@ -7540,13 +7663,14 @@ with tab7:
         # ============================================================
         st.markdown("---")
         st.subheader("📊 All Teams")
-        _mostra_torta_e_tabella(df_universale, "All Teams", "us_all")
+        includi_pdf_all_teams = st.checkbox("📄 Include 'All Teams' in PDF export", key="us_pdf_include_all_teams")
+        _mostra_torta_e_tabella(df_universale, "All Teams", "us_all", mostra_micro=True)
 
         st.markdown("**🎯 Passive Shots — All Teams**")
-        _mostra_torta_e_tabella(filtra_tiri_passivi(df_universale), "Passive Shots — All Teams", "us_all_passive")
+        _mostra_torta_e_tabella(filtra_tiri_passivi(df_universale), "Passive Shots — All Teams", "us_all_passive", mostra_micro=True)
 
         st.markdown("**⏱️ Money Time Shots — All Teams**")
-        _mostra_torta_e_tabella(_filtra_money_time(df_universale), "Money Time Shots — All Teams", "us_all_moneytime")
+        _mostra_torta_e_tabella(_filtra_money_time(df_universale), "Money Time Shots — All Teams", "us_all_moneytime", mostra_micro=True)
 
         # ============================================================
         # SEZIONE 2: SQUADRA SPECIFICA (menù a tendina) — generale + tiri passivi + tiri in
@@ -7557,6 +7681,7 @@ with tab7:
         squadre_us = sorted(set(m['squadra'] for m in partite_filtrate_us))
         if squadre_us:
             squadra_scelta_us = st.selectbox("Select team:", squadre_us, key="us_squadra_scelta")
+            includi_pdf_by_team = st.checkbox(f"📄 Include 'By Team — {squadra_scelta_us}' in PDF export", key="us_pdf_include_by_team")
             df_squadra_us = pd.concat(
                 [m['dati'] for m in partite_filtrate_us if m['squadra'] == squadra_scelta_us], ignore_index=True
             )
@@ -7568,14 +7693,18 @@ with tab7:
             st.markdown(f"**⏱️ Money Time Shots — {squadra_scelta_us}**")
             _mostra_torta_e_tabella(_filtra_money_time(df_squadra_us), f"Money Time Shots — {squadra_scelta_us}", "us_team_moneytime")
         else:
+            includi_pdf_by_team = False
+            squadra_scelta_us = None
+            df_squadra_us = pd.DataFrame()
             st.info("No teams in this selection.")
 
         # ============================================================
         # SEZIONE 3: CLASSIFICHE DI RENDIMENTO (portieri e tiratori), stessi filtri di cui sopra
         # ============================================================
-        def _mostra_classifica_con_sottotabelle(df_generale, sotto_tabelle, titolo_sezione, soglia_testo):
+        def _mostra_classifica_con_sottotabelle(df_generale, sotto_tabelle, titolo_sezione, soglia_testo, chiave_pdf):
             st.markdown("---")
             st.subheader(titolo_sezione)
+            includi = st.checkbox(f"📄 Include '{titolo_sezione}' in PDF export", key=chiave_pdf)
             st.caption(soglia_testo)
             if df_generale.empty:
                 st.info("No one meets the minimum shots threshold in this selection.")
@@ -7586,19 +7715,60 @@ with tab7:
                         for etichetta_macro, df_macro in sotto_tabelle.items():
                             st.markdown(f"**{etichetta_macro}**")
                             st.dataframe(df_macro, use_container_width=True, hide_index=True)
+            return includi
 
         gen_gk_us, sotto_gk_us = classifiche_portieri_universale(df_universale, soglia_tiri_minimi=100)
-        _mostra_classifica_con_sottotabelle(
+        includi_pdf_gk_rank = _mostra_classifica_con_sottotabelle(
             gen_gk_us, sotto_gk_us, "🧤 Goalkeeper Rankings",
             "Only goalkeepers with at least 100 total shots faced in this selection are ranked — "
             "sorted by Save %, then Efficiency %, then shots faced. The same 100-shot threshold "
-            "(on the TOTAL, not per macro-zone) applies to every macro-zone breakdown below too."
+            "(on the TOTAL, not per macro-zone) applies to every macro-zone breakdown below too.",
+            "us_pdf_include_gk_rank"
         )
 
         gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
-        _mostra_classifica_con_sottotabelle(
+        includi_pdf_shooter_rank = _mostra_classifica_con_sottotabelle(
             gen_tir_us, sotto_tir_us, "🎯 Shooter Rankings",
             "Only shooters with at least 20 total shots taken in this selection are ranked — "
             "sorted by Goal %, then shots taken. The same 20-shot threshold (on the TOTAL, not "
-            "per macro-zone) applies to every macro-zone breakdown below too."
+            "per macro-zone) applies to every macro-zone breakdown below too.",
+            "us_pdf_include_shooter_rank"
         )
+
+        # ============================================================
+        # ESPORTAZIONE PDF: solo gli elementi con la checkbox "Includi nel PDF" spuntata.
+        # ============================================================
+        st.markdown("---")
+        st.subheader("📄 Export to PDF")
+        st.caption("Only the elements marked 'Include in PDF export' above are added to the file. "
+                   "The association logo is always included, and player/goalkeeper photos where available.")
+
+        sezioni_pdf_us = []
+        if includi_pdf_all_teams:
+            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': 'All Teams', 'df': df_universale, 'micro': True})
+            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': 'Passive Shots — All Teams',
+                                    'df': filtra_tiri_passivi(df_universale), 'micro': True})
+            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': 'Money Time Shots — All Teams',
+                                    'df': _filtra_money_time(df_universale), 'micro': True})
+        if includi_pdf_by_team and squadra_scelta_us:
+            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'By Team — {squadra_scelta_us}', 'df': df_squadra_us, 'micro': False})
+            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'Passive Shots — {squadra_scelta_us}',
+                                    'df': filtra_tiri_passivi(df_squadra_us), 'micro': False})
+            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'Money Time Shots — {squadra_scelta_us}',
+                                    'df': _filtra_money_time(df_squadra_us), 'micro': False})
+        if includi_pdf_gk_rank:
+            sezioni_pdf_us.append({'tipo': 'ranking', 'titolo': 'Goalkeeper Rankings', 'df_generale': gen_gk_us, 'sotto_tabelle': sotto_gk_us})
+        if includi_pdf_shooter_rank:
+            sezioni_pdf_us.append({'tipo': 'ranking', 'titolo': 'Shooter Rankings', 'df_generale': gen_tir_us, 'sotto_tabelle': sotto_tir_us})
+
+        if not sezioni_pdf_us:
+            st.info("Tick 'Include in PDF export' next to at least one element above to enable the export.")
+        else:
+            if st.button("📄 Generate PDF"):
+                with st.spinner("Generating PDF..."):
+                    pdf_bytes_us = genera_pdf_universal_stats(f"Universal Stats — {modo_filtro_us}", sezioni_pdf_us)
+                st.download_button(
+                    "⬇️ Download PDF", data=pdf_bytes_us,
+                    file_name=f"Universal_Stats_{modo_filtro_us}".replace(' ', '_') + ".pdf",
+                    mime="application/pdf", key="dl_universal_stats"
+                )
