@@ -930,7 +930,7 @@ def raccogli_stagione_per_portiere(elenco_partite, identita_portiere):
             'money_time_tiri': len(df_gk_stress),
             'money_time_saves': s_mt,
             'money_time_pct': pct_mt,
-            'casa_trasferta': determina_casa_trasferta(match['squadra'], match.get('squadra_home'), match.get('squadra_away')),
+            'casa_trasferta': None if match.get('neutro') else determina_casa_trasferta(match['squadra'], match.get('squadra_home'), match.get('squadra_away')),
             'numero_maglia': numeri_maglia_visti(df_gk['PORTIERE_CLEAN'].unique()),
         })
     df_aggregato = pd.concat(frammenti, ignore_index=True) if frammenti else pd.DataFrame()
@@ -2697,7 +2697,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
 # ============================================================
 SEASON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "season_data.pkl")
 GOOGLE_SHEETS_SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-GOOGLE_SHEETS_HEADER = ['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json']
+GOOGLE_SHEETS_HEADER = ['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json', 'neutro']
 
 def _google_sheets_configurato():
     try:
@@ -2837,14 +2837,15 @@ def _ottieni_worksheet_stagione():
     try:
         worksheet = foglio.worksheet('SeasonData')
     except Exception:
-        worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=6)
+        worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=7)
         worksheet.append_row(GOOGLE_SHEETS_HEADER)
     return worksheet
 
 def _match_a_riga_sheet(match):
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
-            match['dati'].to_json(orient='split', date_format='iso')]
+            match['dati'].to_json(orient='split', date_format='iso'),
+            str(bool(match.get('neutro', False)))]
 
 def _riga_sheet_a_match(riga):
     from datetime import datetime as _dt
@@ -2858,6 +2859,7 @@ def _riga_sheet_a_match(riga):
         squadra_home = None
         squadra_away = None
         dati_json = riga[3]
+    neutro = riga[6].strip().lower() == 'true' if len(riga) >= 7 else False
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'GPI_Tiro' in df.columns:
         df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
@@ -2870,7 +2872,7 @@ def _riga_sheet_a_match(riga):
     except Exception:
         data_valore = data_str
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
-            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df}
+            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro}
 
 def carica_stagione_da_disco():
     if _google_sheets_configurato():
@@ -2932,14 +2934,15 @@ def _ottieni_worksheet_tiratori():
     try:
         worksheet = foglio.worksheet('ShooterSeasonData')
     except Exception:
-        worksheet = foglio.add_worksheet(title='ShooterSeasonData', rows=2000, cols=6)
-        worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json'])
+        worksheet = foglio.add_worksheet(title='ShooterSeasonData', rows=2000, cols=7)
+        worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json', 'neutro'])
     return worksheet
 
 def _match_a_riga_sheet_tiratori(match):
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
-            match['dati'].to_json(orient='split', date_format='iso')]
+            match['dati'].to_json(orient='split', date_format='iso'),
+            str(bool(match.get('neutro', False)))]
 
 def _riga_sheet_a_match_tiratori(riga):
     from datetime import datetime as _dt
@@ -2947,6 +2950,7 @@ def _riga_sheet_a_match_tiratori(riga):
     squadra_home = riga[3] if len(riga) > 3 and riga[3] else None
     squadra_away = riga[4] if len(riga) > 4 and riga[4] else None
     dati_json = riga[5] if len(riga) > 5 else riga[3]
+    neutro = riga[6].strip().lower() == 'true' if len(riga) > 6 else False
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'Is_Money_Time' in df.columns:
         df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
@@ -2959,7 +2963,7 @@ def _riga_sheet_a_match_tiratori(riga):
     except Exception:
         data_valore = data_str
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
-            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df}
+            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro}
 
 def carica_stagione_tiratori_da_disco():
     if _google_sheets_configurato():
@@ -2991,7 +2995,7 @@ def salva_stagione_tiratori_su_disco(db):
         try:
             worksheet = _ottieni_worksheet_tiratori()
             worksheet.clear()
-            worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json'])
+            worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json', 'neutro'])
             righe = [_match_a_riga_sheet_tiratori(m) for m in db]
             if righe:
                 worksheet.append_rows(righe)
@@ -4495,21 +4499,30 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                 if not data_da_file:
                     st.warning("Could not read the date from the file name — check/set 'Event Date' above.")
                 st.caption(f"Home: **{sq_home_u}**  |  Away: **{sq_away_u}**")
+                neutro_u = st.checkbox(
+                    "🌍 Neutral venue — exclude this match from Home/Away statistics",
+                    key=f"neutro_{idx}",
+                    help="Use this for tournaments played on neutral ground (World Championships, "
+                         "Olympics, continental championships...), where the file's Home/Away "
+                         "labeling is just a match-report convention and doesn't reflect a real "
+                         "home-crowd effect. Nothing else changes: only the Home/Away split stat "
+                         "ignores this match — everything else about it is analyzed as normal."
+                )
                 try:
                     df_raw_u = pd.read_excel(f)
                     df_gk_h, df_gk_a, df_tir_h, df_tir_a, df_h2h_u, df_tiro_portiere_u = elabora_file_unificato(df_raw_u, sq_home_u, sq_away_u)
                     if not df_gk_h.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
                     if not df_gk_a.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
                     if not df_tir_h.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
                     if not df_tir_a.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u})
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
                     if not df_h2h_u.empty:
                         pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
                     if not df_tiro_portiere_u.empty:
@@ -6394,7 +6407,7 @@ with tab4:
                         lista_partite_g.append({
                             'label': f"{m['nome']} ({m['data']})", 'goals': g_, 'shots': tot_,
                             'money_time_goals': g_mt, 'money_time_shots': tot_mt,
-                            'casa_trasferta': determina_casa_trasferta(m['squadra'], m.get('squadra_home'), m.get('squadra_away')),
+                            'casa_trasferta': None if m.get('neutro') else determina_casa_trasferta(m['squadra'], m.get('squadra_home'), m.get('squadra_away')),
                         })
                     if not frammenti_g:
                         continue
