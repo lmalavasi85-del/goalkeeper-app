@@ -7685,13 +7685,13 @@ with tab7:
             df_squadra_us = pd.concat(
                 [m['dati'] for m in partite_filtrate_us if m['squadra'] == squadra_scelta_us], ignore_index=True
             )
-            _mostra_torta_e_tabella(df_squadra_us, squadra_scelta_us, "us_team")
+            _mostra_torta_e_tabella(df_squadra_us, squadra_scelta_us, "us_team", mostra_micro=True)
 
             st.markdown(f"**🎯 Passive Shots — {squadra_scelta_us}**")
-            _mostra_torta_e_tabella(filtra_tiri_passivi(df_squadra_us), f"Passive Shots — {squadra_scelta_us}", "us_team_passive")
+            _mostra_torta_e_tabella(filtra_tiri_passivi(df_squadra_us), f"Passive Shots — {squadra_scelta_us}", "us_team_passive", mostra_micro=True)
 
             st.markdown(f"**⏱️ Money Time Shots — {squadra_scelta_us}**")
-            _mostra_torta_e_tabella(_filtra_money_time(df_squadra_us), f"Money Time Shots — {squadra_scelta_us}", "us_team_moneytime")
+            _mostra_torta_e_tabella(_filtra_money_time(df_squadra_us), f"Money Time Shots — {squadra_scelta_us}", "us_team_moneytime", mostra_micro=True)
         else:
             includi_pdf_by_team = False
             squadra_scelta_us = None
@@ -7751,11 +7751,11 @@ with tab7:
             sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': 'Money Time Shots — All Teams',
                                     'df': _filtra_money_time(df_universale), 'micro': True})
         if includi_pdf_by_team and squadra_scelta_us:
-            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'By Team — {squadra_scelta_us}', 'df': df_squadra_us, 'micro': False})
+            sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'By Team — {squadra_scelta_us}', 'df': df_squadra_us, 'micro': True})
             sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'Passive Shots — {squadra_scelta_us}',
-                                    'df': filtra_tiri_passivi(df_squadra_us), 'micro': False})
+                                    'df': filtra_tiri_passivi(df_squadra_us), 'micro': True})
             sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'Money Time Shots — {squadra_scelta_us}',
-                                    'df': _filtra_money_time(df_squadra_us), 'micro': False})
+                                    'df': _filtra_money_time(df_squadra_us), 'micro': True})
         if includi_pdf_gk_rank:
             sezioni_pdf_us.append({'tipo': 'ranking', 'titolo': 'Goalkeeper Rankings', 'df_generale': gen_gk_us, 'sotto_tabelle': sotto_gk_us})
         if includi_pdf_shooter_rank:
