@@ -204,6 +204,90 @@ def disegna_torta_macro_universale(df_distribuzione, titolo=None):
     return fig
 
 # ============================================================
+# CLASSIFICHE UNIVERSALI (Universal Stats): rendimento di portieri e tiratori su tutto il
+# software (o su un sottoinsieme filtrato), con una soglia minima di tiri complessivi per
+# entrare in classifica — anche nelle sotto-classifiche per macro-settore, dove la soglia resta
+# sempre quella sul totale, non sul singolo macro-settore.
+# ============================================================
+def _classifica_portieri_da_df(df_gk_subset):
+    """Tabella Save %/Efficiency %/Shots Faced da un sottoinsieme di tiri già filtrato ai
+    portieri idonei (soglia minima già applicata a monte)."""
+    colonne_vuote = ['Goalkeeper', 'Save % (Shots)', 'Efficiency % (Shots)', 'Shots Faced']
+    if df_gk_subset.empty:
+        return pd.DataFrame(columns=colonne_vuote)
+    righe = []
+    for gk, df_gk in df_gk_subset.groupby('PORTIERE_ID'):
+        s, g, m, pct, eff = calcola_metriche_gruppo(df_gk)
+        righe.append({'Goalkeeper': gk, 'Save %': round(pct, 1), 'Saves': s, 'OnTarget': s + g,
+                       'Efficiency %': round(eff, 1), 'EffNum': s + m, 'Shots Faced': len(df_gk)})
+    df_r = pd.DataFrame(righe)
+    df_r = df_r.sort_values(by=['Save %', 'Efficiency %', 'Shots Faced', 'Goalkeeper'],
+                             ascending=[False, False, False, True]).reset_index(drop=True)
+    df_r['Save % (Shots)'] = df_r.apply(
+        lambda r: f"{int(r['Saves'])}/{int(r['OnTarget'])} = {r['Save %']:.0f}%" if r['OnTarget'] > 0 else "0/0 = 0%", axis=1)
+    df_r['Efficiency % (Shots)'] = df_r.apply(
+        lambda r: f"{int(r['EffNum'])}/{int(r['Shots Faced'])} = {r['Efficiency %']:.0f}%", axis=1)
+    return df_r[colonne_vuote]
+
+def classifiche_portieri_universale(df, soglia_tiri_minimi=100):
+    """Restituisce (classifica_generale, {etichetta_macro: classifica_macro}). Un portiere entra
+    in classifica — in QUALSIASI delle tabelle, generale o per macro-settore — solo se ha subito
+    almeno soglia_tiri_minimi tiri in TOTALE su tutta la selezione filtrata (non nel singolo
+    macro-settore)."""
+    vuoto = pd.DataFrame(columns=['Goalkeeper', 'Save % (Shots)', 'Efficiency % (Shots)', 'Shots Faced'])
+    if df.empty or 'PORTIERE_ID' not in df.columns:
+        return vuoto, {}
+    totali_per_gk = df.groupby('PORTIERE_ID').size()
+    gk_idonei = set(totali_per_gk[totali_per_gk >= soglia_tiri_minimi].index)
+    if not gk_idonei:
+        return vuoto, {}
+    df_idonei = df[df['PORTIERE_ID'].isin(gk_idonei)]
+    df_generale = _classifica_portieri_da_df(df_idonei)
+    macro_per_riga = df_idonei['TIRO_CLEAN'].apply(mappa_macro_settore)
+    sotto_tabelle = {}
+    for macro in ORDINE_MACRO_UNIVERSALE:
+        df_macro = df_idonei[macro_per_riga == macro]
+        if not df_macro.empty:
+            sotto_tabelle[ETICHETTA_MACRO_UNIVERSALE[macro]] = _classifica_portieri_da_df(df_macro)
+    return df_generale, sotto_tabelle
+
+def _classifica_tiratori_da_df(df_tir_subset):
+    """Tabella Goal %/Shots da un sottoinsieme di tiri già filtrato ai tiratori idonei (soglia
+    minima già applicata a monte)."""
+    colonne_vuote = ['Player', 'Goal % (Shots)', 'Shots']
+    if df_tir_subset.empty:
+        return pd.DataFrame(columns=colonne_vuote)
+    righe = []
+    for giocatore, df_g in df_tir_subset.groupby('TIRATORE_ID'):
+        goal, tot, pct = calcola_metriche_tiratori_gruppo(df_g)
+        righe.append({'Player': giocatore, 'Goal %': round(pct, 1), 'Goals': goal, 'Shots': tot})
+    df_r = pd.DataFrame(righe)
+    df_r = df_r.sort_values(by=['Goal %', 'Shots', 'Player'], ascending=[False, False, True]).reset_index(drop=True)
+    df_r['Goal % (Shots)'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
+    return df_r[colonne_vuote]
+
+def classifiche_tiratori_universale(df, soglia_tiri_minimi=20):
+    """Come classifiche_portieri_universale, ma per i tiratori: soglia sul totale dei tiri
+    EFFETTUATI, applicata sia alla classifica generale sia a ciascuna sotto-classifica per
+    macro-settore."""
+    vuoto = pd.DataFrame(columns=['Player', 'Goal % (Shots)', 'Shots'])
+    if df.empty or 'TIRATORE_ID' not in df.columns:
+        return vuoto, {}
+    totali_per_giocatore = df.groupby('TIRATORE_ID').size()
+    giocatori_idonei = set(totali_per_giocatore[totali_per_giocatore >= soglia_tiri_minimi].index)
+    if not giocatori_idonei:
+        return vuoto, {}
+    df_idonei = df[df['TIRATORE_ID'].isin(giocatori_idonei)]
+    df_generale = _classifica_tiratori_da_df(df_idonei)
+    macro_per_riga = df_idonei['TIRO_CLEAN'].apply(mappa_macro_settore)
+    sotto_tabelle = {}
+    for macro in ORDINE_MACRO_UNIVERSALE:
+        df_macro = df_idonei[macro_per_riga == macro]
+        if not df_macro.empty:
+            sotto_tabelle[ETICHETTA_MACRO_UNIVERSALE[macro]] = _classifica_tiratori_da_df(df_macro)
+    return df_generale, sotto_tabelle
+
+
 # HOME / AWAY: la prima squadra scritta nel nome del file è sempre "home",
 # la seconda è sempre "away" (es. "Merano-Brixen 23-8-2026" -> Merano=home, Brixen=away).
 # Usato sia per i portieri che per i tiratori.
@@ -7424,6 +7508,14 @@ with tab7:
 
         df_universale = pd.concat([m['dati'] for m in partite_filtrate_us], ignore_index=True) if partite_filtrate_us else pd.DataFrame()
 
+        # Stessa selezione di partite, applicata anche ai dati tiratori (stesso file, stesso
+        # nome/data) — usata più sotto per le classifiche tiratori.
+        chiavi_partite_filtrate_us = {(m['nome'], str(m['data'])) for m in partite_filtrate_us}
+        partite_tir_filtrate_us = [m for m in st.session_state.get('db_tiratori', [])
+                                    if (m['nome'], str(m['data'])) in chiavi_partite_filtrate_us]
+        df_tiratori_universale = pd.concat([m['dati'] for m in partite_tir_filtrate_us], ignore_index=True) \
+            if partite_tir_filtrate_us else pd.DataFrame()
+
         def _mostra_torta_e_tabella(df_sorgente, titolo_torta, chiave):
             col_torta, col_tabella = st.columns([1, 1])
             df_distribuzione = tabella_distribuzione_macro_universale(df_sorgente)
@@ -7477,3 +7569,36 @@ with tab7:
             _mostra_torta_e_tabella(_filtra_money_time(df_squadra_us), f"Money Time Shots — {squadra_scelta_us}", "us_team_moneytime")
         else:
             st.info("No teams in this selection.")
+
+        # ============================================================
+        # SEZIONE 3: CLASSIFICHE DI RENDIMENTO (portieri e tiratori), stessi filtri di cui sopra
+        # ============================================================
+        def _mostra_classifica_con_sottotabelle(df_generale, sotto_tabelle, titolo_sezione, soglia_testo):
+            st.markdown("---")
+            st.subheader(titolo_sezione)
+            st.caption(soglia_testo)
+            if df_generale.empty:
+                st.info("No one meets the minimum shots threshold in this selection.")
+            else:
+                st.dataframe(df_generale, use_container_width=True, hide_index=True)
+                if sotto_tabelle:
+                    with st.expander("📂 By macro-zone"):
+                        for etichetta_macro, df_macro in sotto_tabelle.items():
+                            st.markdown(f"**{etichetta_macro}**")
+                            st.dataframe(df_macro, use_container_width=True, hide_index=True)
+
+        gen_gk_us, sotto_gk_us = classifiche_portieri_universale(df_universale, soglia_tiri_minimi=100)
+        _mostra_classifica_con_sottotabelle(
+            gen_gk_us, sotto_gk_us, "🧤 Goalkeeper Rankings",
+            "Only goalkeepers with at least 100 total shots faced in this selection are ranked — "
+            "sorted by Save %, then Efficiency %, then shots faced. The same 100-shot threshold "
+            "(on the TOTAL, not per macro-zone) applies to every macro-zone breakdown below too."
+        )
+
+        gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
+        _mostra_classifica_con_sottotabelle(
+            gen_tir_us, sotto_tir_us, "🎯 Shooter Rankings",
+            "Only shooters with at least 20 total shots taken in this selection are ranked — "
+            "sorted by Goal %, then shots taken. The same 20-shot threshold (on the TOTAL, not "
+            "per macro-zone) applies to every macro-zone breakdown below too."
+        )
