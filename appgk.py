@@ -863,8 +863,17 @@ def analizza_timeline(timeline_str):
 
 def calcola_gpi_riga(macro, esito, minuti, scarto):
     e = str(esito).lower().strip()
-    # Money Time = SOLO dal minuto 50'00'' in avanti (soglia fissa), con scarto punteggio tra -5 e +5
-    is_money_time = (minuti >= 50) and (-5 <= scarto <= 5)
+    # Money Time = SOLO dal minuto 50'00'' in avanti (soglia fissa), con lo scarto punteggio
+    # ENTRO -5/+5 nel momento in cui il tiro viene effettuato — PRIMA di conoscerne l'esito.
+    # Il punteggio scritto nella timeline è invece quello DOPO il tiro: su save/miss il
+    # punteggio non cambia (la forbice -5/+5 letta così com'è resta corretta), ma su goal il
+    # punteggio in timeline riflette già la rete appena segnata — quindi va letta una forbice
+    # più larga, da -6 a +6, per includere correttamente anche i tiri effettuati esattamente
+    # al limite (es. un goal segnato sul -5 diventa -6 nella timeline).
+    if e in ['goal', 'g']:
+        is_money_time = (minuti >= 50) and (-6 <= scarto <= 6)
+    else:
+        is_money_time = (minuti >= 50) and (-5 <= scarto <= 5)
     
     punti = 0.0
     if e in ['goal', 'g']:
@@ -1525,7 +1534,14 @@ def elabora_file_portieri(df_raw):
 # ============================================================
 # TIRATORI: PARSING FILE, METRICHE, TOP SCORERS, MACRO-SETTORI
 # ============================================================
-def calcola_money_time_flag(minuti, scarto):
+def calcola_money_time_flag(minuti, scarto, esito=None):
+    """Stessa logica di calcola_gpi_riga: il punteggio in timeline è quello DOPO il tiro, quindi
+    su un tiro andato a segno (goal) la forbice va letta più larga (-6/+6) per includere anche i
+    tiri effettuati esattamente al limite -5/+5, dato che il gol appena segnato ha già spostato
+    il punteggio di 1 nella timeline."""
+    e = str(esito).lower().strip() if esito is not None else ''
+    if e in ('goal', 'g'):
+        return (minuti >= 50) and (-6 <= scarto <= 6)
     return (minuti >= 50) and (-5 <= scarto <= 5)
 
 def elabora_file_tiratori(df_raw):
@@ -1574,7 +1590,7 @@ def elabora_file_tiratori(df_raw):
     df['Punteggio_Live'] = punteggi_list
 
     df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
-    df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
+    df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio'], r['RESULT_CLEAN']), axis=1)
     df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
 
     # Gol in porta vuota (rilevati dalla colonna THROW SECTOR): contano SOLO se il tiro è un vero
@@ -1764,7 +1780,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
             scarti_list.append(sc)
         df_h2h['Minuti_Gara'] = minuti_list
         df_h2h['Scarto_Punteggio'] = scarti_list
-        df_h2h['Is_Money_Time'] = df_h2h.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio']), axis=1)
+        df_h2h['Is_Money_Time'] = df_h2h.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio'], r['RESULT_CLEAN']), axis=1)
         colonne_base_h2h = ['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
                              'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Is_Empty_Goal',
                              'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']
