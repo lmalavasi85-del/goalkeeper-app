@@ -1233,26 +1233,27 @@ def _disegna_grafico_timeline_pdf(df_match, output_path):
         ax.annotate(testo, (x[i], y_values[i]), textcoords='offset points', xytext=(0, 9),
                     ha='center', fontsize=10, fontweight='bold', color='black')
 
-    # Pallino colorato per portiere, uno per tiro, appena sotto l'asse x — stessa funzione delle
-    # emoji colorate usate a schermo (🔵🔴🟢🟡🟣) davanti al nome nell'etichetta, che qui non
-    # possono essere usate perché Matplotlib non le renderizza in un'immagine statica.
-    # Stessa palette e stesso ordine di assegnazione (per ordine di comparsa) dello schermo,
-    # così un portiere ha sempre lo stesso colore sia nell'app sia nel PDF.
+    ax.axhline(0, color='black', linewidth=3, zorder=2)
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=90, fontsize=9)
+    ax.tick_params(axis='x', pad=16)  # spinge le etichette più in basso, per fare spazio ai pallini
+    ax.set_ylabel('Progressive GPI Valuation Index', fontsize=11)
+    ax.set_xlim(-0.5, n - 0.5)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    # Pallino colorato per portiere, uno per tiro, nello spazio libero appena creato tra l'asse
+    # x e le etichette — stessa funzione delle emoji colorate usate a schermo (🔵🔴🟢🟡🟣) davanti
+    # al nome nell'etichetta, che qui non possono essere usate perché Matplotlib non le
+    # renderizza in un'immagine statica. Stessa palette e stesso ordine di assegnazione (per
+    # ordine di comparsa) dello schermo, così un portiere ha sempre lo stesso colore ovunque.
     if 'PORTIERE_CLEAN' in df_match.columns:
         palette_gk_pdf = ['#1E88E5', '#E53935', '#43A047', '#FDD835', '#8E24AA']
         portieri_ordine_pdf = list(df_match['PORTIERE_CLEAN'].dropna().unique())
         colore_per_gk_pdf = {gk: palette_gk_pdf[i % len(palette_gk_pdf)] for i, gk in enumerate(portieri_ordine_pdf)}
         colori_dot_gk_pdf = [colore_per_gk_pdf.get(gk, '#999999') for gk in df_match['PORTIERE_CLEAN'].values]
-        ax.scatter(x, [-0.035] * n, color=colori_dot_gk_pdf, s=55, marker='o', zorder=4,
+        ax.scatter(x, [-0.022] * n, color=colori_dot_gk_pdf, s=55, marker='o', zorder=4,
                    transform=ax.get_xaxis_transform(), clip_on=False, edgecolors='none')
-
-    ax.axhline(0, color='black', linewidth=3, zorder=2)
-    ax.set_xticks(x)
-    ax.set_xticklabels(x_labels, rotation=90, fontsize=9)
-    ax.set_ylabel('Progressive GPI Valuation Index', fontsize=11)
-    ax.set_xlim(-0.5, n - 0.5)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
     ax.grid(axis='y', linestyle='--', alpha=0.3)
 
     fig.savefig(output_path, bbox_inches='tight', dpi=150)
