@@ -5059,50 +5059,82 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                         st.error(f"Could not read this backup file: {e}")
 
         st.markdown("---")
-        st.subheader("🗑️ Delete a Single Match")
-        st.caption("Remove one specific match from the season — goalkeeper data, shooter data, "
-                   "head-to-head data and goalkeeper own-shot data all at once, since a single "
-                   "unified file feeds all of them.")
+        st.subheader("🗑️ Delete Matches")
+        st.caption("Remove one match, a selection of matches, or every match — goalkeeper data, "
+                   "shooter data, head-to-head data and goalkeeper own-shot data all at once for "
+                   "each match removed, since a single unified file feeds all of them. Nothing "
+                   "else is touched: photos, notes, championships, training, teams, logos and "
+                   "player links all stay exactly as they are. Handy if you need to re-upload a "
+                   "match (or several) after a fix, without resorting to Reset All Data.")
         chiavi_match = sorted(set(
             [(p['nome'], str(p['data'])) for p in st.session_state['db']] +
             [(p['nome'], str(p['data'])) for p in st.session_state['db_tiratori']] +
             [(p['nome'], str(p['data'])) for p in st.session_state.get('db_h2h', [])] +
             [(p['nome'], str(p['data'])) for p in st.session_state.get('db_tiro_portiere', [])]
         ), key=lambda k: k[1])
+
+        def _elimina_partite(chiavi_da_eliminare):
+            """chiavi_da_eliminare: set di (nome, data_str). Rimuove queste partite da tutti e
+            quattro i database e salva. Non tocca nient'altro."""
+            st.session_state['db'] = [p for p in st.session_state['db']
+                                       if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
+            st.session_state['db_tiratori'] = [p for p in st.session_state['db_tiratori']
+                                                if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
+            st.session_state['db_h2h'] = [p for p in st.session_state.get('db_h2h', [])
+                                           if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
+            st.session_state['db_tiro_portiere'] = [p for p in st.session_state.get('db_tiro_portiere', [])
+                                                     if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
+            salva_stagione_su_disco(st.session_state['db'])
+            salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+            salva_h2h_su_disco(st.session_state['db_h2h'])
+            salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
+
         if chiavi_match:
             etichette_match_elimina = [f"{nome} ({data})" for nome, data in chiavi_match]
-            match_da_eliminare = st.selectbox(
-                "Select the match to delete:", etichette_match_elimina, key="elimina_partita_select"
+            modo_elimina = st.radio(
+                "What do you want to delete?", ["One match", "A selection of matches", "All matches"],
+                horizontal=True, key="modo_elimina_partite"
             )
-            nome_sel, data_sel = chiavi_match[etichette_match_elimina.index(match_da_eliminare)]
-            n_gk = sum(1 for p in st.session_state['db'] if p['nome'] == nome_sel and str(p['data']) == data_sel)
-            n_tir = sum(1 for p in st.session_state['db_tiratori'] if p['nome'] == nome_sel and str(p['data']) == data_sel)
-            n_h2h = sum(1 for p in st.session_state.get('db_h2h', []) if p['nome'] == nome_sel and str(p['data']) == data_sel)
-            n_tp = sum(1 for p in st.session_state.get('db_tiro_portiere', []) if p['nome'] == nome_sel and str(p['data']) == data_sel)
-            st.caption(f"Will remove: {n_gk} goalkeeper record(s), {n_tir} shooter record(s), "
-                       f"{n_h2h} head-to-head match(es), {n_tp} goalkeeper own-shot match(es).")
-            conferma_elimina_singola = st.checkbox(
-                "I confirm I want to delete this match only (this action is irreversible)",
-                key="conferma_elimina_singola"
-            )
-            if st.button("🗑️ Delete This Match", disabled=not conferma_elimina_singola):
-                st.session_state['db'] = [p for p in st.session_state['db']
-                                           if not (p['nome'] == nome_sel and str(p['data']) == data_sel)]
-                st.session_state['db_tiratori'] = [p for p in st.session_state['db_tiratori']
-                                                    if not (p['nome'] == nome_sel and str(p['data']) == data_sel)]
-                st.session_state['db_h2h'] = [p for p in st.session_state.get('db_h2h', [])
-                                               if not (p['nome'] == nome_sel and str(p['data']) == data_sel)]
-                st.session_state['db_tiro_portiere'] = [p for p in st.session_state.get('db_tiro_portiere', [])
-                                                         if not (p['nome'] == nome_sel and str(p['data']) == data_sel)]
-                salva_stagione_su_disco(st.session_state['db'])
-                salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
-                salva_h2h_su_disco(st.session_state['db_h2h'])
-                salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
-                st.success(f"Match '{match_da_eliminare}' deleted (all data). "
-                           f"Remaining: {len(st.session_state['db'])} goalkeeper record(s), "
-                           f"{len(st.session_state['db_tiratori'])} shooter record(s), "
-                           f"{len(st.session_state['db_h2h'])} head-to-head match(es).")
-                st.rerun()
+
+            if modo_elimina == "One match":
+                match_da_eliminare = st.selectbox(
+                    "Select the match to delete:", etichette_match_elimina, key="elimina_partita_select"
+                )
+                chiavi_scelte = {chiavi_match[etichette_match_elimina.index(match_da_eliminare)]}
+                etichetta_riepilogo = f"'{match_da_eliminare}'"
+
+            elif modo_elimina == "A selection of matches":
+                selezione_elimina = st.multiselect(
+                    "Select the matches to delete:", etichette_match_elimina, key="elimina_partite_multi_select"
+                )
+                chiavi_scelte = {chiavi_match[etichette_match_elimina.index(e)] for e in selezione_elimina}
+                etichetta_riepilogo = f"{len(chiavi_scelte)} selected match(es)"
+
+            else:  # All matches
+                chiavi_scelte = set(chiavi_match)
+                etichetta_riepilogo = f"ALL {len(chiavi_scelte)} match(es) in the app"
+                st.warning("This deletes every match currently loaded — but leaves photos, notes, "
+                           "championships, training sessions, teams and logos untouched. Use "
+                           "'Reset All Data' instead if you want a truly blank slate.")
+
+            if chiavi_scelte:
+                n_gk = sum(1 for p in st.session_state['db'] if (p['nome'], str(p['data'])) in chiavi_scelte)
+                n_tir = sum(1 for p in st.session_state['db_tiratori'] if (p['nome'], str(p['data'])) in chiavi_scelte)
+                n_h2h = sum(1 for p in st.session_state.get('db_h2h', []) if (p['nome'], str(p['data'])) in chiavi_scelte)
+                n_tp = sum(1 for p in st.session_state.get('db_tiro_portiere', []) if (p['nome'], str(p['data'])) in chiavi_scelte)
+                st.caption(f"Will remove: {n_gk} goalkeeper record(s), {n_tir} shooter record(s), "
+                           f"{n_h2h} head-to-head match(es), {n_tp} goalkeeper own-shot match(es).")
+                conferma_elimina = st.checkbox(
+                    f"I confirm I want to delete {etichetta_riepilogo} (this action is irreversible)",
+                    key="conferma_elimina_partite"
+                )
+                if st.button("🗑️ Delete", disabled=not conferma_elimina):
+                    _elimina_partite(chiavi_scelte)
+                    st.success(f"Deleted {etichetta_riepilogo}. "
+                               f"Remaining: {len(st.session_state['db'])} goalkeeper record(s), "
+                               f"{len(st.session_state['db_tiratori'])} shooter record(s), "
+                               f"{len(st.session_state['db_h2h'])} head-to-head match(es).")
+                    st.rerun()
         else:
             st.caption("No matches to delete yet.")
 
