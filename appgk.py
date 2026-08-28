@@ -7654,9 +7654,13 @@ with tab7:
                     st.dataframe(df_micro, use_container_width=True, hide_index=True, key=f"tabella_micro_{chiave}")
 
         def _filtra_money_time(df):
-            if df.empty or 'Is_Stress_Test' not in df.columns:
-                return df.iloc[0:0]
-            return df[df['Is_Stress_Test'] == True]
+            if df.empty:
+                return df
+            if 'Is_Stress_Test' in df.columns:
+                return df[df['Is_Stress_Test'] == True]
+            if 'Is_Money_Time' in df.columns:
+                return df[df['Is_Money_Time'] == True]
+            return df.iloc[0:0]
 
         # ============================================================
         # SEZIONE 1: TUTTE LE SQUADRE (generale + tiri passivi + tiri in Money Time)
@@ -7678,12 +7682,13 @@ with tab7:
         # ============================================================
         st.markdown("---")
         st.subheader("📊 By Team")
-        squadre_us = sorted(set(m['squadra'] for m in partite_filtrate_us))
+        st.caption("Shots TAKEN by the selected team (their own shooters), not shots faced by their goalkeeper.")
+        squadre_us = sorted(set(m['squadra'] for m in partite_tir_filtrate_us))
         if squadre_us:
             squadra_scelta_us = st.selectbox("Select team:", squadre_us, key="us_squadra_scelta")
             includi_pdf_by_team = st.checkbox(f"📄 Include 'By Team — {squadra_scelta_us}' in PDF export", key="us_pdf_include_by_team")
             df_squadra_us = pd.concat(
-                [m['dati'] for m in partite_filtrate_us if m['squadra'] == squadra_scelta_us], ignore_index=True
+                [m['dati'] for m in partite_tir_filtrate_us if m['squadra'] == squadra_scelta_us], ignore_index=True
             )
             _mostra_torta_e_tabella(df_squadra_us, squadra_scelta_us, "us_team", mostra_micro=True)
 
