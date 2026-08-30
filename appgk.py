@@ -5122,76 +5122,92 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                    "Home/Away Save %/Goal % stats. Any single shot whose zone can't be recognized "
                    "(e.g. a tagging typo) is silently skipped rather than blocking the whole file.")
         with st.expander("➕ Add zone-only data to the season"):
-            fz = st.file_uploader('Drag and drop Excel file(s) here (single "Team" column format)',
-                                   type=['xlsx', 'xls'], accept_multiple_files=True, key="upload_zone_only")
-            if fz:
-                pe_zone = []
-                for idx, f in enumerate(fz):
-                    st.markdown(f"**{f.name}**")
-                    col1z, col2z, col3z = st.columns(3)
-                    with col1z:
-                        nm_z = st.text_input('Analysis / Game Name', value=f.name.rsplit('.', 1)[0], key=f'zn_{idx}')
-                    with col2z:
-                        dt_z = st.date_input('Date', value=datetime.now(), key=f"zd_{idx}")
-                    with col3z:
-                        sq_z = st.text_input('Team Name', value='', key=f'zs_{idx}',
-                                              help="The one team all these players belong to — there's no opponent/home-away here.")
-                    if not sq_z:
-                        st.warning(f"Enter a team name for {f.name} before saving.")
-                        continue
-                    try:
-                        f.seek(0)  # il cursore di lettura del file può essere già avanzato da un
-                        # rerun precedente (Streamlit riesegue l'intero script ad ogni digitazione
-                        # nei campi qui sopra) — senza questo, una rilettura può risultare vuota.
-                        df_raw_z = pd.read_excel(f)
-                        df_gk_z, df_tir_z = elabora_file_tag_go(df_raw_z)
-                        df_gk_z = arricchisci_gk_per_database_principale(df_gk_z)
-                        df_tir_z = arricchisci_tir_per_database_principale(df_tir_z)
-                        pe_zone.append({'nome': nm_z, 'data': dt_z, 'squadra': sq_z, 'df_gk': df_gk_z, 'df_tir': df_tir_z})
-                        if df_gk_z.empty and df_tir_z.empty:
-                            st.error(f"→ 0 shots recognized in {f.name}. Check that the file really has "
-                                     f"a 'Team' column and a valid 'RESULT' column with goal/save/miss values.")
-                        else:
-                            st.caption(f"→ {len(df_gk_z)} goalkeeper shot(s), {len(df_tir_z)} shooter shot(s) ready to add.")
-                    except Exception as e:
-                        st.error(f'Error processing file {f.name}: {e}')
+            with st.form(key="form_upload_zone_only", clear_on_submit=True):
+                fz = st.file_uploader('Drag and drop Excel file(s) here (single "Team" column format)',
+                                       type=['xlsx', 'xls'], accept_multiple_files=True, key="upload_zone_only")
+                st.caption("For each file, give it an Analysis/Game Name, a Date, and the single "
+                           "Team Name all its players belong to — then press the button below. "
+                           "Everything (reading the files, recognizing zones, and saving) happens "
+                           "in one single step when you submit.")
+                metadati_per_file = []
+                if fz:
+                    for idx, f in enumerate(fz):
+                        st.markdown(f"**{f.name}**")
+                        col1z, col2z, col3z = st.columns(3)
+                        with col1z:
+                            nm_z = st.text_input('Analysis / Game Name', value=f.name.rsplit('.', 1)[0], key=f'zn_{idx}')
+                        with col2z:
+                            dt_z = st.date_input('Date', value=datetime.now(), key=f"zd_{idx}")
+                        with col3z:
+                            sq_z = st.text_input('Team Name', value='', key=f'zs_{idx}',
+                                                  help="The one team all these players belong to — there's no opponent/home-away here.")
+                        metadati_per_file.append((f, nm_z, dt_z, sq_z))
 
-                if pe_zone and st.button('➕ Save & Add to Season (zone-only)'):
+                inviato = st.form_submit_button('➕ Save & Add to Season (zone-only)')
+
+            # La lavorazione avviene SOLO al submit del form, con i valori esatti raccolti in
+            # quello stesso invio — niente più anteprima separata da un bottone indipendente
+            # (fragile: un click poteva non risultare "fresco" nel rerun giusto e l'aggiunta
+            # non scattava mai, pur sembrando tutto normale a schermo).
+            if inviato:
+                if not fz:
+                    st.warning("No file uploaded.")
+                else:
                     chiavi_gk_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
                     chiavi_tir_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
-                    aggiunte_gk_z, aggiunte_tir_z, duplicati_z = 0, 0, 0
-                    for match_z in pe_zone:
-                        chiave_z = (match_z['nome'], str(match_z['data']), match_z['squadra'])
+                    aggiunte_gk_z, aggiunte_tir_z, duplicati_z, errori_z = 0, 0, 0, 0
+                    for f, nm_z, dt_z, sq_z in metadati_per_file:
+                        if not sq_z:
+                            st.error(f"Skipped {f.name}: no Team Name entered.")
+                            errori_z += 1
+                            continue
+                        try:
+                            f.seek(0)
+                            df_raw_z = pd.read_excel(f)
+                            df_gk_z, df_tir_z = elabora_file_tag_go(df_raw_z)
+                            df_gk_z = arricchisci_gk_per_database_principale(df_gk_z)
+                            df_tir_z = arricchisci_tir_per_database_principale(df_tir_z)
+                        except Exception as e:
+                            st.error(f'Error processing file {f.name}: {e}')
+                            errori_z += 1
+                            continue
+
+                        if df_gk_z.empty and df_tir_z.empty:
+                            st.error(f"0 shots recognized in {f.name}. Check that the file really has "
+                                     f"a 'Team' column and a valid 'RESULT' column with goal/save/miss values.")
+                            errori_z += 1
+                            continue
+
+                        chiave_z = (nm_z, str(dt_z), sq_z)
                         # Il controllo duplicati è separato per ruolo: un file senza tiri portiere
                         # (come i file "solo tiratori") non deve mai essere scartato solo perché
                         # quella stessa chiave esiste per caso nel database PORTIERI, e viceversa.
-                        if not match_z['df_gk'].empty and chiave_z not in chiavi_gk_esistenti:
+                        if not df_gk_z.empty and chiave_z not in chiavi_gk_esistenti:
                             st.session_state['db'].append({
-                                'nome': match_z['nome'], 'data': match_z['data'], 'squadra': match_z['squadra'],
-                                'dati': match_z['df_gk'], 'squadra_home': None, 'squadra_away': None, 'neutro': True
+                                'nome': nm_z, 'data': dt_z, 'squadra': sq_z,
+                                'dati': df_gk_z, 'squadra_home': None, 'squadra_away': None, 'neutro': True
                             })
                             aggiunte_gk_z += 1
-                        elif not match_z['df_gk'].empty:
+                        elif not df_gk_z.empty:
                             duplicati_z += 1
-                        if not match_z['df_tir'].empty and chiave_z not in chiavi_tir_esistenti:
+                        if not df_tir_z.empty and chiave_z not in chiavi_tir_esistenti:
                             st.session_state['db_tiratori'].append({
-                                'nome': match_z['nome'], 'data': match_z['data'], 'squadra': match_z['squadra'],
-                                'dati': match_z['df_tir'], 'squadra_home': None, 'squadra_away': None, 'neutro': True
+                                'nome': nm_z, 'data': dt_z, 'squadra': sq_z,
+                                'dati': df_tir_z, 'squadra_home': None, 'squadra_away': None, 'neutro': True
                             })
                             aggiunte_tir_z += 1
-                        elif not match_z['df_tir'].empty:
+                        elif not df_tir_z.empty:
                             duplicati_z += 1
 
-                    salva_stagione_su_disco(st.session_state['db'])
-                    salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
-
                     if aggiunte_gk_z or aggiunte_tir_z:
+                        salva_stagione_su_disco(st.session_state['db'])
+                        salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
                         st.success(f'Added: {aggiunte_gk_z} goalkeeper entry, {aggiunte_tir_z} shooter entry to the season database. '
                                    f'Season now has {len(st.session_state["db"])} goalkeeper record(s) and '
                                    f'{len(st.session_state["db_tiratori"])} shooter record(s) in total.')
                     if duplicati_z:
                         st.warning(f'{duplicati_z} entry/entries skipped because already present (same name, date and team).')
-                    if not aggiunte_gk_z and not aggiunte_tir_z and not duplicati_z:
+                    if not aggiunte_gk_z and not aggiunte_tir_z and not duplicati_z and not errori_z:
                         st.info('No data to add.')
                     if aggiunte_gk_z or aggiunte_tir_z:
                         st.rerun()
