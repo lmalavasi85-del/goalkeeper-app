@@ -3208,29 +3208,52 @@ def _ottieni_worksheet_stagione():
     try:
         worksheet = foglio.worksheet('SeasonData')
     except Exception:
-        worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=7)
+        worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=50)
         worksheet.append_row(GOOGLE_SHEETS_HEADER)
     return worksheet
 
+# ============================================================
+# Google Sheets limita ogni SINGOLA CELLA a 50.000 caratteri. Una partita con molti tiri (o con
+# tante colonne di tagging avanzato, come i file "zone-only") può facilmente produrre un JSON più
+# lungo di così: se scritto in una sola cella, Google Sheets RIFIUTA la scrittura — e siccome il
+# salvataggio prima cancella il foglio e poi lo riscrive, un fallimento a metà lascia il foglio
+# vuoto, cancellando anche tutte le ALTRE partite già salvate. Per questo il JSON di ogni partita
+# viene sempre spezzato su più celle (una colonna per chunk), ben sotto il limite.
+# ============================================================
+LIMITE_CARATTERI_CELLA_SHEET = 40000
+
+def _dividi_json_in_chunk(dati_json):
+    if not dati_json:
+        return ['']
+    return [dati_json[i:i + LIMITE_CARATTERI_CELLA_SHEET] for i in range(0, len(dati_json), LIMITE_CARATTERI_CELLA_SHEET)]
+
 def _match_a_riga_sheet(match):
+    dati_json = match['dati'].to_json(orient='split', date_format='iso')
+    chunk = _dividi_json_in_chunk(dati_json)
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
-            match['dati'].to_json(orient='split', date_format='iso'),
-            str(bool(match.get('neutro', False)))]
+            str(bool(match.get('neutro', False))), str(len(chunk))] + chunk
 
 def _riga_sheet_a_match(riga):
     from datetime import datetime as _dt
     nome, data_str, squadra = riga[0], riga[1], riga[2]
-    if len(riga) >= 6:
-        squadra_home = riga[3] or None
-        squadra_away = riga[4] or None
+    squadra_home = riga[3] or None if len(riga) > 3 else None
+    squadra_away = riga[4] or None if len(riga) > 4 else None
+    # Formato NUOVO (con chunking): colonna 5 = 'True'/'False' (neutro), colonna 6 = numero di
+    # chunk, poi i chunk stessi. Un JSON vero non può MAI valere letteralmente 'True'/'False',
+    # quindi questo distingue in modo sicuro il formato nuovo da quello vecchio.
+    if len(riga) >= 6 and riga[5].strip() in ('True', 'False'):
+        neutro = riga[5].strip() == 'True'
+        num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
+        dati_json = ''.join(riga[7:7 + num_chunk])
+    elif len(riga) >= 6:
+        # Formato vecchio: colonna 5 = dati_json intero, colonna 6 = neutro (se presente)
         dati_json = riga[5]
+        neutro = riga[6].strip().lower() == 'true' if len(riga) >= 7 else False
     else:
-        # Formato vecchio (senza colonne home/away), per compatibilità con righe già salvate
-        squadra_home = None
-        squadra_away = None
+        # Formato ancora più vecchio (senza colonne home/away)
         dati_json = riga[3]
-    neutro = riga[6].strip().lower() == 'true' if len(riga) >= 7 else False
+        neutro = False
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'GPI_Tiro' in df.columns:
         df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
@@ -3272,9 +3295,20 @@ def salva_stagione_su_disco(db):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_stagione()
+            righe = [_match_a_riga_sheet(m) for m in db]
+            # Validazione PRIMA di cancellare il foglio: se una cella superasse comunque il
+            # limite di Google Sheets (non dovrebbe più succedere, grazie allo spezzettamento in
+            # chunk), meglio fermarsi subito che cancellare il foglio e scoprirlo dopo — è
+            # esattamente così che si è persa la stagione tiratori la volta scorsa.
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking — aborting before touching the sheet.")
+            colonne_necessarie = max([len(r) for r in righe] + [len(GOOGLE_SHEETS_HEADER)])
+            if worksheet.col_count < colonne_necessarie:
+                worksheet.resize(cols=colonne_necessarie)
             worksheet.clear()
             worksheet.append_row(GOOGLE_SHEETS_HEADER)
-            righe = [_match_a_riga_sheet(m) for m in db]
             if righe:
                 worksheet.append_rows(righe)
             return
@@ -3305,23 +3339,32 @@ def _ottieni_worksheet_tiratori():
     try:
         worksheet = foglio.worksheet('ShooterSeasonData')
     except Exception:
-        worksheet = foglio.add_worksheet(title='ShooterSeasonData', rows=2000, cols=7)
+        worksheet = foglio.add_worksheet(title='ShooterSeasonData', rows=2000, cols=50)
         worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json', 'neutro'])
     return worksheet
 
 def _match_a_riga_sheet_tiratori(match):
+    dati_json = match['dati'].to_json(orient='split', date_format='iso')
+    chunk = _dividi_json_in_chunk(dati_json)
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
-            match['dati'].to_json(orient='split', date_format='iso'),
-            str(bool(match.get('neutro', False)))]
+            str(bool(match.get('neutro', False))), str(len(chunk))] + chunk
 
 def _riga_sheet_a_match_tiratori(riga):
     from datetime import datetime as _dt
     nome, data_str, squadra = riga[0], riga[1], riga[2]
     squadra_home = riga[3] if len(riga) > 3 and riga[3] else None
     squadra_away = riga[4] if len(riga) > 4 and riga[4] else None
-    dati_json = riga[5] if len(riga) > 5 else riga[3]
-    neutro = riga[6].strip().lower() == 'true' if len(riga) > 6 else False
+    # Stessa logica di _riga_sheet_a_match: un JSON vero non può mai valere letteralmente
+    # 'True'/'False', quindi questo distingue in modo sicuro il formato nuovo (con chunking)
+    # da quello vecchio (dati_json intero in una sola cella).
+    if len(riga) >= 6 and riga[5].strip() in ('True', 'False'):
+        neutro = riga[5].strip() == 'True'
+        num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
+        dati_json = ''.join(riga[7:7 + num_chunk])
+    else:
+        dati_json = riga[5] if len(riga) > 5 else riga[3]
+        neutro = riga[6].strip().lower() == 'true' if len(riga) > 6 else False
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'Is_Money_Time' in df.columns:
         df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
@@ -3362,12 +3405,20 @@ def carica_stagione_tiratori_da_disco():
     return []
 
 def salva_stagione_tiratori_su_disco(db):
+    intestazione_tiratori = ['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'neutro', 'num_chunk']
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_tiratori()
-            worksheet.clear()
-            worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json', 'neutro'])
             righe = [_match_a_riga_sheet_tiratori(m) for m in db]
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking — aborting before touching the sheet.")
+            colonne_necessarie = max([len(r) for r in righe] + [len(intestazione_tiratori)])
+            if worksheet.col_count < colonne_necessarie:
+                worksheet.resize(cols=colonne_necessarie)
+            worksheet.clear()
+            worksheet.append_row(intestazione_tiratori)
             if righe:
                 worksheet.append_rows(righe)
             return
