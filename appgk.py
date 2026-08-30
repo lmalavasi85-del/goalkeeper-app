@@ -8054,47 +8054,76 @@ with tab7:
             "Filter by:", ["All Data & All Time", "Championship", "Date Range", "Custom Match Selection"],
             horizontal=True, key="us_modo_filtro"
         )
-        partite_filtrate_us = st.session_state['db']
+
+        campionato_us = None
+        data_inizio_us = data_fine_us = None
+        chiavi_custom_us = None
 
         if modo_filtro_us == "Championship":
             nomi_camp_us = [c['nome'] for c in st.session_state['campionati']]
             if nomi_camp_us:
                 scelta_camp_us = st.selectbox("Championship:", nomi_camp_us, key="us_campionato_scelto")
                 campionato_us = next(c for c in st.session_state['campionati'] if c['nome'] == scelta_camp_us)
-                partite_filtrate_us = partite_in_campionato(st.session_state['db'], campionato_us)
             else:
                 st.info("No championships created yet — showing All Data & All Time instead.")
 
         elif modo_filtro_us == "Date Range":
-            date_disponibili_us = [m['data'] for m in st.session_state['db']]
-            data_min_us, data_max_us = min(date_disponibili_us), max(date_disponibili_us)
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                data_inizio_us = st.date_input("From:", value=data_min_us, key="us_data_inizio")
-            with col_d2:
-                data_fine_us = st.date_input("To:", value=data_max_us, key="us_data_fine")
-            partite_filtrate_us = [m for m in st.session_state['db'] if data_inizio_us <= m['data'] <= data_fine_us]
+            tutte_le_date_us = [m['data'] for m in st.session_state['db']] + [m['data'] for m in st.session_state.get('db_tiratori', [])]
+            if tutte_le_date_us:
+                data_min_us, data_max_us = min(tutte_le_date_us), max(tutte_le_date_us)
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    data_inizio_us = st.date_input("From:", value=data_min_us, key="us_data_inizio")
+                with col_d2:
+                    data_fine_us = st.date_input("To:", value=data_max_us, key="us_data_fine")
 
         elif modo_filtro_us == "Custom Match Selection":
-            opzioni_match_us = [f"{p['nome']} ({p['data']}) - {p['squadra']}" for p in st.session_state['db']]
+            # Le opzioni includono le partite di ENTRAMBI i database (portieri e tiratori): una
+            # partita "solo tiratori" (es. un import zone-only) deve poter essere selezionata
+            # anche se non ha alcuna controparte nel database portieri.
+            chiavi_viste_us = {}
+            for p in st.session_state['db'] + st.session_state.get('db_tiratori', []):
+                chiavi_viste_us[(p['nome'], str(p['data']), p['squadra'])] = True
+            opzioni_match_us = sorted(f"{n} ({d}) - {s}" for (n, d, s) in chiavi_viste_us.keys())
             selezione_match_us = st.multiselect("Select matches:", opzioni_match_us, key="us_match_scelti")
             if selezione_match_us:
-                etichette_us = {f"{p['nome']} ({p['data']}) - {p['squadra']}": p for p in st.session_state['db']}
-                partite_filtrate_us = [etichette_us[e] for e in selezione_match_us]
+                chiavi_custom_us = set()
+                for etichetta in selezione_match_us:
+                    for (n, d, s) in chiavi_viste_us.keys():
+                        if f"{n} ({d}) - {s}" == etichetta:
+                            chiavi_custom_us.add((n, d))
             else:
                 st.info("No matches selected — showing All Data & All Time instead.")
 
-        if not partite_filtrate_us:
+        def _filtra_elenco_us(elenco_partite):
+            """Applica la modalità di filtro scelta a un elenco di partite qualsiasi (portieri o
+            tiratori, indipendentemente) — mai un incrocio con le chiavi dell'ALTRO database, o
+            una partita presente solo in uno dei due (come un import zone-only, che non ha mai
+            controparte portieri) sparirebbe sempre, a prescindere da come è stata salvata."""
+            if modo_filtro_us == "Championship" and campionato_us:
+                return partite_in_campionato(elenco_partite, campionato_us)
+            elif modo_filtro_us == "Date Range" and data_inizio_us and data_fine_us:
+                return [m for m in elenco_partite if data_inizio_us <= m['data'] <= data_fine_us]
+            elif modo_filtro_us == "Custom Match Selection" and chiavi_custom_us:
+                return [m for m in elenco_partite if (m['nome'], str(m['data'])) in chiavi_custom_us]
+            return elenco_partite
+
+        partite_filtrate_us = _filtra_elenco_us(st.session_state['db'])
+        partite_tir_filtrate_us = _filtra_elenco_us(st.session_state.get('db_tiratori', []))
+
+        if not partite_filtrate_us and not partite_tir_filtrate_us:
             st.warning("No matches match this filter — showing All Data & All Time instead.")
             partite_filtrate_us = st.session_state['db']
+            partite_tir_filtrate_us = st.session_state.get('db_tiratori', [])
 
-        df_universale = pd.concat([m['dati'] for m in partite_filtrate_us], ignore_index=True) if partite_filtrate_us else pd.DataFrame()
+        # df_universale: i tiri lato portieri + i tiri lato tiratori delle SOLE partite che non
+        # hanno alcuna controparte nel database portieri (come gli import zone-only) — evita di
+        # contare due volte i tiri delle partite normali, già presenti su entrambi i lati.
+        chiavi_gk_presenti_us = {(m['nome'], str(m['data'])) for m in partite_filtrate_us}
+        partite_tir_solo_tiratori_us = [m for m in partite_tir_filtrate_us if (m['nome'], str(m['data'])) not in chiavi_gk_presenti_us]
+        frammenti_universale_us = [m['dati'] for m in partite_filtrate_us] + [m['dati'] for m in partite_tir_solo_tiratori_us]
+        df_universale = pd.concat(frammenti_universale_us, ignore_index=True) if frammenti_universale_us else pd.DataFrame()
 
-        # Stessa selezione di partite, applicata anche ai dati tiratori (stesso file, stesso
-        # nome/data) — usata più sotto per le classifiche tiratori.
-        chiavi_partite_filtrate_us = {(m['nome'], str(m['data'])) for m in partite_filtrate_us}
-        partite_tir_filtrate_us = [m for m in st.session_state.get('db_tiratori', [])
-                                    if (m['nome'], str(m['data'])) in chiavi_partite_filtrate_us]
         df_tiratori_universale = pd.concat([m['dati'] for m in partite_tir_filtrate_us], ignore_index=True) \
             if partite_tir_filtrate_us else pd.DataFrame()
 
