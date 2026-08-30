@@ -2107,7 +2107,8 @@ def calcola_tiri_hot_cold(elenco_partite, giocatore):
 def _mostra_porta_tastiera_hot_cold(df_sorgente, chiave_prefix):
     """Porta (ridotta) + tastiera cliccabile affiancata (heat map delle micro-zone), per le
     mappe Hot/Cold: cliccando una micro-zona sulla tastiera si isola quella zona nella porta
-    (T1-T9), esattamente come nelle altre Shot Map dell'app."""
+    (T1-T9), esattamente come nelle altre Shot Map dell'app — cornice colorata (verde/giallo/
+    rosso) in base al confronto con la % realizzativa attesa (Expected Goals) per quella zona."""
     key_focus = f"tasto_focus_hc_{chiave_prefix}"
     if key_focus not in st.session_state:
         st.session_state[key_focus] = None
@@ -2115,9 +2116,17 @@ def _mostra_porta_tastiera_hot_cold(df_sorgente, chiave_prefix):
         st.session_state[key_focus] = None
     tasto_sel = st.session_state[key_focus]
 
-    df_porta = df_sorgente[df_sorgente['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel] if tasto_sel else df_sorgente
+    if tasto_sel:
+        df_porta = df_sorgente[df_sorgente['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel]
+        _, tot_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_porta)
+        expected_sel = ottieni_expected_goal_pct(tasto_sel)
+        colore_cornice = _colore_expected(pct_sel if tot_sel > 0 else None, expected_sel)
+    else:
+        df_porta = df_sorgente
+        colore_cornice = None
+
     tot_porta, goal_porta = costruisci_conteggi_porta(df_porta)
-    fig_porta = disegna_porta(tot_porta, goal_porta)
+    fig_porta = disegna_porta(tot_porta, goal_porta, colore_cornice=colore_cornice)
     tot_tast, goal_tast = costruisci_conteggi_tastiera(df_sorgente)
 
     col_p, col_t = st.columns([1, 3])
@@ -5788,7 +5797,7 @@ with tab2:
                         df_per_porta_gk = df_gk_filtrato[df_gk_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_gk]
                         s_sel_gk, g_sel_gk, m_sel_gk, pct_sel_gk, eff_sel_gk = calcola_metriche_gruppo(df_per_porta_gk)
                         expected_sel_gk = ottieni_expected_pct(tasto_sel_gk)
-                        colore_cornice_gk = _colore_expected(pct_sel_gk if len(df_per_porta_gk) > 0 else None, expected_sel_gk)
+                        colore_cornice_gk = _colore_expected(eff_sel_gk if len(df_per_porta_gk) > 0 else None, expected_sel_gk)
                     else:
                         df_per_porta_gk = df_gk_filtrato
                         colore_cornice_gk = None
@@ -6372,9 +6381,9 @@ with tab3:
 
                     if tasto_sel_gk_stag:
                         df_per_porta_gk_stag = df_gk_stag_filtrato[df_gk_stag_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_gk_stag]
-                        s_sel_stag, _, _, pct_sel_stag, _ = calcola_metriche_gruppo(df_per_porta_gk_stag)
+                        s_sel_stag, _, _, pct_sel_stag, eff_sel_stag = calcola_metriche_gruppo(df_per_porta_gk_stag)
                         expected_sel_stag = ottieni_expected_pct(tasto_sel_gk_stag)
-                        colore_cornice_gk_stag = _colore_expected(pct_sel_stag if len(df_per_porta_gk_stag) > 0 else None, expected_sel_stag)
+                        colore_cornice_gk_stag = _colore_expected(eff_sel_stag if len(df_per_porta_gk_stag) > 0 else None, expected_sel_stag)
                     else:
                         df_per_porta_gk_stag = df_gk_stag_filtrato
                         colore_cornice_gk_stag = None
@@ -7534,7 +7543,7 @@ with tab6:
                         df_porta_tg_gk = df_tg_gk_filtrato[df_tg_gk_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_tg_gk]
                         expected_sel_tg_gk = ottieni_expected_pct(tasto_sel_tg_gk)
                         s_reale, g_reale, m_reale, pct_reale, eff_reale = calcola_metriche_gruppo(df_porta_tg_gk)
-                        colore_cornice_tg_gk = _colore_expected(pct_reale if len(df_porta_tg_gk) > 0 else None, expected_sel_tg_gk)
+                        colore_cornice_tg_gk = _colore_expected(eff_reale if len(df_porta_tg_gk) > 0 else None, expected_sel_tg_gk)
                     else:
                         df_porta_tg_gk = df_tg_gk_filtrato
                         colore_cornice_tg_gk = None
