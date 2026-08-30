@@ -163,11 +163,11 @@ ETICHETTA_MACRO_UNIVERSALE = {'7m': '7m', 'lw': 'LW', 'rw': 'RW', '6m': '6M', 'b
 
 def tabella_distribuzione_macro_universale(df):
     """df: dataframe con colonne TIRO_CLEAN e RESULT_CLEAN (va bene sia il formato portieri sia
-    quello tiratori). Restituisce un DataFrame con Macro-Zone/Goals/Shots/Goal %/Result, ordinato
+    quello tiratori). Restituisce un DataFrame con Macro-Sector/Goals/Shots/Goal %/Result, ordinato
     per % realizzativa decrescente; a parità, per volume di tiri decrescente; a ulteriore parità,
     in ordine alfabetico/numerico dell'etichetta. Macro-zone senza tiri non compaiono."""
     if df.empty or 'TIRO_CLEAN' not in df.columns:
-        return pd.DataFrame(columns=['Macro-Zone', 'Goals', 'Shots', 'Goal %', 'Result'])
+        return pd.DataFrame(columns=['Macro-Sector', 'Goals', 'Shots', 'Goal %', 'Result'])
     righe = []
     macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore)
     for macro in ORDINE_MACRO_UNIVERSALE:
@@ -177,11 +177,11 @@ def tabella_distribuzione_macro_universale(df):
             continue
         goal = len(df_m[df_m['RESULT_CLEAN'].isin(['goal', 'g'])])
         pct = goal / tot * 100
-        righe.append({'Macro-Zone': ETICHETTA_MACRO_UNIVERSALE[macro], 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
+        righe.append({'Macro-Sector': ETICHETTA_MACRO_UNIVERSALE[macro], 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
     df_r = pd.DataFrame(righe)
     if df_r.empty:
-        return pd.DataFrame(columns=['Macro-Zone', 'Goals', 'Shots', 'Goal %', 'Result'])
-    df_r = df_r.sort_values(by=['Goal %', 'Shots', 'Macro-Zone'], ascending=[False, False, True]).reset_index(drop=True)
+        return pd.DataFrame(columns=['Macro-Sector', 'Goals', 'Shots', 'Goal %', 'Result'])
+    df_r = df_r.sort_values(by=['Goal %', 'Shots', 'Macro-Sector'], ascending=[False, False, True]).reset_index(drop=True)
     df_r['Result'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
     return df_r
 
@@ -190,7 +190,7 @@ def tabella_distribuzione_micro_universale(df):
     tastiera usata ovunque nel software (lw1, lw2, ... fb3), nell'ordine naturale della
     pulsantiera. Per ciascun microsettore: % realizzativa, % sul totale di tutti i tiri della
     selezione, e % sul totale del proprio macro-settore. Microsettori senza tiri non compaiono."""
-    colonne_vuote = ['Sector', 'Macro-Zone', 'Goal % (Shots)', '% of Total', '% of Macro-Zone']
+    colonne_vuote = ['Sector', 'Macro-Sector', 'Goal % (Shots)', '% of Total', '% of Macro-Sector']
     if df.empty or 'TIRO_CLEAN' not in df.columns:
         return pd.DataFrame(columns=colonne_vuote)
     zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona)
@@ -207,7 +207,7 @@ def tabella_distribuzione_micro_universale(df):
         macro_s = mappa_macro_settore(settore)
         tot_macro = totali_macro.get(macro_s, 0)
         righe.append({
-            'Sector': settore, 'Macro-Zone': ETICHETTA_MACRO_UNIVERSALE.get(macro_s, macro_s or '—'),
+            'Sector': settore, 'Macro-Sector': ETICHETTA_MACRO_UNIVERSALE.get(macro_s, macro_s or '—'),
             'Goals': goal_s, 'Shots': tot_s, 'Goal %': round(goal_s / tot_s * 100, 1),
             'TotShots': totale_tiri, 'MacroShots': tot_macro,
         })
@@ -220,7 +220,7 @@ def tabella_distribuzione_micro_universale(df):
     df_r['Goal % (Shots)'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
     df_r['% of Total'] = df_r.apply(
         lambda r: f"{int(r['Shots'])}/{int(r['TotShots'])} = {r['Shots'] / r['TotShots'] * 100:.0f}%" if r['TotShots'] > 0 else "0/0 = 0%", axis=1)
-    df_r['% of Macro-Zone'] = df_r.apply(
+    df_r['% of Macro-Sector'] = df_r.apply(
         lambda r: f"{int(r['Shots'])}/{int(r['MacroShots'])} = {r['Shots'] / r['MacroShots'] * 100:.0f}%" if r['MacroShots'] > 0 else "0/0 = 0%", axis=1)
     return df_r[colonne_vuote]
 
@@ -234,8 +234,8 @@ def disegna_torta_macro_universale(df_distribuzione, titolo=None):
         ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14, color='gray')
         ax.axis('off')
     else:
-        colori = [colori_torta.get(m, '#cccccc') for m in df_distribuzione['Macro-Zone']]
-        ax.pie(df_distribuzione['Shots'], labels=df_distribuzione['Macro-Zone'], autopct='%1.1f%%',
+        colori = [colori_torta.get(m, '#cccccc') for m in df_distribuzione['Macro-Sector']]
+        ax.pie(df_distribuzione['Shots'], labels=df_distribuzione['Macro-Sector'], autopct='%1.1f%%',
                colors=colori, startangle=90, textprops={'fontsize': 11})
     if titolo:
         ax.set_title(titolo, fontsize=13, color='#15304f', fontweight='bold')
@@ -2062,7 +2062,48 @@ def calcola_metriche_tiratori_gruppo(df):
     return goal, tot, pct
 
 # ============================================================
-# GIOCO PASSIVO: isola i tiri taggati "Passivo" nella colonna "TIRO 7M/PASSIVO/RIM. VEL./2A
+# STATO DI FORMA (Hot/Cold/Neutral): a partire dal terzo tiro di un giocatore in UNA partita
+# (lo stato si azzera a ogni nuova partita), guarda i 2 tiri immediatamente precedenti in ordine
+# cronologico. Hot = entrambi gol, Cold = entrambi non-gol, Neutral = uno e uno (ignorato nelle
+# statistiche, non rilevante).
+# ============================================================
+def _assegna_stato_forma_singola_partita(df_giocatore_match):
+    """df_giocatore_match: tiri di UN giocatore in UNA sola partita. Restituisce lo stesso
+    dataframe (ordinato cronologicamente per minuto) con una colonna 'Stato_Forma' aggiunta
+    (None per i primi due tiri, dove non è calcolabile)."""
+    df_ordinato = df_giocatore_match.sort_values('Minuti_Gara').reset_index(drop=True)
+    esiti = df_ordinato['RESULT_CLEAN'].tolist()
+    stati = [None] * len(esiti)
+    for i in range(2, len(esiti)):
+        prec1_gol = esiti[i - 2] in ('goal', 'g')
+        prec2_gol = esiti[i - 1] in ('goal', 'g')
+        if prec1_gol and prec2_gol:
+            stati[i] = 'Hot'
+        elif not prec1_gol and not prec2_gol:
+            stati[i] = 'Cold'
+        else:
+            stati[i] = 'Neutral'
+    df_ordinato['Stato_Forma'] = stati
+    return df_ordinato
+
+def calcola_tiri_hot_cold(elenco_partite, giocatore):
+    """elenco_partite: lista di partite (voci di db_tiratori) su cui calcolare lo stato di
+    forma — lo stato si azzera a ogni partita, quindi ciascuna viene processata separatamente e
+    poi i risultati si aggregano. Restituisce (df_tiri_hot, df_tiri_cold): i sottoinsiemi di tiri
+    del giocatore presi rispettivamente in stato Hot e in stato Cold, su tutte le partite."""
+    colonne_vuote = elenco_partite[0]['dati'].columns if elenco_partite else []
+    frammenti_hot, frammenti_cold = [], []
+    for m in elenco_partite:
+        df_giocatore_m = m['dati'][m['dati']['TIRATORE_ID'] == giocatore]
+        if len(df_giocatore_m) < 3:
+            continue
+        df_stato = _assegna_stato_forma_singola_partita(df_giocatore_m)
+        frammenti_hot.append(df_stato[df_stato['Stato_Forma'] == 'Hot'])
+        frammenti_cold.append(df_stato[df_stato['Stato_Forma'] == 'Cold'])
+    df_hot = pd.concat(frammenti_hot, ignore_index=True) if frammenti_hot else pd.DataFrame(columns=colonne_vuote)
+    df_cold = pd.concat(frammenti_cold, ignore_index=True) if frammenti_cold else pd.DataFrame(columns=colonne_vuote)
+    return df_hot, df_cold
+
 # FASE" (dimensione di tagging avanzato CONTESTO_TIRO, catturata sia per portieri sia per
 # tiratori). Statistica interessante solo su volumi alti: mostrata sempre in Seasonal Report
 # (portieri) e Shooting Trend Analysis (tiratori, squadra e singolo), mai nel report di partita
@@ -4141,7 +4182,7 @@ def genera_pdf_universal_stats(titolo_report, sezioni):
                 tabella_macro = Paragraph("No shots in this selection.", stili['Normal'])
             else:
                 tabella_macro = _df_to_reportlab_table(
-                    df_distribuzione[['Macro-Zone', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}), font_size=10)
+                    df_distribuzione[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}), font_size=10)
             riga = Table([[img_torta, tabella_macro]], colWidths=[9.5 * cm, 14 * cm])
             riga.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
             elementi.append(KeepTogether([Paragraph(sezione['titolo'], sezione_stile), Spacer(1, 0.2 * cm), riga]))
@@ -4414,12 +4455,34 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
                 Spacer(1, 0.3 * cm), tabella_volume_mt
             ])])
 
-        # Pagina 3: statistiche per macro-zona di squadra (ingrandita, da sola)
-        pagina3 = [
+        # Pagina 3: statistiche per macro-zona di squadra (ingrandita), più sotto la stessa
+        # scomposizione a macro-settore (7m/LW/RW/6M/9M/BT/FB) usata in Universal Stats — stessa
+        # nomenclatura "macro-sector" per distinguerla dalla "macro-zone" (Sector 1/1.5/2...).
+        distribuzione_macro_settore_pdf = tabella_distribuzione_macro_universale(df_squadra_riepilogo)
+        pagina3 = [KeepTogether([
             Paragraph("By Macro-Zone (team total)", sezione_stile), Spacer(1, 0.3 * cm),
             _df_to_reportlab_table(tabella_macro_tiratori(df_squadra_riepilogo), font_size=12),
-        ]
+        ])]
+        pagina3.append(Spacer(1, 0.5 * cm))
+        if distribuzione_macro_settore_pdf.empty:
+            tabella_macro_settore_pdf = Paragraph("No shots in this selection.", stili['Normal'])
+        else:
+            tabella_macro_settore_pdf = _df_to_reportlab_table(
+                distribuzione_macro_settore_pdf[['Macro-Sector', 'Result']].rename(
+                    columns={'Result': 'Goal % (Shots)'}), font_size=12)
+        pagina3.append(KeepTogether([
+            Paragraph("Goal % by macro-sector (team total)", sezione_stile), Spacer(1, 0.3 * cm), tabella_macro_settore_pdf,
+        ]))
         blocchi_pagine.append(pagina3)
+
+        # Pagina successiva: grafico a torta della distribuzione per macro-settore (lo stesso
+        # tipo di grafico usato in Universal Stats).
+        fig_torta_macro_settore_pdf = disegna_torta_macro_universale(distribuzione_macro_settore_pdf, titolo=None)
+        img_torta_macro_settore_pdf = _immagine_da_figura_matplotlib(fig_torta_macro_settore_pdf, 15, 13.8)
+        blocchi_pagine.append([
+            Paragraph("Macro-Sector Shot Distribution (team total)", sezione_stile), Spacer(1, 0.3 * cm),
+            img_torta_macro_settore_pdf,
+        ])
 
     if mappe_extra:
         mappe_valide = [m for m in mappe_extra if not m['df'].empty]
@@ -6526,6 +6589,37 @@ with tab4:
                         st.caption("Shots tagged 'Passivo' in Videocoach — a meaningful stat only over high shot volumes.")
                         st.markdown(f"**Goal %:** {pct_pas:.1f}%  |  **Shots:** {tot_pas}  |  **Goals:** {goal_pas}")
 
+                    # ---- Hot/Cold Form: stato di forma basato sui 2 tiri precedenti nella stessa
+                    # partita (si azzera ad ogni nuova partita), dal 3° tiro in poi ----
+                    df_hot_giocatore, df_cold_giocatore = calcola_tiri_hot_cold(match_filtrati, giocatore_scelto_tir)
+                    if not df_hot_giocatore.empty or not df_cold_giocatore.empty:
+                        goal_hot, tot_hot, pct_hot = calcola_metriche_tiratori_gruppo(df_hot_giocatore)
+                        goal_cold, tot_cold, pct_cold = calcola_metriche_tiratori_gruppo(df_cold_giocatore)
+                        st.markdown("---")
+                        st.subheader(f"🔥❄️ Hot / Cold Form — {titolo_dashboard}")
+                        st.caption("From the 3rd shot in a match onward (the streak resets every match): "
+                                   "'Hot' = scored the previous 2 shots, 'Cold' = missed the previous 2 "
+                                   "(save or miss). A 1-1 mix ('Neutral') isn't shown — not informative.")
+                        ch1, ch2 = st.columns(2)
+                        ch1.metric("🔥 Hot Goal %", f"{pct_hot:.1f}%", help=f"{goal_hot}/{tot_hot} shots")
+                        ch2.metric("❄️ Cold Goal %", f"{pct_cold:.1f}%", help=f"{goal_cold}/{tot_cold} shots")
+                        if st.button("🗺️ Show Hot/Cold shot maps", key=f"mostra_hc_{_chiave_css_sicura(titolo_dashboard)}"):
+                            colh, colc = st.columns(2)
+                            with colh:
+                                st.markdown(f"**🔥 Hot Shot Map** ({tot_hot} shots)")
+                                if tot_hot > 0:
+                                    tot_p_hot, goal_p_hot = costruisci_conteggi_porta(df_hot_giocatore)
+                                    st.pyplot(disegna_porta(tot_p_hot, goal_p_hot, titolo="Hot"))
+                                else:
+                                    st.caption("No Hot-state shots in this selection.")
+                            with colc:
+                                st.markdown(f"**❄️ Cold Shot Map** ({tot_cold} shots)")
+                                if tot_cold > 0:
+                                    tot_p_cold, goal_p_cold = costruisci_conteggi_porta(df_cold_giocatore)
+                                    st.pyplot(disegna_porta(tot_p_cold, goal_p_cold, titolo="Cold"))
+                                else:
+                                    st.caption("No Cold-state shots in this selection.")
+
                     # ---- Match History: solo le partite in cui ha effettuato almeno un tiro ----
                     st.markdown("---")
                     st.subheader(f"📅 Match History — {titolo_dashboard}")
@@ -7574,7 +7668,7 @@ with tab6:
 with tab7:
     st.header("🌍 Universal Stats")
     st.caption("Shot distribution across the whole software (or a filtered subset), broken down by "
-               "macro-zone (LW, RW, 6M, BT, 9M, 7m, FB) — independent of goalkeeper vs shooter role.")
+               "macro-sector (LW, RW, 6M, BT, 9M, 7m, FB) — independent of goalkeeper vs shooter role.")
 
     if not st.session_state['db']:
         st.info("No data yet — upload some match sheets first.")
@@ -7639,11 +7733,11 @@ with tab7:
                 fig_torta = disegna_torta_macro_universale(df_distribuzione, titolo=titolo_torta)
                 st.pyplot(fig_torta, use_container_width=True)
             with col_tabella:
-                st.markdown(f"**Goal % by macro-zone — {titolo_torta}**")
+                st.markdown(f"**Goal % by macro-sector — {titolo_torta}**")
                 if df_distribuzione.empty:
                     st.caption("No shots in this selection.")
                 else:
-                    st.dataframe(df_distribuzione[['Macro-Zone', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}),
+                    st.dataframe(df_distribuzione[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}),
                                  use_container_width=True, hide_index=True, key=f"tabella_{chiave}")
             if mostra_micro:
                 st.markdown(f"**Goal % by specific sector — {titolo_torta}**")
@@ -7716,7 +7810,7 @@ with tab7:
             else:
                 st.dataframe(df_generale, use_container_width=True, hide_index=True)
                 if sotto_tabelle:
-                    with st.expander("📂 By macro-zone"):
+                    with st.expander("📂 By macro-sector"):
                         for etichetta_macro, df_macro in sotto_tabelle.items():
                             st.markdown(f"**{etichetta_macro}**")
                             st.dataframe(df_macro, use_container_width=True, hide_index=True)
@@ -7727,7 +7821,7 @@ with tab7:
             gen_gk_us, sotto_gk_us, "🧤 Goalkeeper Rankings",
             "Only goalkeepers with at least 100 total shots faced in this selection are ranked — "
             "sorted by Save %, then Efficiency %, then shots faced. The same 100-shot threshold "
-            "(on the TOTAL, not per macro-zone) applies to every macro-zone breakdown below too.",
+            "(on the TOTAL, not per macro-sector) applies to every macro-sector breakdown below too.",
             "us_pdf_include_gk_rank"
         )
 
@@ -7736,7 +7830,7 @@ with tab7:
             gen_tir_us, sotto_tir_us, "🎯 Shooter Rankings",
             "Only shooters with at least 20 total shots taken in this selection are ranked — "
             "sorted by Goal %, then shots taken. The same 20-shot threshold (on the TOTAL, not "
-            "per macro-zone) applies to every macro-zone breakdown below too.",
+            "per macro-sector) applies to every macro-sector breakdown below too.",
             "us_pdf_include_shooter_rank"
         )
 
