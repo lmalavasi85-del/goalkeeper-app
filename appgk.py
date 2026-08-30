@@ -428,6 +428,60 @@ ETICHETTA_MACRO_TIRATORI = {
     '1': 'Zone 1', '1,5': 'Zone 1.5', '2': 'Zone 2', '2,5': 'Zone 2.5', '3': 'Zone 3',
 }
 
+# ============================================================
+# FORMATO "TURCHIA" (federazione turca): alcuni file non usano direttamente i codici di
+# micro-zona standard (lw1, 6m2, bt2,5 ecc.) nella colonna TIRO, ma li spalmano su tre colonne
+# separate (TIRO grezzo + THROW SECTOR + SETTORE DEL CAMPO) che vanno combinate per ricostruire
+# la micro-zona esatta del pannello di tagging. Attivo automaticamente solo quando il file ha
+# davvero una colonna "SETTORE DEL CAMPO" (i file Tag & Go normali non ce l'hanno).
+# ============================================================
+MAPPA_ZONE_TIRO_TURCHIA = {
+    ('7m', '7M', '-'): '7m',
+    ('asx', 'LA', '-'): 'lw1',
+    ('asx', '6M-L', '-'): 'lw2',
+    ('adx', 'RA', '-'): 'rw1',
+    ('adx', '6M-R', '-'): 'rw2',
+    ('6m', '6M-L', '1'): '6m1',
+    ('6m', '6M-L', '1,5'): '6m1,5',
+    ('6m', '6M-ML', '2'): '6m2',
+    ('6m', '6M-MR', '2'): '6m2',
+    ('6m', '6M-R', '2,5'): '6m2,5',
+    ('6m', '6M-R', '3'): '6m3',
+    ('6mbt', '6M-L', '1'): 'bt1',
+    ('6mbt', '6M-L', '1,5'): 'bt1,5',
+    ('6mbt', '6M-ML', '2'): 'bt2',
+    ('6mbt', '6M-MR', '2'): 'bt2',
+    ('6mbt', '6M-R', '2,5'): 'bt2,5',
+    ('6mbt', '6M-R', '3'): 'bt3',
+    ('9m', 'RL', '1'): '9m1',
+    ('9m', 'RL', '1,5'): '9m1,5',
+    ('9m', 'RM-L', '2'): '9m2',
+    ('9m', 'RM-R', '2'): '9m2',
+    ('9m', 'RR', '2,5'): '9m2,5',
+    ('9m', 'RR', '3'): '9m3',
+    ('contropiede', 'COUNTERATTACK', '1'): 'fb1',
+    ('contropiede', 'COUNTERATTACK', '1,5'): 'fb1',
+    ('contropiede', 'COUNTERATTACK', '2'): 'fb2',
+    ('contropiede', 'COUNTERATTACK', '2,5'): 'fb3',
+    ('contropiede', 'COUNTERATTACK', '3'): 'fb3',
+}
+
+def _normalizza_settore_campo_turchia(v):
+    if pd.isna(v):
+        return '-'
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
+
+def traduci_zona_turchia(tiro_raw, throw_sector_raw, settore_campo_raw):
+    """Ricostruisce la micro-zona standard (es. '6m2', 'bt2,5', 'lw1') a partire dalle tre
+    colonne grezze del formato Turchia. Restituisce None se la combinazione non è mappata (in
+    tal caso la riga va scartata, non indovinata)."""
+    tiro_norm = str(tiro_raw).strip().lower().rstrip('+- ').strip()
+    throw_norm = str(throw_sector_raw).strip().upper() if pd.notna(throw_sector_raw) else '-'
+    settore_norm = _normalizza_settore_campo_turchia(settore_campo_raw)
+    return MAPPA_ZONE_TIRO_TURCHIA.get((tiro_norm, throw_norm, settore_norm))
+
 def mappa_macro_settore_tiratori(zona):
     z = _normalizza_zona(zona)
     if z == '7m':
@@ -1948,6 +2002,35 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
 
     return df_gk_home, df_gk_away, df_tir_home, df_tir_away, df_h2h, df_tiro_portiere
 
+def arricchisci_gk_per_database_principale(df_gk):
+    """Rende compatibili con TUTTO il resto dell'app (Single Game, Seasonal, Universal Stats
+    ecc.) i dati portieri prodotti da elabora_file_tag_go, che non hanno alcun concetto di
+    timeline/minuto/punteggio — usato quando questi dati vengono inseriti nel database
+    principale (non nello storage isolato di Tag & Go) per arricchirlo in modo permanente.
+    GPI viene comunque calcolato correttamente (in base a macro-settore ed esito), semplicemente
+    non potrà mai risultare Money Time, dato che non esiste un vero minuto di gara."""
+    if df_gk.empty:
+        return df_gk
+    df = df_gk.copy()
+    df['Minuti_Gara'] = 0
+    df['Scarto_Punteggio'] = 0
+    risultati_gpi = df.apply(lambda r: calcola_gpi_riga(r['macro_settore'], r['RESULT_CLEAN'], 0, 0), axis=1)
+    df['GPI_Tiro'] = risultati_gpi.apply(lambda t: t[0])
+    df['Is_Stress_Test'] = False
+    return df
+
+def arricchisci_tir_per_database_principale(df_tir):
+    """Come arricchisci_gk_per_database_principale, ma per i tiratori: nessun GPI qui (i
+    tiratori non ne hanno), solo i campi che il resto dell'app si aspetta di trovare."""
+    if df_tir.empty:
+        return df_tir
+    df = df_tir.copy()
+    df['Minuti_Gara'] = 0
+    df['Scarto_Punteggio'] = 0
+    df['Is_Money_Time'] = False
+    df['Blocco_10m'] = '-'
+    return df
+
 def elabora_file_tag_go(df_raw):
     """Parsing dedicato a Tag & Go Analysis: un file di soli tiri estrapolati da video diversi,
     senza concetto di partita/squadra home-away. Una sola colonna 'Team' identifica chi è stato
@@ -1968,13 +2051,20 @@ def elabora_file_tag_go(df_raw):
     c_result = _trova_colonna(['result', 'esito', 'risultato'])
     c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
     c_throwsector = _trova_colonna(['throw sector', 'throw_sector'])
+    c_settorecampo = _trova_colonna(['settore del campo', 'settore campo', 'field sector'])
     colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
 
     mancanti = [nome for nome, val in [('TEAM', c_team), ('TIRO', c_tiro), ('RESULT', c_result)] if val is None]
     if mancanti:
         raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
 
+    # Formato "Turchia": la micro-zona non è già pronta nella colonna TIRO, va ricostruita
+    # combinando TIRO + THROW SECTOR + SETTORE DEL CAMPO. Si attiva solo se il file ha
+    # davvero questa terza colonna (i file Tag & Go normali non la hanno).
+    formato_turchia = c_settorecampo is not None
+
     righe_gk, righe_tir = [], []
+    righe_zona_non_riconosciuta = 0
     for _, r in df_raw.iterrows():
         val = str(r[c_team]).strip() if pd.notna(r[c_team]) else ''
         if not val:
@@ -1983,21 +2073,34 @@ def elabora_file_tag_go(df_raw):
         if not e_risultato_valido(result):
             continue
 
+        if formato_turchia:
+            valore_tiro = traduci_zona_turchia(r[c_tiro], r[c_throwsector] if c_throwsector is not None else None, r[c_settorecampo])
+            if valore_tiro is None:
+                righe_zona_non_riconosciuta += 1
+                continue
+        else:
+            valore_tiro = r[c_tiro]
+
         goal_sector = r[c_goalsector] if c_goalsector is not None else None
         throw_sector = r[c_throwsector] if c_throwsector is not None else None
         porta_vuota = e_porta_vuota(throw_sector)
         valori_avanzati = {nome_colonna: r[nome_colonna] for nome_colonna in colonne_avanzate_trovate.values()}
 
         if _e_portiere(val):
-            riga_gk = {'PORTIERE': val, 'TIRO': r[c_tiro], 'RESULT': result, 'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
+            riga_gk = {'PORTIERE': val, 'TIRO': valore_tiro, 'RESULT': result, 'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
             riga_gk.update({k: v for k, v in valori_avanzati.items()
                              if any(k == nc for chiave, nc in colonne_avanzate_trovate.items() if chiave in DIMENSIONI_TAGGING_PORTIERE)})
             righe_gk.append(riga_gk)
         else:
-            riga_tir = {'TIRATORE': val, 'TIRO': r[c_tiro], 'RESULT': result, 'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
+            riga_tir = {'TIRATORE': val, 'TIRO': valore_tiro, 'RESULT': result, 'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
             riga_tir.update({k: v for k, v in valori_avanzati.items()
                               if any(k == nc for chiave, nc in colonne_avanzate_trovate.items() if chiave in DIMENSIONI_TAGGING_TIRATORE)})
             righe_tir.append(riga_tir)
+
+    if formato_turchia and righe_zona_non_riconosciuta > 0:
+        st.warning(f"⚠️ {righe_zona_non_riconosciuta} row(s) had a TIRO/THROW SECTOR/SETTORE DEL CAMPO "
+                   f"combination that doesn't match any known micro-zone, and were skipped. "
+                   f"Check the source file for tagging inconsistencies in those rows.")
 
     df_gk = pd.DataFrame(righe_gk)
     if not df_gk.empty:
@@ -4268,6 +4371,14 @@ def genera_pdf_universal_stats(titolo_report, sezioni):
                         Paragraph(f"{sezione['titolo']} — By specific micro-zone", sezione_stile),
                         Spacer(1, 0.2 * cm), _df_to_reportlab_table(df_micro, font_size=8)
                     ]))
+                    elementi.append(Spacer(1, 0.3 * cm))
+            if not sezione['df'].empty:
+                df_macrozone_us = tabella_macro_zone_universale(sezione['df'], ruolo='tiratore')
+                if not df_macrozone_us.empty:
+                    elementi.append(KeepTogether([
+                        Paragraph(f"{sezione['titolo']} — By macro-zone", sezione_stile),
+                        Spacer(1, 0.2 * cm), _df_to_reportlab_table(df_macrozone_us, font_size=9)
+                    ]))
             elementi.append(_separatore())
 
         elif sezione['tipo'] == 'ranking':
@@ -4399,14 +4510,24 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     elementi.append(Spacer(1, 0.5 * cm))
 
     df_macro = tabella_macro_tiratori(df_giocatore)
+    df_macro_sector = tabella_distribuzione_macro_universale(df_giocatore)
+    df_micro = tabella_distribuzione_micro_universale(df_giocatore)
     stile_intestazione_macro = ParagraphStyle('IntestazioneMacroPdf', parent=stili['Heading4'], fontSize=11, spaceAfter=6)
     if not df_macro.empty:
-        elementi.append(Paragraph("By macro-zone", stile_intestazione_macro))
-        elementi.append(_df_to_reportlab_table(df_macro, font_size=10))
+        elementi.append(KeepTogether([Paragraph("By macro-zone", stile_intestazione_macro), _df_to_reportlab_table(df_macro, font_size=10)]))
     else:
-        elementi.append(Paragraph("By macro-zone", stile_intestazione_macro))
-        elementi.append(Paragraph("No shots recorded.", stili['Normal']))
+        elementi.append(KeepTogether([Paragraph("By macro-zone", stile_intestazione_macro), Paragraph("No shots recorded.", stili['Normal'])]))
     elementi.append(Spacer(1, 0.3 * cm))
+
+    if not df_macro_sector.empty:
+        tabella_macro_sector_pdf = _df_to_reportlab_table(
+            df_macro_sector[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}), font_size=10)
+        elementi.append(KeepTogether([Paragraph("By macro-sector", stile_intestazione_macro), tabella_macro_sector_pdf]))
+        elementi.append(Spacer(1, 0.3 * cm))
+
+    if not df_micro.empty:
+        elementi.append(KeepTogether([Paragraph("By micro-zone", stile_intestazione_macro), _df_to_reportlab_table(df_micro, font_size=7)]))
+        elementi.append(Spacer(1, 0.3 * cm))
 
     if nota_html:
         elementi.append(Paragraph("Coach notes", stili['Heading4']))
@@ -4938,48 +5059,76 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                            f"{agg_h2h} head-to-head match(es), {agg_tp} goalkeeper own-shot match(es) added.")
 
         st.markdown("---")
-
-        with st.expander("Old 4-file format (deprecated — only for legacy one-off files)"):
-            fc = st.file_uploader('Drag and drop Excel files here', type=['xlsx', 'xls'], accept_multiple_files=True)
-
-            if fc:
-                pe = []
-                for idx, f in enumerate(fc):
-                    st.subheader(f"File Configuration: {f.name}")
-                    col1, col2, col3 = st.columns(3)
-                    with col1: nm = st.text_input(f'Game Name {idx+1}', value=f'Game {idx+1}', key=f'n_{idx}')
-                    with col2: dt = st.date_input(f'Event Date {idx+1}', value=datetime.now(), key=f"d_{idx}")
-                    with col3: sq = st.text_input(f'Analyzed Team {idx+1}', value=f'Team {idx+1}', key=f's_{idx}')
-
+        st.subheader("📂 Bulk Zone-Only Import (no timeline)")
+        st.caption("For files with no real match timeline — e.g. tagging exports from a foreign "
+                   "federation, or any 'zone-only' tagging where you just want to enrich the "
+                   "season database with shot data. Same single 'Team' column + [G] rule as "
+                   "Tag & Go, but stored PERMANENTLY in the main season database instead of "
+                   "Tag & Go's isolated storage — so it's available everywhere in the app "
+                   "(Universal Stats, Shooting Trend, rankings, macro/micro-zone breakdowns...) "
+                   "except for anything that needs a real timeline (Progressive GPI Trend, Money "
+                   "Time). This import is always marked as a no-venue entry, so it never skews "
+                   "Home/Away Save %/Goal % stats. Any single shot whose zone can't be recognized "
+                   "(e.g. a tagging typo) is silently skipped rather than blocking the whole file.")
+        with st.expander("➕ Add zone-only data to the season"):
+            fz = st.file_uploader('Drag and drop Excel file(s) here (single "Team" column format)',
+                                   type=['xlsx', 'xls'], accept_multiple_files=True, key="upload_zone_only")
+            if fz:
+                pe_zone = []
+                for idx, f in enumerate(fz):
+                    st.markdown(f"**{f.name}**")
+                    col1z, col2z, col3z = st.columns(3)
+                    with col1z:
+                        nm_z = st.text_input('Analysis / Game Name', value=f.name.rsplit('.', 1)[0], key=f'zn_{idx}')
+                    with col2z:
+                        dt_z = st.date_input('Date', value=datetime.now(), key=f"zd_{idx}")
+                    with col3z:
+                        sq_z = st.text_input('Team Name', value='', key=f'zs_{idx}',
+                                              help="The one team all these players belong to — there's no opponent/home-away here.")
+                    if not sq_z:
+                        st.warning(f"Enter a team name for {f.name} before saving.")
+                        continue
                     try:
-                        df_raw = pd.read_excel(f)
-                        df = elabora_file_portieri(df_raw)
-                        sq_home, sq_away = estrai_home_away_da_nome_file(f.name)
-                        pe.append({'nome': nm, 'data': dt, 'squadra': sq, 'dati': df,
-                                   'squadra_home': sq_home, 'squadra_away': sq_away})
+                        df_raw_z = pd.read_excel(f)
+                        df_gk_z, df_tir_z = elabora_file_tag_go(df_raw_z)
+                        df_gk_z = arricchisci_gk_per_database_principale(df_gk_z)
+                        df_tir_z = arricchisci_tir_per_database_principale(df_tir_z)
+                        pe_zone.append({'nome': nm_z, 'data': dt_z, 'squadra': sq_z, 'df_gk': df_gk_z, 'df_tir': df_tir_z})
+                        st.caption(f"→ {len(df_gk_z)} goalkeeper shot(s), {len(df_tir_z)} shooter shot(s) ready to add.")
                     except Exception as e:
                         st.error(f'Error processing file {f.name}: {e}')
 
-                if st.button('➕ Save & Process Matches (add to season)'):
-                    chiavi_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
-                    aggiunte, duplicati = 0, 0
-                    for match in pe:
-                        chiave = (match['nome'], str(match['data']), match['squadra'])
-                        if chiave in chiavi_esistenti:
-                            duplicati += 1
+                if st.button('➕ Save & Add to Season (zone-only)'):
+                    chiavi_gk_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db']}
+                    chiavi_tir_esistenti = {(p['nome'], str(p['data']), p['squadra']) for p in st.session_state['db_tiratori']}
+                    aggiunte_gk_z, aggiunte_tir_z, duplicati_z = 0, 0, 0
+                    for match_z in pe_zone:
+                        chiave_z = (match_z['nome'], str(match_z['data']), match_z['squadra'])
+                        if chiave_z in chiavi_gk_esistenti or chiave_z in chiavi_tir_esistenti:
+                            duplicati_z += 1
                             continue
-                        st.session_state['db'].append(match)
-                        chiavi_esistenti.add(chiave)
-                        aggiunte += 1
+                        if not match_z['df_gk'].empty:
+                            st.session_state['db'].append({
+                                'nome': match_z['nome'], 'data': match_z['data'], 'squadra': match_z['squadra'],
+                                'dati': match_z['df_gk'], 'squadra_home': None, 'squadra_away': None, 'neutro': True
+                            })
+                            aggiunte_gk_z += 1
+                        if not match_z['df_tir'].empty:
+                            st.session_state['db_tiratori'].append({
+                                'nome': match_z['nome'], 'data': match_z['data'], 'squadra': match_z['squadra'],
+                                'dati': match_z['df_tir'], 'squadra_home': None, 'squadra_away': None, 'neutro': True
+                            })
+                            aggiunte_tir_z += 1
 
-                salva_stagione_su_disco(st.session_state['db'])
+                    salva_stagione_su_disco(st.session_state['db'])
+                    salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
 
-                if aggiunte:
-                    st.success(f'{aggiunte} match(es) added to the season. Total matches in memory: {len(st.session_state["db"])}.')
-                if duplicati:
-                    st.warning(f'{duplicati} match(es) skipped because already present (same name, date and team). Rename the "Game Name" if this is actually a different match.')
-                if not aggiunte and not duplicati:
-                    st.info('No matches to add.')
+                    if aggiunte_gk_z or aggiunte_tir_z:
+                        st.success(f'Added: {aggiunte_gk_z} goalkeeper entry, {aggiunte_tir_z} shooter entry to the season database.')
+                    if duplicati_z:
+                        st.warning(f'{duplicati_z} file(s) skipped because already present (same name, date and team).')
+                    if not aggiunte_gk_z and not aggiunte_tir_z and not duplicati_z:
+                        st.info('No data to add.')
 
         st.markdown("---")
         st.subheader("🔗 Identify Players")
@@ -6145,6 +6294,14 @@ with tab2:
                     st.markdown("**By macro-zone**")
                     st.dataframe(tabella_macro_tiratori(df_selezione_match_tir), use_container_width=True, hide_index=True)
 
+                    st.markdown("**By macro-sector**")
+                    df_macsett_mt = tabella_distribuzione_macro_universale(df_selezione_match_tir)
+                    st.dataframe(df_macsett_mt[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_mt.empty else df_macsett_mt,
+                                 use_container_width=True, hide_index=True)
+
+                    st.markdown("**By micro-zone**")
+                    st.dataframe(tabella_distribuzione_micro_universale(df_selezione_match_tir), use_container_width=True, hide_index=True)
+
                     st.markdown("**Shooters — Goal %**")
                     st.dataframe(classifica_tiratori_per_volume(df_selezione_match_tir), use_container_width=True, hide_index=True)
 
@@ -6569,6 +6726,15 @@ with tab4:
                            f"{len(squadre_tir)} team(s), {len(giocatori_tir)} player(s), {len(db_tir)} match record(s).")
                 st.markdown("**By macro-zone**")
                 st.dataframe(tabella_macro_tiratori(df_lega_totale), use_container_width=True, hide_index=True)
+
+                st.markdown("**By macro-sector**")
+                df_macsett_lega = tabella_distribuzione_macro_universale(df_lega_totale)
+                st.dataframe(df_macsett_lega[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_lega.empty else df_macsett_lega,
+                             use_container_width=True, hide_index=True)
+
+                st.markdown("**By micro-zone**")
+                st.dataframe(tabella_distribuzione_micro_universale(df_lega_totale), use_container_width=True, hide_index=True)
+
                 macro_lega_scelto = st.selectbox(
                     "Break down a macro-zone into micro-zones (optional):",
                     ["(none)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
@@ -6824,6 +6990,14 @@ with tab4:
                         st.markdown("**By macro-zone**")
                         st.dataframe(tabella_macro_tiratori(df_selezione), use_container_width=True, hide_index=True)
 
+                        st.markdown("**By macro-sector**")
+                        df_macsett_sq = tabella_distribuzione_macro_universale(df_selezione)
+                        st.dataframe(df_macsett_sq[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_sq.empty else df_macsett_sq,
+                                     use_container_width=True, hide_index=True)
+
+                        st.markdown("**By micro-zone**")
+                        st.dataframe(tabella_distribuzione_micro_universale(df_selezione), use_container_width=True, hide_index=True)
+
                 st.markdown("---")
                 dati_pdf_giocatori = {}
                 dati_completi_per_giocatore_stagione = {}
@@ -6913,6 +7087,14 @@ with tab4:
                         else:
                             st.markdown("**By macro-zone**")
                             st.dataframe(tabella_macro_tiratori(df_giocatore), use_container_width=True, hide_index=True)
+
+                            st.markdown("**By macro-sector**")
+                            df_macsett_g = tabella_distribuzione_macro_universale(df_giocatore)
+                            st.dataframe(df_macsett_g[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_g.empty else df_macsett_g,
+                                         use_container_width=True, hide_index=True)
+
+                            st.markdown("**By micro-zone**")
+                            st.dataframe(tabella_distribuzione_micro_universale(df_giocatore), use_container_width=True, hide_index=True)
 
                         # ---- Home/Away & Money Time summary ----
                         split_casa_tir = calcola_split_casa_trasferta(lista_partite_g, 'goals', 'shots')
@@ -7525,6 +7707,16 @@ with tab6:
                         st.success(f"Map '{titolo_mappa_tg}' saved for the PDF export below.")
 
                     st.markdown("---")
+                    st.markdown(f"**By macro-zone — {titolo_tg}**")
+                    st.dataframe(tabella_macro_zone_universale(df_sel_tg, ruolo='tiratore'), use_container_width=True, hide_index=True)
+                    st.markdown(f"**By macro-sector — {titolo_tg}**")
+                    df_macsett_tg = tabella_distribuzione_macro_universale(df_sel_tg)
+                    st.dataframe(df_macsett_tg[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_tg.empty else df_macsett_tg,
+                                 use_container_width=True, hide_index=True)
+                    st.markdown(f"**By micro-zone — {titolo_tg}**")
+                    st.dataframe(tabella_distribuzione_micro_universale(df_sel_tg), use_container_width=True, hide_index=True)
+
+                    st.markdown("---")
                     st.subheader(f"📝 Notes — {titolo_tg}")
                     nota_tg_attuale = st.session_state['tag_go_note_giocatori'].get(titolo_tg, '')
                     nota_tg_nuova = st.text_area("Notes (max 1000 characters)", value=nota_tg_attuale, max_chars=1000, key=f"nota_tag_go_{chiave_tg_sicura}")
@@ -7610,6 +7802,26 @@ with tab6:
                     if st.button("💾 Save this map for PDF", key=f"salva_mappa_tag_go_gk_{chiave_tg_gk_sicura}"):
                         st.session_state['tag_go_mappe_salvate'].append({'titolo': titolo_mappa_tg_gk, 'df': df_porta_tg_gk.copy(), 'ruolo': 'portiere'})
                         st.success(f"Map '{titolo_mappa_tg_gk}' saved for the PDF export below.")
+
+                    st.markdown("---")
+                    st.markdown(f"**By macro-zone — {titolo_tg_gk}**")
+                    st.dataframe(tabella_macro_zone_universale(df_sel_tg_gk, ruolo='portiere'), use_container_width=True, hide_index=True)
+                    st.markdown(f"**By macro-sector — {titolo_tg_gk}**")
+                    righe_macsett_tg_gk = []
+                    for macro_tg_gk in sorted(df_sel_tg_gk['macro_settore'].dropna().unique()) if 'macro_settore' in df_sel_tg_gk.columns else []:
+                        df_ma_tg_gk = df_sel_tg_gk[df_sel_tg_gk['macro_settore'] == macro_tg_gk]
+                        s_ma, g_ma, m_ma, pct_ma, eff_ma = calcola_metriche_gruppo(df_ma_tg_gk)
+                        righe_macsett_tg_gk.append({'Macro-Sector': macro_tg_gk.upper(), 'Saves': s_ma, 'Goals': g_ma, 'Miss': m_ma,
+                                                     'Save %': round(pct_ma, 1), 'Efficiency %': round(eff_ma, 1)})
+                    st.dataframe(pd.DataFrame(righe_macsett_tg_gk), use_container_width=True, hide_index=True)
+                    st.markdown(f"**By micro-zone — {titolo_tg_gk}**")
+                    righe_micro_tg_gk = []
+                    for zona_tg_gk in sorted(df_sel_tg_gk['TIRO_CLEAN'].dropna().unique()):
+                        df_z_tg_gk = df_sel_tg_gk[df_sel_tg_gk['TIRO_CLEAN'] == zona_tg_gk]
+                        s_z, g_z, m_z, pct_z, eff_z = calcola_metriche_gruppo(df_z_tg_gk)
+                        righe_micro_tg_gk.append({'Micro-Zone': zona_tg_gk, 'Saves': s_z, 'Goals': g_z, 'Miss': m_z,
+                                                   'Save %': round(pct_z, 1), 'Efficiency %': round(eff_z, 1)})
+                    st.dataframe(pd.DataFrame(righe_micro_tg_gk), use_container_width=True, hide_index=True)
 
                     st.markdown("---")
                     st.subheader(f"📝 Notes — {titolo_tg_gk}")
@@ -7824,6 +8036,13 @@ with tab7:
                     st.caption("No shots in this selection.")
                 else:
                     st.dataframe(df_micro, use_container_width=True, hide_index=True, key=f"tabella_micro_{chiave}")
+
+            st.markdown(f"**Goal % by macro-zone — {titolo_torta}**")
+            df_macrozone = tabella_macro_zone_universale(df_sorgente, ruolo='tiratore')
+            if df_macrozone.empty:
+                st.caption("No shots in this selection.")
+            else:
+                st.dataframe(df_macrozone, use_container_width=True, hide_index=True, key=f"tabella_macrozone_{chiave}")
 
         def _filtra_money_time(df):
             if df.empty:
