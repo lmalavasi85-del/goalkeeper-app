@@ -186,11 +186,11 @@ def tabella_distribuzione_macro_universale(df):
     return df_r
 
 def tabella_distribuzione_micro_universale(df):
-    """Come tabella_distribuzione_macro_universale, ma per ogni singolo microsettore della
+    """Come tabella_distribuzione_macro_universale, ma per ogni singola micro-zona della
     tastiera usata ovunque nel software (lw1, lw2, ... fb3), nell'ordine naturale della
-    pulsantiera. Per ciascun microsettore: % realizzativa, % sul totale di tutti i tiri della
-    selezione, e % sul totale del proprio macro-settore. Microsettori senza tiri non compaiono."""
-    colonne_vuote = ['Sector', 'Macro-Sector', 'Goal % (Shots)', '% of Total', '% of Macro-Sector']
+    pulsantiera. Per ciascuna micro-zona: % realizzativa, % sul totale di tutti i tiri della
+    selezione, e % sul totale del proprio macro-settore. Micro-zone senza tiri non compaiono."""
+    colonne_vuote = ['Micro-Zone', 'Macro-Sector', 'Goal % (Shots)', '% of Total', '% of Macro-Sector']
     if df.empty or 'TIRO_CLEAN' not in df.columns:
         return pd.DataFrame(columns=colonne_vuote)
     zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona)
@@ -207,7 +207,7 @@ def tabella_distribuzione_micro_universale(df):
         macro_s = mappa_macro_settore(settore)
         tot_macro = totali_macro.get(macro_s, 0)
         righe.append({
-            'Sector': settore, 'Macro-Sector': ETICHETTA_MACRO_UNIVERSALE.get(macro_s, macro_s or '—'),
+            'Micro-Zone': settore, 'Macro-Sector': ETICHETTA_MACRO_UNIVERSALE.get(macro_s, macro_s or '—'),
             'Goals': goal_s, 'Shots': tot_s, 'Goal %': round(goal_s / tot_s * 100, 1),
             'TotShots': totale_tiri, 'MacroShots': tot_macro,
         })
@@ -215,7 +215,7 @@ def tabella_distribuzione_micro_universale(df):
         return pd.DataFrame(columns=colonne_vuote)
     df_r = pd.DataFrame(righe)
     ordine_map = {s: i for i, s in enumerate(TUTTI_I_TASTI_TIRATORI)}
-    df_r['_ord'] = df_r['Sector'].map(ordine_map)
+    df_r['_ord'] = df_r['Micro-Zone'].map(ordine_map)
     df_r = df_r.sort_values('_ord').drop(columns='_ord').reset_index(drop=True)
     df_r['Goal % (Shots)'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
     df_r['% of Total'] = df_r.apply(
@@ -425,7 +425,7 @@ def formatta_riga_casa_trasferta(split):
 ORDINE_MACRO_TIRATORI = ['7m', 'lw', 'rw', '1', '1,5', '2', '2,5', '3', 'fb']
 ETICHETTA_MACRO_TIRATORI = {
     '7m': '7m', 'lw': 'LW', 'rw': 'RW', 'fb': 'FB',
-    '1': 'Sector 1', '1,5': 'Sector 1.5', '2': 'Sector 2', '2,5': 'Sector 2.5', '3': 'Sector 3',
+    '1': 'Zone 1', '1,5': 'Zone 1.5', '2': 'Zone 2', '2,5': 'Zone 2.5', '3': 'Zone 3',
 }
 
 def mappa_macro_settore_tiratori(zona):
@@ -444,7 +444,7 @@ def mappa_macro_settore_tiratori(zona):
     return None
 
 def selettore_macro_zona(key_prefix, etichetta="Focus on a macro-zone (optional):"):
-    """Selettore del macro-settore di campo (7m, LW, RW, FB, Sector 1...3), riusabile ovunque
+    """Selettore del macro-settore di campo (7m, LW, RW, FB, Zone 1...3), riusabile ovunque
     nell'app (Single Game Analysis, Seasonal Report, Shooting Trend Analysis). Restituisce la
     chiave interna del macro-settore scelto, o None se '(All zones)'."""
     macro_scelto = st.selectbox(
@@ -1135,7 +1135,7 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
         df_ma = df_gk[df_gk['macro_settore'] == macro]
         s3, g3, m3, pct3, eff3 = calcola_metriche_gruppo(df_ma)
         righe_macro.append({
-            'Macro-Zone': macro.upper(), 'Saves': s3, 'Goals': g3, 'Miss': m3,
+            'Macro-Sector': macro.upper(), 'Saves': s3, 'Goals': g3, 'Miss': m3,
             'Save %': round(pct3, 1), 'Efficiency %': round(eff3, 1),
             'GPI': round(df_ma['GPI_Tiro'].sum(), 1)
         })
@@ -1163,7 +1163,7 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
             'Zone': [], 'Saves': [], 'Goals': [], 'Miss': [],
             'Save %': [], 'Efficiency %': [], 'Expected Efficiency %': [], 'GPI': []
         }),
-        'tabella_macro': pd.DataFrame(righe_macro) if righe_macro else pd.DataFrame({'Macro-Zone': [], 'GPI': []}),
+        'tabella_macro': pd.DataFrame(righe_macro) if righe_macro else pd.DataFrame({'Macro-Sector': [], 'GPI': []}),
         'money_time_riassunto': money_time_riassunto
     }
 
@@ -2104,6 +2104,37 @@ def calcola_tiri_hot_cold(elenco_partite, giocatore):
     df_cold = pd.concat(frammenti_cold, ignore_index=True) if frammenti_cold else pd.DataFrame(columns=colonne_vuote)
     return df_hot, df_cold
 
+def _mostra_porta_tastiera_hot_cold(df_sorgente, chiave_prefix):
+    """Porta (ridotta) + tastiera cliccabile affiancata (heat map delle micro-zone), per le
+    mappe Hot/Cold: cliccando una micro-zona sulla tastiera si isola quella zona nella porta
+    (T1-T9), esattamente come nelle altre Shot Map dell'app."""
+    key_focus = f"tasto_focus_hc_{chiave_prefix}"
+    if key_focus not in st.session_state:
+        st.session_state[key_focus] = None
+    if st.session_state[key_focus] not in TUTTI_I_TASTI_TIRATORI:
+        st.session_state[key_focus] = None
+    tasto_sel = st.session_state[key_focus]
+
+    df_porta = df_sorgente[df_sorgente['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel] if tasto_sel else df_sorgente
+    tot_porta, goal_porta = costruisci_conteggi_porta(df_porta)
+    fig_porta = disegna_porta(tot_porta, goal_porta)
+    tot_tast, goal_tast = costruisci_conteggi_tastiera(df_sorgente)
+
+    col_p, col_t = st.columns([1, 3])
+    with col_p:
+        st.pyplot(fig_porta, use_container_width=True)
+    with col_t:
+        tasto_cliccato = pulsantiera_settori_campo(tot_tast, goal_tast, tasto_sel, key_prefix=f"pulsantiera_hc_{chiave_prefix}")
+        if tasto_cliccato:
+            st.session_state[key_focus] = None if tasto_cliccato == tasto_sel else tasto_cliccato
+            st.rerun()
+        if tasto_sel:
+            if st.button("↺ Reset — show all micro-zones", key=f"reset_hc_{chiave_prefix}"):
+                st.session_state[key_focus] = None
+                st.rerun()
+
+# ============================================================
+# GIOCO PASSIVO: isola i tiri taggati "Passivo" nella colonna "TIRO 7M/PASSIVO/RIM. VEL./2A
 # FASE" (dimensione di tagging avanzato CONTESTO_TIRO, catturata sia per portieri sia per
 # tiratori). Statistica interessante solo su volumi alti: mostrata sempre in Seasonal Report
 # (portieri) e Shooting Trend Analysis (tiratori, squadra e singolo), mai nel report di partita
@@ -2274,7 +2305,7 @@ def classifica_tiratori_per_volume(df, solo_money_time=False, n=None):
     return df_classifica.head(n) if n else df_classifica
 
 def tabella_macro_tiratori(df):
-    """Tabella con il totale per ciascun macro-settore (LW, RW, FB, Sector 1...3, 7m, EG)."""
+    """Tabella con il totale per ciascun macro-settore (LW, RW, FB, Zone 1...3, 7m, EG)."""
     righe = []
     for macro in ORDINE_MACRO_TIRATORI:
         df_m = df[df['macro_settore_tir'] == macro]
@@ -2671,12 +2702,12 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
                 stili['Normal']
             ),
             Spacer(1, 0.2*cm),
-            Paragraph("By specific shot zone", stili['Heading4']),
+            Paragraph("By specific micro-zone", stili['Heading4']),
             _tabella_settore_reportlab(info['tabella_settore'], font_size=7),
         ]))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
-            Paragraph("By aggregated macro-zone", stili['Heading4']),
+            Paragraph("By aggregated macro-sector", stili['Heading4']),
             _df_to_reportlab_table(info['tabella_macro'], font_size=7),
         ]))
         elementi.append(Spacer(1, 0.2*cm))
@@ -2852,12 +2883,12 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
                 stili['Normal']
             ),
             Spacer(1, 0.2*cm),
-            Paragraph("By specific shot zone", stili['Heading4']),
+            Paragraph("By specific micro-zone", stili['Heading4']),
             _tabella_settore_reportlab(info['tabella_settore'], font_size=7),
         ]))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
-            Paragraph("By aggregated macro-zone", stili['Heading4']),
+            Paragraph("By aggregated macro-sector", stili['Heading4']),
             _df_to_reportlab_table(info['tabella_macro'], font_size=7),
         ]))
         elementi.append(Spacer(1, 0.2*cm))
@@ -4191,7 +4222,7 @@ def genera_pdf_universal_stats(titolo_report, sezioni):
                 df_micro = tabella_distribuzione_micro_universale(sezione['df'])
                 if not df_micro.empty:
                     elementi.append(KeepTogether([
-                        Paragraph(f"{sezione['titolo']} — By specific sector", sezione_stile),
+                        Paragraph(f"{sezione['titolo']} — By specific micro-zone", sezione_stile),
                         Spacer(1, 0.2 * cm), _df_to_reportlab_table(df_micro, font_size=8)
                     ]))
             elementi.append(_separatore())
@@ -5679,7 +5710,7 @@ with tab2:
                     cD.metric("Save %", f"{pct_gk:.1f}%")
                     cE.metric("Efficiency", f"{eff_gk:.1f}%")
 
-                    st.markdown("**Statistics by specific shot zone** (e.g. 6m1, lw2, 9m2.5 ...)")
+                    st.markdown("**Statistics by specific micro-zone** (e.g. 6m1, lw2, 9m2.5 ...)")
                     righe_settore = []
                     for settore in sorted(df_gk['TIRO_CLEAN'].dropna().unique()):
                         df_s = df_gk[df_gk['TIRO_CLEAN'] == settore]
@@ -5693,13 +5724,13 @@ with tab2:
                         })
                     st.dataframe(applica_colori_expected(pd.DataFrame(righe_settore)), use_container_width=True, hide_index=True)
 
-                    st.markdown("**Statistics by aggregated macro-zone** (all 6m, all bt, all 9m ...)")
+                    st.markdown("**Statistics by aggregated macro-sector** (all 6m, all bt, all 9m ...)")
                     righe_macro = []
                     for macro in sorted(df_gk['macro_settore'].dropna().unique()):
                         df_ma = df_gk[df_gk['macro_settore'] == macro]
                         s, g, m, pct, eff = calcola_metriche_gruppo(df_ma)
                         righe_macro.append({
-                            'Macro-Zone': macro.upper(), 'Saves': s, 'Goals': g, 'Miss': m,
+                            'Macro-Sector': macro.upper(), 'Saves': s, 'Goals': g, 'Miss': m,
                             'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
                             'GPI': round(df_ma['GPI_Tiro'].sum(), 1)
                         })
@@ -6283,10 +6314,10 @@ with tab3:
                     cD.metric("Save %", f"{info['pct']:.1f}%")
                     cE.metric("Efficiency", f"{info['eff']:.1f}%")
 
-                    st.markdown("**Statistics by specific shot zone**")
+                    st.markdown("**Statistics by specific micro-zone**")
                     st.dataframe(applica_colori_expected(info['tabella_settore']), use_container_width=True, hide_index=True)
 
-                    st.markdown("**Statistics by aggregated macro-zone**")
+                    st.markdown("**Statistics by aggregated macro-sector**")
                     st.dataframe(info['tabella_macro'], use_container_width=True, hide_index=True)
 
                     st.markdown(f"**Money Time Performance:** {info['money_time_riassunto']}")
@@ -6603,22 +6634,20 @@ with tab4:
                         ch1, ch2 = st.columns(2)
                         ch1.metric("🔥 Hot Goal %", f"{pct_hot:.1f}%", help=f"{goal_hot}/{tot_hot} shots")
                         ch2.metric("❄️ Cold Goal %", f"{pct_cold:.1f}%", help=f"{goal_cold}/{tot_cold} shots")
-                        if st.button("🗺️ Show Hot/Cold shot maps", key=f"mostra_hc_{_chiave_css_sicura(titolo_dashboard)}"):
-                            colh, colc = st.columns(2)
-                            with colh:
-                                st.markdown(f"**🔥 Hot Shot Map** ({tot_hot} shots)")
-                                if tot_hot > 0:
-                                    tot_p_hot, goal_p_hot = costruisci_conteggi_porta(df_hot_giocatore)
-                                    st.pyplot(disegna_porta(tot_p_hot, goal_p_hot, titolo="Hot"))
-                                else:
-                                    st.caption("No Hot-state shots in this selection.")
-                            with colc:
-                                st.markdown(f"**❄️ Cold Shot Map** ({tot_cold} shots)")
-                                if tot_cold > 0:
-                                    tot_p_cold, goal_p_cold = costruisci_conteggi_porta(df_cold_giocatore)
-                                    st.pyplot(disegna_porta(tot_p_cold, goal_p_cold, titolo="Cold"))
-                                else:
-                                    st.caption("No Cold-state shots in this selection.")
+                        chiave_hc = _chiave_css_sicura(titolo_dashboard)
+                        mostra_mappe_hc = st.checkbox("🗺️ Show Hot/Cold shot maps", key=f"mostra_hc_{chiave_hc}")
+                        if mostra_mappe_hc:
+                            st.markdown(f"**🔥 Hot Shot Map** ({tot_hot} shots)")
+                            if tot_hot > 0:
+                                _mostra_porta_tastiera_hot_cold(df_hot_giocatore, f"hot_{chiave_hc}")
+                            else:
+                                st.caption("No Hot-state shots in this selection.")
+
+                            st.markdown(f"**❄️ Cold Shot Map** ({tot_cold} shots)")
+                            if tot_cold > 0:
+                                _mostra_porta_tastiera_hot_cold(df_cold_giocatore, f"cold_{chiave_hc}")
+                            else:
+                                st.caption("No Cold-state shots in this selection.")
 
                     # ---- Match History: solo le partite in cui ha effettuato almeno un tiro ----
                     st.markdown("---")
@@ -7740,7 +7769,7 @@ with tab7:
                     st.dataframe(df_distribuzione[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}),
                                  use_container_width=True, hide_index=True, key=f"tabella_{chiave}")
             if mostra_micro:
-                st.markdown(f"**Goal % by specific sector — {titolo_torta}**")
+                st.markdown(f"**Goal % by specific micro-zone — {titolo_torta}**")
                 df_micro = tabella_distribuzione_micro_universale(df_sorgente)
                 if df_micro.empty:
                     st.caption("No shots in this selection.")
