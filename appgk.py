@@ -2324,6 +2324,29 @@ def tabella_macro_tiratori(df):
         righe.append({'Macro-Zone': ETICHETTA_MACRO_TIRATORI[macro], 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
     return pd.DataFrame(righe) if righe else pd.DataFrame({'Macro-Zone': [], 'Goals': [], 'Shots': [], 'Goal %': []})
 
+def tabella_macro_zone_universale(df, ruolo='tiratore'):
+    """Tabella per macro-zona (LW, RW, 7m, FB, Zone 1...3), calcolata al volo da TIRO_CLEAN —
+    non richiede colonne precalcolate, quindi funziona sia per dati tiratori (ruolo='tiratore',
+    mostra la % realizzativa) sia per dati portieri (ruolo='portiere', mostra la % di parata)."""
+    if ruolo == 'portiere':
+        colonna_esito, esiti_successo, etichetta_pct = 'Saves', ('save', 's'), 'Save %'
+    else:
+        colonna_esito, esiti_successo, etichetta_pct = 'Goals', ('goal', 'g'), 'Goal %'
+    colonne_vuote = ['Macro-Zone', colonna_esito, 'Shots', etichetta_pct]
+    if df.empty or 'TIRO_CLEAN' not in df.columns:
+        return pd.DataFrame(columns=colonne_vuote)
+    macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+    righe = []
+    for macro in ORDINE_MACRO_TIRATORI:
+        df_m = df[macro_per_riga == macro]
+        tot = len(df_m)
+        if tot == 0:
+            continue
+        successi = len(df_m[df_m['RESULT_CLEAN'].isin(esiti_successo)])
+        pct = successi / tot * 100
+        righe.append({'Macro-Zone': ETICHETTA_MACRO_TIRATORI[macro], colonna_esito: successi, 'Shots': tot, etichetta_pct: round(pct, 1)})
+    return pd.DataFrame(righe) if righe else pd.DataFrame(columns=colonne_vuote)
+
 def tabella_micro_di_un_macro(df, macro):
     """Ripartizione nei micro-settori di uno specifico macro-settore selezionato."""
     df_m = df[df['macro_settore_tir'] == macro]
@@ -2715,6 +2738,12 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             _tabella_settore_reportlab(info['tabella_settore'], font_size=7),
         ]))
         elementi.append(Spacer(1, 0.2*cm))
+        df_gk_per_macro_zona = df_match[df_match['PORTIERE_CLEAN'] == gk_raw_foto]
+        elementi.append(KeepTogether([
+            Paragraph("By macro-zone (LW, RW, 7m, FB, Zone 1...3)", stili['Heading4']),
+            _df_to_reportlab_table(tabella_macro_zone_universale(df_gk_per_macro_zona, ruolo='portiere'), font_size=7),
+        ]))
+        elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
             Paragraph("By aggregated macro-sector", stili['Heading4']),
             _df_to_reportlab_table(info['tabella_macro'], font_size=7),
@@ -2894,6 +2923,11 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
             Spacer(1, 0.2*cm),
             Paragraph("By specific micro-zone", stili['Heading4']),
             _tabella_settore_reportlab(info['tabella_settore'], font_size=7),
+        ]))
+        elementi.append(Spacer(1, 0.2*cm))
+        elementi.append(KeepTogether([
+            Paragraph("By macro-zone (LW, RW, 7m, FB, Zone 1...3)", stili['Heading4']),
+            _df_to_reportlab_table(tabella_macro_zone_universale(df_gk_tot, ruolo='portiere'), font_size=7),
         ]))
         elementi.append(Spacer(1, 0.2*cm))
         elementi.append(KeepTogether([
@@ -5733,6 +5767,9 @@ with tab2:
                         })
                     st.dataframe(applica_colori_expected(pd.DataFrame(righe_settore)), use_container_width=True, hide_index=True)
 
+                    st.markdown("**Statistics by macro-zone** (LW, RW, 7m, FB, Zone 1...3)")
+                    st.dataframe(tabella_macro_zone_universale(df_gk, ruolo='portiere'), use_container_width=True, hide_index=True)
+
                     st.markdown("**Statistics by aggregated macro-sector** (all 6m, all bt, all 9m ...)")
                     righe_macro = []
                     for macro in sorted(df_gk['macro_settore'].dropna().unique()):
@@ -6325,6 +6362,9 @@ with tab3:
 
                     st.markdown("**Statistics by specific micro-zone**")
                     st.dataframe(applica_colori_expected(info['tabella_settore']), use_container_width=True, hide_index=True)
+
+                    st.markdown("**Statistics by macro-zone** (LW, RW, 7m, FB, Zone 1...3)")
+                    st.dataframe(tabella_macro_zone_universale(df_gk_tot, ruolo='portiere'), use_container_width=True, hide_index=True)
 
                     st.markdown("**Statistics by aggregated macro-sector**")
                     st.dataframe(info['tabella_macro'], use_container_width=True, hide_index=True)
