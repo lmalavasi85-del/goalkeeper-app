@@ -2450,6 +2450,45 @@ def tabella_macro_zone_universale(df, ruolo='tiratore'):
         righe.append({'Macro-Zone': ETICHETTA_MACRO_TIRATORI[macro], colonna_esito: successi, 'Shots': tot, etichetta_pct: round(pct, 1)})
     return pd.DataFrame(righe) if righe else pd.DataFrame(columns=colonne_vuote)
 
+def tabella_macro_zone_con_dettaglio_micro(df, ruolo='tiratore'):
+    """Come tabella_macro_zone_universale, ma per le 5 macro-zone di distanza (Zone 1, Zone 1.5,
+    Zone 2, Zone 2.5, Zone 3) aggiunge anche la % specifica dei tre microsettori che le
+    compongono (6m, bt, 9m alla stessa distanza) — es. per Zone 1: quanto rende il 6m1, quanto
+    il bt1, quanto il 9m1, separatamente. Le righe LW/RW/7m/FB (che non hanno questa
+    suddivisione) restano invariate, con le tre colonne aggiuntive vuote."""
+    tabella_base = tabella_macro_zone_universale(df, ruolo=ruolo)
+    if tabella_base.empty or df.empty or 'TIRO_CLEAN' not in df.columns:
+        return tabella_base
+    esiti_successo = ('save', 's') if ruolo == 'portiere' else ('goal', 'g')
+    mappa_zona_a_distanza = {'Zone 1': '1', 'Zone 1.5': '1,5', 'Zone 2': '2', 'Zone 2.5': '2,5', 'Zone 3': '3'}
+    zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona)
+
+    def _pct_micro(distanza, prefisso):
+        micro = f"{prefisso}{distanza}"
+        df_micro = df[zona_normalizzata == micro]
+        tot_micro = len(df_micro)
+        if tot_micro == 0:
+            return '—'
+        successi_micro = len(df_micro[df_micro['RESULT_CLEAN'].isin(esiti_successo)])
+        return f"{successi_micro}/{tot_micro} = {successi_micro / tot_micro * 100:.0f}%"
+
+    tabella_base = tabella_base.copy()
+    col_6m, col_bt, col_9m = [], [], []
+    for macro_zone_nome in tabella_base['Macro-Zone']:
+        if macro_zone_nome in mappa_zona_a_distanza:
+            distanza = mappa_zona_a_distanza[macro_zone_nome]
+            col_6m.append(_pct_micro(distanza, '6m'))
+            col_bt.append(_pct_micro(distanza, 'bt'))
+            col_9m.append(_pct_micro(distanza, '9m'))
+        else:
+            col_6m.append('')
+            col_bt.append('')
+            col_9m.append('')
+    tabella_base['6m %'] = col_6m
+    tabella_base['bt %'] = col_bt
+    tabella_base['9m %'] = col_9m
+    return tabella_base
+
 def tabella_micro_di_un_macro(df, macro):
     """Ripartizione nei micro-settori di uno specifico macro-settore selezionato."""
     df_m = df[df['macro_settore_tir'] == macro]
@@ -8174,7 +8213,7 @@ with tab7:
                     st.dataframe(df_micro, use_container_width=True, hide_index=True, key=f"tabella_micro_{chiave}")
 
             st.markdown(f"**Goal % by macro-zone — {titolo_torta}**")
-            df_macrozone = tabella_macro_zone_universale(df_sorgente, ruolo='tiratore')
+            df_macrozone = tabella_macro_zone_con_dettaglio_micro(df_sorgente, ruolo='tiratore')
             if df_macrozone.empty:
                 st.caption("No shots in this selection.")
             else:
