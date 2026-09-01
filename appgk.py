@@ -2452,41 +2452,41 @@ def tabella_macro_zone_universale(df, ruolo='tiratore'):
 
 def tabella_macro_zone_con_dettaglio_micro(df, ruolo='tiratore'):
     """Come tabella_macro_zone_universale, ma per le 5 macro-zone di distanza (Zone 1, Zone 1.5,
-    Zone 2, Zone 2.5, Zone 3) aggiunge anche la % specifica dei tre microsettori che le
-    compongono (6m, bt, 9m alla stessa distanza) — es. per Zone 1: quanto rende il 6m1, quanto
-    il bt1, quanto il 9m1, separatamente. Le righe LW/RW/7m/FB (che non hanno questa
-    suddivisione) restano invariate, con le tre colonne aggiuntive vuote."""
+    Zone 2, Zone 2.5, Zone 3) aggiunge anche la COMPOSIZIONE per microsettore: sul totale dei
+    tiri arrivati in quella zona, quanti sono 6m, quanti bt e quanti 9m (in volume, non % di
+    realizzazione — quella è già nella tabella sopra). Es. per Zone 1 con 20 tiri totali, se 6m1
+    ne ha 5, mostra '5/20 = 25%'. Le righe LW/RW/7m/FB (che non hanno questa suddivisione)
+    restano invariate, con le tre colonne aggiuntive vuote."""
     tabella_base = tabella_macro_zone_universale(df, ruolo=ruolo)
     if tabella_base.empty or df.empty or 'TIRO_CLEAN' not in df.columns:
         return tabella_base
-    esiti_successo = ('save', 's') if ruolo == 'portiere' else ('goal', 'g')
     mappa_zona_a_distanza = {'Zone 1': '1', 'Zone 1.5': '1,5', 'Zone 2': '2', 'Zone 2.5': '2,5', 'Zone 3': '3'}
     zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona)
 
-    def _pct_micro(distanza, prefisso):
+    def _pct_volume(distanza, prefisso, totale_zona):
         micro = f"{prefisso}{distanza}"
-        df_micro = df[zona_normalizzata == micro]
-        tot_micro = len(df_micro)
-        if tot_micro == 0:
+        tiri_micro = int((zona_normalizzata == micro).sum())
+        if totale_zona == 0:
             return '—'
-        successi_micro = len(df_micro[df_micro['RESULT_CLEAN'].isin(esiti_successo)])
-        return f"{successi_micro}/{tot_micro} = {successi_micro / tot_micro * 100:.0f}%"
+        return f"{tiri_micro}/{totale_zona} = {tiri_micro / totale_zona * 100:.0f}%"
 
     tabella_base = tabella_base.copy()
     col_6m, col_bt, col_9m = [], [], []
-    for macro_zone_nome in tabella_base['Macro-Zone']:
+    for _, riga in tabella_base.iterrows():
+        macro_zone_nome = riga['Macro-Zone']
         if macro_zone_nome in mappa_zona_a_distanza:
             distanza = mappa_zona_a_distanza[macro_zone_nome]
-            col_6m.append(_pct_micro(distanza, '6m'))
-            col_bt.append(_pct_micro(distanza, 'bt'))
-            col_9m.append(_pct_micro(distanza, '9m'))
+            totale_zona = int(riga['Shots'])
+            col_6m.append(_pct_volume(distanza, '6m', totale_zona))
+            col_bt.append(_pct_volume(distanza, 'bt', totale_zona))
+            col_9m.append(_pct_volume(distanza, '9m', totale_zona))
         else:
             col_6m.append('')
             col_bt.append('')
             col_9m.append('')
-    tabella_base['6m %'] = col_6m
-    tabella_base['bt %'] = col_bt
-    tabella_base['9m %'] = col_9m
+    tabella_base['6m share'] = col_6m
+    tabella_base['bt share'] = col_bt
+    tabella_base['9m share'] = col_9m
     return tabella_base
 
 def tabella_micro_di_un_macro(df, macro):
