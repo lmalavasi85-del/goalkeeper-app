@@ -3271,20 +3271,32 @@ def _match_a_riga_sheet(match):
     chunk = _dividi_json_in_chunk(dati_json)
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
-            str(bool(match.get('neutro', False))), str(len(chunk))] + chunk
+            str(bool(match.get('neutro', False))), json.dumps(match.get('campionati_esclusi', [])),
+            str(len(chunk))] + chunk
 
 def _riga_sheet_a_match(riga):
     from datetime import datetime as _dt
     nome, data_str, squadra = riga[0], riga[1], riga[2]
     squadra_home = riga[3] or None if len(riga) > 3 else None
     squadra_away = riga[4] or None if len(riga) > 4 else None
-    # Formato NUOVO (con chunking): colonna 5 = 'True'/'False' (neutro), colonna 6 = numero di
-    # chunk, poi i chunk stessi. Un JSON vero non può MAI valere letteralmente 'True'/'False',
-    # quindi questo distingue in modo sicuro il formato nuovo da quello vecchio.
+    campionati_esclusi = []
+    # Tre formati possibili, dal più vecchio al più nuovo — un JSON vero non può MAI valere
+    # letteralmente 'True'/'False', e la lista campionati_esclusi (sempre '[...]') non può mai
+    # essere confusa con un numero puro (num_chunk): due discriminatori sicuri.
     if len(riga) >= 6 and riga[5].strip() in ('True', 'False'):
         neutro = riga[5].strip() == 'True'
-        num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
-        dati_json = ''.join(riga[7:7 + num_chunk])
+        if len(riga) >= 7 and riga[6].strip().startswith('['):
+            # Formato più recente: colonna 6 = campionati_esclusi (JSON), colonna 7 = num_chunk
+            try:
+                campionati_esclusi = json.loads(riga[6])
+            except Exception:
+                campionati_esclusi = []
+            num_chunk = int(riga[7]) if len(riga) > 7 and riga[7].strip().isdigit() else 0
+            dati_json = ''.join(riga[8:8 + num_chunk])
+        else:
+            # Formato intermedio: colonna 6 = num_chunk direttamente, niente campionati_esclusi
+            num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
+            dati_json = ''.join(riga[7:7 + num_chunk])
     elif len(riga) >= 6:
         # Formato vecchio: colonna 5 = dati_json intero, colonna 6 = neutro (se presente)
         dati_json = riga[5]
@@ -3305,7 +3317,8 @@ def _riga_sheet_a_match(riga):
     except Exception:
         data_valore = data_str
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
-            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro}
+            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro,
+            'campionati_esclusi': campionati_esclusi}
 
 def carica_stagione_da_disco():
     if _google_sheets_configurato():
@@ -3410,20 +3423,30 @@ def _match_a_riga_sheet_tiratori(match):
     chunk = _dividi_json_in_chunk(dati_json)
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
-            str(bool(match.get('neutro', False))), str(len(chunk))] + chunk
+            str(bool(match.get('neutro', False))), json.dumps(match.get('campionati_esclusi', [])),
+            str(len(chunk))] + chunk
 
 def _riga_sheet_a_match_tiratori(riga):
     from datetime import datetime as _dt
     nome, data_str, squadra = riga[0], riga[1], riga[2]
     squadra_home = riga[3] if len(riga) > 3 and riga[3] else None
     squadra_away = riga[4] if len(riga) > 4 and riga[4] else None
+    campionati_esclusi = []
     # Stessa logica di _riga_sheet_a_match: un JSON vero non può mai valere letteralmente
-    # 'True'/'False', quindi questo distingue in modo sicuro il formato nuovo (con chunking)
-    # da quello vecchio (dati_json intero in una sola cella).
+    # 'True'/'False', e la lista campionati_esclusi (sempre '[...]') non può mai essere confusa
+    # con un numero puro (num_chunk) — due discriminatori sicuri per i tre formati possibili.
     if len(riga) >= 6 and riga[5].strip() in ('True', 'False'):
         neutro = riga[5].strip() == 'True'
-        num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
-        dati_json = ''.join(riga[7:7 + num_chunk])
+        if len(riga) >= 7 and riga[6].strip().startswith('['):
+            try:
+                campionati_esclusi = json.loads(riga[6])
+            except Exception:
+                campionati_esclusi = []
+            num_chunk = int(riga[7]) if len(riga) > 7 and riga[7].strip().isdigit() else 0
+            dati_json = ''.join(riga[8:8 + num_chunk])
+        else:
+            num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
+            dati_json = ''.join(riga[7:7 + num_chunk])
     else:
         dati_json = riga[5] if len(riga) > 5 else riga[3]
         neutro = riga[6].strip().lower() == 'true' if len(riga) > 6 else False
@@ -3439,7 +3462,8 @@ def _riga_sheet_a_match_tiratori(riga):
     except Exception:
         data_valore = data_str
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
-            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro}
+            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro,
+            'campionati_esclusi': campionati_esclusi}
 
 def carica_stagione_tiratori_da_disco():
     if _google_sheets_configurato():
@@ -3930,9 +3954,14 @@ def salva_campionati_su_disco(lista_campionati):
 
 def partite_in_campionato(elenco_partite, campionato):
     """Filtra elenco_partite (lista di match-dict con 'squadra' e 'data') secondo i criteri del
-    campionato indicato: squadre (None = tutte), data_inizio, data_fine (None = Sine Die)."""
+    campionato indicato: squadre (None = tutte), data_inizio, data_fine (None = Sine Die).
+    Una partita con il nome di questo campionato nella sua lista 'campionati_esclusi' (impostata
+    all'upload, quando più competizioni aperte si sovrapponevano per squadra/data, o manualmente
+    in seguito) viene sempre esclusa, anche se squadra e data corrisponderebbero."""
     risultato = []
     for m in elenco_partite:
+        if campionato['nome'] in m.get('campionati_esclusi', []):
+            continue
         if campionato['squadre'] and m['squadra'] not in campionato['squadre']:
             continue
         if m['data'] < campionato['data_inizio']:
@@ -5132,21 +5161,47 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                          "home-crowd effect. Nothing else changes: only the Home/Away split stat "
                          "ignores this match — everything else about it is analyzed as normal."
                 )
+
+                # Competizioni aperte (Sine Die o non ancora chiuse a questa data) che per squadra
+                # e data includerebbero automaticamente questa partita. Se ce n'è più di una (es.
+                # Serie A aperta tutta la stagione + Coppa Italia in corso nello stesso periodo),
+                # oppure anche una sola ma la partita è in realtà un'amichevole fuori competizione,
+                # chiedo esplicitamente dove va inserita — altrimenti finirebbe automaticamente
+                # in TUTTE quelle che coincidono per squadra/data, il che è quasi mai corretto.
+                campionati_candidati_u = [
+                    c for c in st.session_state['campionati']
+                    if (c['squadre'] is None or sq_home_u in c['squadre'] or sq_away_u in c['squadre'])
+                    and dt_u >= c['data_inizio'] and (c['data_fine'] is None or dt_u <= c['data_fine'])
+                ]
+                campionati_esclusi_u = []
+                if campionati_candidati_u:
+                    opzioni_camp_u = [c['nome'] for c in campionati_candidati_u] + ["None of these (e.g. a friendly)"]
+                    scelta_camp_u = st.radio(
+                        f"This match's date and team(s) match {len(campionati_candidati_u)} open "
+                        f"championship(s) — which one does it belong to?",
+                        opzioni_camp_u, key=f"camp_scelta_{idx}"
+                    )
+                    campionati_esclusi_u = [c['nome'] for c in campionati_candidati_u if c['nome'] != scelta_camp_u]
+
                 try:
                     df_raw_u = pd.read_excel(f)
                     df_gk_h, df_gk_a, df_tir_h, df_tir_a, df_h2h_u, df_tiro_portiere_u = elabora_file_unificato(df_raw_u, sq_home_u, sq_away_u)
                     if not df_gk_h.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                           'campionati_esclusi': campionati_esclusi_u})
                     if not df_gk_a.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
+                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                           'campionati_esclusi': campionati_esclusi_u})
                     if not df_tir_h.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                            'campionati_esclusi': campionati_esclusi_u})
                     if not df_tir_a.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u})
+                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                            'campionati_esclusi': campionati_esclusi_u})
                     if not df_h2h_u.empty:
                         pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
                     if not df_tiro_portiere_u.empty:
@@ -5389,6 +5444,13 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
 
                     st.markdown("---")
                     st.markdown("**Edit dates**")
+                    nuova_inizio_camp = st.date_input("Start date", value=camp['data_inizio'], key=f"inizio_camp_{i}")
+                    if st.button("💾 Save start date", key=f"salva_inizio_camp_{i}"):
+                        st.session_state['campionati'][i]['data_inizio'] = nuova_inizio_camp
+                        salva_campionati_su_disco(st.session_state['campionati'])
+                        st.success(f"Start date updated for '{camp['nome']}'.")
+                        st.rerun()
+
                     if camp['data_fine'] is None:
                         nuova_fine_camp = st.date_input("Set an end date to close this championship",
                                                          value=datetime.now(), key=f"fine_camp_{i}")
