@@ -5369,6 +5369,26 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                 squadre_testo = ', '.join(camp['squadre']) if camp['squadre'] else 'All teams'
                 fine_testo = str(camp['data_fine']) if camp['data_fine'] else 'Sine Die (still open)'
                 with st.expander(f"🏆 {camp['nome']} — {squadre_testo} — {camp['data_inizio']} → {fine_testo}"):
+                    st.markdown("**Edit teams**")
+                    tutte_le_squadre_camp_edit = sorted(set(
+                        [m['squadra'] for m in st.session_state['db']] +
+                        [m['squadra'] for m in st.session_state['db_tiratori']]
+                    ))
+                    squadre_attuali_camp = [s for s in (camp['squadre'] or []) if s in tutte_le_squadre_camp_edit]
+                    if camp['squadre'] is None:
+                        st.caption("Currently includes ALL teams found in the app (no restriction set).")
+                    nuove_squadre_camp = st.multiselect(
+                        "Teams included in this championship (leave empty to include all teams):",
+                        tutte_le_squadre_camp_edit, default=squadre_attuali_camp, key=f"modifica_squadre_camp_{i}"
+                    )
+                    if st.button("💾 Save team changes", key=f"salva_squadre_camp_{i}"):
+                        st.session_state['campionati'][i]['squadre'] = nuove_squadre_camp if nuove_squadre_camp else None
+                        salva_campionati_su_disco(st.session_state['campionati'])
+                        st.success(f"Teams updated for '{camp['nome']}'.")
+                        st.rerun()
+
+                    st.markdown("---")
+                    st.markdown("**Edit dates**")
                     if camp['data_fine'] is None:
                         nuova_fine_camp = st.date_input("Set an end date to close this championship",
                                                          value=datetime.now(), key=f"fine_camp_{i}")
