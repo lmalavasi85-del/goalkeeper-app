@@ -4950,7 +4950,8 @@ def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
             pct = (goal / tot * 100) if tot > 0 else 0.0
             expected = ottieni_expected_goal_pct(zona)
             colore_sfondo = _colore_soglia_expected_goals(pct, tot, expected)
-            testo_cella = f"{zona}<br/>{goal}/{tot} = {pct:.0f}%" if tot > 0 else f"{zona}<br/>0/0"
+            testo_expected = f"(S.P. {expected:.0f}%)" if expected is not None else "(S.P. n/a)"
+            testo_cella = f"{zona}<br/>{goal}/{tot} = {pct:.0f}%<br/>{testo_expected}" if tot > 0 else f"{zona}<br/>0/0<br/>{testo_expected}"
             url = (link_per_zona or {}).get(zona)
             colore_testo_hex = '#ffffff' if colore_sfondo != colors.HexColor('#ffffff') else '#333333'
             if url:
@@ -4975,12 +4976,20 @@ def legenda_expected_goals_pdf():
     """Legenda dei colori della pulsantiera Expected Goals."""
     stili = getSampleStyleSheet()
     stile_voce = ParagraphStyle('VoceLegendaExp', parent=stili['Normal'], fontSize=9.5, leading=13)
+    stile_nota_sp = ParagraphStyle('NotaSP', parent=stili['Normal'], fontSize=9.5, leading=13, spaceAfter=6,
+                                    textColor=colors.HexColor('#555555'))
+    nota_sp = Paragraph(
+        "<b>S.P.</b> = Expected Goal % for that zone, from the currently active profile (S.P. Value, "
+        "based on Sergio Palazzi's video analysis, unless a different profile has been selected or created "
+        "in Upload Match Sheets). Shown on each button for reference, alongside the team's real Goal %.",
+        stile_nota_sp
+    )
     voci = [
         ('#ffffff', 'Fewer than 5 shots — not enough data'),
-        ('#e53935', 'Goal % ≥ Expected Goal % — dangerous zone'),
-        ('#fb8c00', 'Goal % between Expected and Expected -5'),
-        ('#fdd835', 'Goal % between Expected -5 and Expected -10'),
-        ('#43a047', 'Goal % below Expected -10 — safest zone'),
+        ('#e53935', 'Goal % ≥ Expected Goal % (S.P.) — dangerous zone'),
+        ('#fb8c00', 'Goal % between S.P. and S.P. -5'),
+        ('#fdd835', 'Goal % between S.P. -5 and S.P. -10'),
+        ('#43a047', 'Goal % below S.P. -10 — safest zone'),
     ]
     righe = [[Table([['']], colWidths=[0.5 * cm], rowHeights=[0.5 * cm],
                      style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(hexcol)),
@@ -4989,7 +4998,7 @@ def legenda_expected_goals_pdf():
     t = Table(righe, colWidths=[0.9 * cm, 20 * cm])
     t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 3),
                             ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
-    return t
+    return [nota_sp, t]
 
 def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None, mappe_extra=None,
                          elenco_partite_analizzate=None, link_video_microzone=None, link_giocatori_duelli=None,
@@ -5154,7 +5163,10 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         pagina_expected = [Paragraph("Expected Goals — Shot Zones", sezione_stile), Spacer(1, 0.3 * cm)]
         pagina_expected.extend(costruisci_pulsantiera_expected_pdf(df_squadra_riepilogo, link_video_microzone))
         pagina_expected.append(Spacer(1, 0.3 * cm))
-        pagina_expected.append(legenda_expected_goals_pdf())
+        # KeepTogether: se la legenda non entra nello spazio rimasto sotto la pulsantiera, deve
+        # spostarsi intera alla pagina successiva — mai tagliata a metà (è già successo: mancava
+        # l'ultima voce, quella verde, semplicemente perché non c'entrava più nella pagina).
+        pagina_expected.append(KeepTogether(legenda_expected_goals_pdf()))
         blocchi_pagine.append(pagina_expected)
 
         # Doppia tabella "duelli": giocatori/micro-zone sotto media attesa (accettabile) a
@@ -7757,16 +7769,17 @@ with tab4:
                             mappe_trend_correnti.pop(i)
                             st.rerun()
 
-                includi_matches_analyzed = st.checkbox("📋 Include a 'Matches Analyzed' page (optional)", key="includi_matches_analyzed_tir")
-                testo_partite_manuale = ""
-                if includi_matches_analyzed:
-                    elenco_auto = "\n".join(f"{m['nome']} - {m['data']}" for m in sorted(match_filtrati, key=lambda m: str(m['data'])))
-                    testo_partite_manuale = st.text_area(
-                        "One match per line, format 'Name - Date'. Pre-filled automatically from the matches in "
-                        "this selection — if it's a Bulk Zone-Only import (no individual matches known), the list "
-                        "may be empty or incomplete: edit it freely below.",
-                        value=elenco_auto, height=140, key="testo_partite_matches_analyzed"
-                    )
+                st.markdown("**📋 Matches Analyzed page**")
+                includi_matches_analyzed = st.checkbox("Include a 'Matches Analyzed' page in the PDF", value=True, key="includi_matches_analyzed_tir")
+                elenco_auto = "\n".join(f"{m['nome']} - {m['data']}" for m in sorted(match_filtrati, key=lambda m: str(m['data'])))
+                testo_partite_manuale = st.text_area(
+                    "One match per line, format 'Name - Date'. Pre-filled automatically from the matches in "
+                    "this selection — if it's a Bulk Zone-Only import (no individual matches known), the list "
+                    "may be empty or show the aggregated import name instead of real match names: edit it "
+                    "freely below to list the actual matches.",
+                    value=elenco_auto, height=140, key="testo_partite_matches_analyzed",
+                    disabled=not includi_matches_analyzed
+                )
 
                 with st.expander("🎬 Video links per micro-zone (optional)"):
                     st.caption("Attach a video link to any micro-zone button in the PDF's Expected Goals keyboard. "
