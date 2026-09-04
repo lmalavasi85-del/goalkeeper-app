@@ -4858,23 +4858,69 @@ def _colore_soglia_expected_goals(pct_reale, tot_tiri, expected_pct):
         return colors.HexColor('#43a047')
 
 def tabella_partite_analizzate_pdf(elenco_partite):
-    """elenco_partite: lista di dict con almeno 'nome' e 'data'. Restituisce una tabella
-    reportlab con le partite ordinate cronologicamente, data in evidenza."""
-    partite_ordinate = sorted(elenco_partite, key=lambda p: str(p['data']))
-    dati = [['Date', 'Match']] + [[str(p['data']), p['nome']] for p in partite_ordinate]
-    t = Table(dati, colWidths=[4 * cm, 19 * cm])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#eef2f7')]),
-        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-    ]))
-    return t
+    """elenco_partite: lista di dict con almeno 'nome' e 'data'. Restituisce una tabella (o,
+    per elenchi lunghi, DUE tabelle più strette affiancate) con le partite ordinate
+    cronologicamente dalla più vecchia alla più recente, data in evidenza — pensata per stare
+    SEMPRE nella prima pagina insieme a titolo/logo, anche con 20+ partite."""
+    from datetime import date as _date_cls, datetime as _dt_cls
+
+    def _chiave_ordinamento(p):
+        d = p['data']
+        if isinstance(d, _date_cls):
+            return (0, d)
+        testo = str(d).strip()
+        if not testo:
+            # Data mancante (elenco scritto a mano senza data): finisce in fondo, non altera
+            # l'ordine cronologico delle partite che hanno davvero una data.
+            return (1, _date_cls.max)
+        for formato in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y'):
+            try:
+                return (0, _dt_cls.strptime(testo, formato).date())
+            except ValueError:
+                continue
+        # Data scritta in un formato libero non riconoscibile: non può essere ordinata
+        # cronologicamente con certezza — resta in fondo, dopo tutte quelle con data valida.
+        return (1, _date_cls.max)
+
+    partite_ordinate = sorted(elenco_partite, key=_chiave_ordinamento)
+    n = len(partite_ordinate)
+
+    # Soglie a scalini sul numero di partite: più ce ne sono, più la tabella (o le due
+    # tabelle affiancate) devono restringersi per continuare a stare in una sola pagina.
+    if n <= 14:
+        due_colonne, font_size, padding_v = False, 10, 5
+    elif n <= 40:
+        due_colonne, font_size, padding_v = True, 9, 3.5
+    else:
+        due_colonne, font_size, padding_v = True, 7, 2
+
+    def _costruisci_tabella(partite, larghezza_data, larghezza_nome):
+        dati = [['Date', 'Match']] + [[str(p['data']), p['nome']] for p in partite]
+        t = Table(dati, colWidths=[larghezza_data, larghezza_nome])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), font_size),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#eef2f7')]),
+            ('TOPPADDING', (0, 0), (-1, -1), padding_v), ('BOTTOMPADDING', (0, 0), (-1, -1), padding_v),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        return t
+
+    if not due_colonne:
+        return _costruisci_tabella(partite_ordinate, 4 * cm, 19 * cm)
+
+    # Elenco lungo: divido a metà (prima metà = le più vecchie, a sinistra; seconda metà = le
+    # più recenti, a destra) — entrambe le colonne restano comunque nella stessa pagina.
+    meta = (n + 1) // 2
+    tabella_sx = _costruisci_tabella(partite_ordinate[:meta], 3 * cm, 9.5 * cm)
+    tabella_dx = _costruisci_tabella(partite_ordinate[meta:], 3 * cm, 9.5 * cm)
+    doppia = Table([[tabella_sx, tabella_dx]], colWidths=[12.7 * cm, 12.7 * cm])
+    doppia.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
+    return doppia
 
 def calcola_tabelle_duelli(df, soglia_tiri_minimi=6):
     """Per ogni giocatore e ogni micro-zona con almeno soglia_tiri_minimi tiri, confronta la %
@@ -5048,9 +5094,12 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
     # cronologico. Condivide la pagina fisica con blocco_titolo (nessun salto pagina prima);
     # tutto il resto (General Shot Map compresa) riceve il proprio salto pagina di conseguenza.
     if elenco_partite_analizzate:
+        n_partite_pdf = len(elenco_partite_analizzate)
         pagina_matches = []
         if logo_squadra_b64:
-            dimensione_logo_grande = 6 * cm
+            # Con molte partite la tabella ha bisogno di più spazio verticale: il logo si
+            # restringe un po', ma resta sempre presente e ben visibile.
+            dimensione_logo_grande = 6 * cm if n_partite_pdf <= 20 else (4 * cm if n_partite_pdf <= 40 else 3 * cm)
             img_logo_grande = RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)),
                                        width=dimensione_logo_grande, height=dimensione_logo_grande)
             img_logo_grande.hAlign = 'CENTER'
@@ -5059,7 +5108,10 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         pagina_matches.append(Paragraph("Matches Analyzed", sezione_stile))
         pagina_matches.append(Spacer(1, 0.3 * cm))
         pagina_matches.append(tabella_partite_analizzate_pdf(elenco_partite_analizzate))
-        blocchi_pagine.append(pagina_matches)
+        # KeepTogether: logo, titolo e tabella devono restare SEMPRE sulla prima pagina, mai
+        # spezzati tra due — la tabella stessa si restringe/divide in due colonne per questo
+        # motivo già dentro tabella_partite_analizzate_pdf.
+        blocchi_pagine.append([KeepTogether(pagina_matches)])
 
     if df_squadra_riepilogo is not None and not df_squadra_riepilogo.empty:
         # Mappa generale di squadra (porta + tastiera con heat map) — riceve un salto pagina
@@ -5125,6 +5177,24 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
             blocchi_pagine.append([KeepTogether([
                 Paragraph("Shooters by Shot Volume", sezione_stile), Spacer(1, 0.15 * cm), riga_volume
             ])])
+
+            # Passive Play va nella STESSA pagina (nessun nuovo blocco = nessun salto pagina):
+            # lo appendo alla lista interna dell'ultimo blocco appena creato, non con un nuovo
+            # blocchi_pagine.append (che avrebbe forzato una pagina a parte).
+            df_passivo_vol_pdf, df_passivo_pct_pdf = tabelle_passivo_tiratori(df_squadra_riepilogo)
+            if not df_passivo_vol_pdf.empty:
+                tabella_passivo_vol = _df_to_reportlab_table(df_passivo_vol_pdf, font_size=10)
+                tabella_passivo_pct = _df_to_reportlab_table(df_passivo_pct_pdf, font_size=10)
+                riga_passivo = Table(
+                    [[[Paragraph("By shot volume", stile_intestazione_volume), tabella_passivo_vol],
+                      [Paragraph("By Goal %", stile_intestazione_volume), tabella_passivo_pct]]],
+                    colWidths=[13.5 * cm, 13.5 * cm]
+                )
+                riga_passivo.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
+                blocchi_pagine[-1].append(Spacer(1, 0.4 * cm))
+                blocchi_pagine[-1].append(KeepTogether([
+                    Paragraph("Passive Play", sezione_stile), Spacer(1, 0.15 * cm), riga_passivo
+                ]))
         else:
             # Roster eccezionalmente ampio: mai rischiare che il PDF si rompa — due pagine separate,
             # ciascuna col proprio titolo sempre insieme alla propria tabella.
@@ -5136,6 +5206,22 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
                 Paragraph("Shooters by Shot Volume — By Money Time shot volume", sezione_stile),
                 Spacer(1, 0.3 * cm), tabella_volume_mt
             ])])
+
+            # Roster troppo grande per garantire spazio nella stessa pagina: Passive Play riceve
+            # una pagina propria, invece di rischiare di rompere il layout.
+            df_passivo_vol_pdf, df_passivo_pct_pdf = tabelle_passivo_tiratori(df_squadra_riepilogo)
+            if not df_passivo_vol_pdf.empty:
+                tabella_passivo_vol = _df_to_reportlab_table(df_passivo_vol_pdf, font_size=10)
+                tabella_passivo_pct = _df_to_reportlab_table(df_passivo_pct_pdf, font_size=10)
+                riga_passivo = Table(
+                    [[[Paragraph("By shot volume", stile_intestazione_volume), tabella_passivo_vol],
+                      [Paragraph("By Goal %", stile_intestazione_volume), tabella_passivo_pct]]],
+                    colWidths=[13.5 * cm, 13.5 * cm]
+                )
+                riga_passivo.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
+                blocchi_pagine.append([KeepTogether([
+                    Paragraph("Passive Play", sezione_stile), Spacer(1, 0.15 * cm), riga_passivo
+                ])])
 
         # Pagina 3: statistiche per macro-zona di squadra (ingrandita), più sotto la stessa
         # scomposizione a macro-settore (7m/LW/RW/6M/9M/BT/FB) usata in Universal Stats — stessa
