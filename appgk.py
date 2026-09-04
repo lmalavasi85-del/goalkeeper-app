@@ -5043,14 +5043,23 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
 
     blocchi_pagine = []
 
-    # Nuova pagina 1: elenco delle partite analizzate (facoltativa, solo se fornita) — condivide
-    # la copertina con blocco_titolo (nessun salto pagina prima), esattamente come faceva finora
-    # la General Shot Map, che ora scala di una pagina e riceve il proprio salto pagina.
+    # Nuova pagina 1: titolo (già in blocco_titolo sopra) + logo squadra GRANDE dedicato (non il
+    # piccolo logo condiviso nell'intestazione) + tabella "Matches Analyzed" in ordine
+    # cronologico. Condivide la pagina fisica con blocco_titolo (nessun salto pagina prima);
+    # tutto il resto (General Shot Map compresa) riceve il proprio salto pagina di conseguenza.
     if elenco_partite_analizzate:
-        blocchi_pagine.append([
-            Paragraph("Matches Analyzed", sezione_stile), Spacer(1, 0.3 * cm),
-            tabella_partite_analizzate_pdf(elenco_partite_analizzate)
-        ])
+        pagina_matches = []
+        if logo_squadra_b64:
+            dimensione_logo_grande = 6 * cm
+            img_logo_grande = RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)),
+                                       width=dimensione_logo_grande, height=dimensione_logo_grande)
+            img_logo_grande.hAlign = 'CENTER'
+            pagina_matches.append(img_logo_grande)
+            pagina_matches.append(Spacer(1, 0.5 * cm))
+        pagina_matches.append(Paragraph("Matches Analyzed", sezione_stile))
+        pagina_matches.append(Spacer(1, 0.3 * cm))
+        pagina_matches.append(tabella_partite_analizzate_pdf(elenco_partite_analizzate))
+        blocchi_pagine.append(pagina_matches)
 
     if df_squadra_riepilogo is not None and not df_squadra_riepilogo.empty:
         # Mappa generale di squadra (porta + tastiera con heat map) — riceve un salto pagina
@@ -7809,9 +7818,18 @@ with tab4:
                                 if includi_matches_analyzed and testo_partite_manuale.strip():
                                     elenco_partite_pdf = []
                                     for riga_p in testo_partite_manuale.strip().split("\n"):
+                                        riga_p = riga_p.strip()
+                                        if not riga_p:
+                                            continue
+                                        # Formato preferito "Nome - Data", ma qualunque riga non
+                                        # vuota viene comunque inclusa (mai scartata in
+                                        # silenzio): se non c'è un ' - ' riconoscibile, l'intera
+                                        # riga diventa il nome e la data resta vuota.
                                         if ' - ' in riga_p:
                                             nome_p, data_p = riga_p.rsplit(' - ', 1)
                                             elenco_partite_pdf.append({'nome': nome_p.strip(), 'data': data_p.strip()})
+                                        else:
+                                            elenco_partite_pdf.append({'nome': riga_p, 'data': ''})
                                 anagrafica_pdf_sel = {g: st.session_state['anagrafica_giocatori'][g]
                                                        for g in dati_pdf_giocatori if g in st.session_state['anagrafica_giocatori']}
                                 link_clip_pdf_sel = {g: p['link_clip'] for g, p in anagrafica_pdf_sel.items() if p.get('link_clip')}
