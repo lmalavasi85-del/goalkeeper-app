@@ -22,6 +22,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak, KeepTogether, HRFlowable
 
@@ -3592,6 +3593,109 @@ def salva_note_su_disco(note_dict):
         pickle.dump(note_dict, f)
 
 # ============================================================
+# ANAGRAFICA GIOCATORI (facoltativa, per il PDF Shooting Trend): nome completo, altezza, peso,
+# numero di maglia, ruolo primario, link "Personal clips" — indicizzata per nome giocatore, con
+# lo stesso semplice schema chiave/JSON usato altrove nell'app.
+# ============================================================
+PLAYER_PROFILE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_profile.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_anagrafica():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES)
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('PlayerProfile')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='PlayerProfile', rows=500, cols=2)
+        worksheet.append_row(['giocatore', 'dati_json'])
+    return worksheet
+
+def carica_anagrafica_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_anagrafica()
+            valori = worksheet.get_all_values()
+            return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            return {}
+    if os.path.exists(PLAYER_PROFILE_FILE):
+        try:
+            with open(PLAYER_PROFILE_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_anagrafica_su_disco(anagrafica_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_anagrafica()
+            worksheet.clear()
+            worksheet.append_row(['giocatore', 'dati_json'])
+            righe = [[g, json.dumps(dati)] for g, dati in anagrafica_dict.items()]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save player profiles to Google Sheets: {e}")
+    with open(PLAYER_PROFILE_FILE, 'wb') as f:
+        pickle.dump(anagrafica_dict, f)
+
+# ============================================================
+# LINK VIDEO PER MICRO-ZONA (facoltativi, per la pulsantiera Expected Goals nel PDF Shooting
+# Trend): indicizzati per squadra, {squadra: {zona: url}}.
+# ============================================================
+TEAM_ZONE_LINKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "team_zone_links.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_link_zone():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES)
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('TeamZoneLinks')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='TeamZoneLinks', rows=500, cols=2)
+        worksheet.append_row(['squadra', 'link_json'])
+    return worksheet
+
+def carica_link_zone_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_link_zone()
+            valori = worksheet.get_all_values()
+            return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            return {}
+    if os.path.exists(TEAM_ZONE_LINKS_FILE):
+        try:
+            with open(TEAM_ZONE_LINKS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_link_zone_su_disco(link_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_link_zone()
+            worksheet.clear()
+            worksheet.append_row(['squadra', 'link_json'])
+            righe = [[sq, json.dumps(link)] for sq, link in link_dict.items()]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save zone video links to Google Sheets: {e}")
+    with open(TEAM_ZONE_LINKS_FILE, 'wb') as f:
+        pickle.dump(link_dict, f)
+
+# ============================================================
 # FOTO GIOCATORI (mezzo busto, jpg/png) — condivise tra portieri e tiratori, indicizzate per
 # nome. Ogni foto viene ridimensionata e compressa PRIMA di essere salvata, così pesa pochi KB
 # indipendentemente da quanto è pesante il file originale caricato dall'utente.
@@ -4393,6 +4497,10 @@ if 'db_tiratori' not in st.session_state:
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'note_tiratori' not in st.session_state:
     st.session_state['note_tiratori'] = carica_note_da_disco()
+if 'anagrafica_giocatori' not in st.session_state:
+    st.session_state['anagrafica_giocatori'] = carica_anagrafica_da_disco()
+if 'link_video_zone' not in st.session_state:
+    st.session_state['link_video_zone'] = carica_link_zone_da_disco()
 if 'foto_giocatori' not in st.session_state:
     st.session_state['foto_giocatori'] = carica_foto_da_disco()
 if 'db_h2h' not in st.session_state:
@@ -4637,10 +4745,14 @@ def genera_pdf_tag_go_portieri(nome_analisi, dati_per_portiere, note_dict=None, 
     buffer.seek(0)
     return buffer.getvalue()
 
-def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, nota_html=None):
+def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, nota_html=None,
+                           dati_anagrafici=None, link_personal_clips=None):
     """Costruisce gli elementi ReportLab (porta, tastiera, tabella macro-zone, note) per UN
     giocatore, a partire dal suo sottoinsieme di tiri già filtrato (per partite/money-time/macro
-    a monte). Porta, tastiera e tabella macro-zone stanno tutte sulla stessa riga."""
+    a monte). Porta, tastiera e tabella macro-zone stanno tutte sulla stessa riga.
+    dati_anagrafici: dict opzionale {'nome_completo','altezza','peso','numero_maglia','ruolo'} —
+    ogni chiave è facoltativa, solo quelle valorizzate compaiono.
+    link_personal_clips: URL opzionale, mostrato come link cliccabile "Personal clips"."""
     elementi = []
     goal, tot, pct = calcola_metriche_tiratori_gruppo(df_giocatore)
     foto_b64 = st.session_state.get('foto_giocatori', {}).get(nome_giocatore)
@@ -4659,6 +4771,23 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     else:
         elementi.append(Paragraph(f"{nome_giocatore}", sezione_stile))
         elementi.append(Paragraph(f"Total: {goal}/{tot} = {pct:.1f}%", stili['Normal']))
+
+    if dati_anagrafici:
+        stile_anagrafica = ParagraphStyle('Anagrafica', parent=stili['Normal'], fontSize=9.5,
+                                           textColor=colors.HexColor('#555555'), spaceBefore=2)
+        pezzi_anagrafica = []
+        if dati_anagrafici.get('nome_completo'):
+            pezzi_anagrafica.append(dati_anagrafici['nome_completo'])
+        if dati_anagrafici.get('numero_maglia'):
+            pezzi_anagrafica.append(f"#{dati_anagrafici['numero_maglia']}")
+        if dati_anagrafici.get('ruolo'):
+            pezzi_anagrafica.append(dati_anagrafici['ruolo'])
+        if dati_anagrafici.get('altezza'):
+            pezzi_anagrafica.append(f"{dati_anagrafici['altezza']} cm")
+        if dati_anagrafici.get('peso'):
+            pezzi_anagrafica.append(f"{dati_anagrafici['peso']} kg")
+        if pezzi_anagrafica:
+            elementi.append(Paragraph(" · ".join(pezzi_anagrafica), stile_anagrafica))
     elementi.append(Spacer(1, 0.2 * cm))
 
     tot_porta, goal_porta = costruisci_conteggi_porta(df_giocatore)
@@ -4698,9 +4827,173 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
         elementi.append(Paragraph("Coach notes", stili['Heading4']))
         elementi.append(Paragraph(nota_html, stili['Normal']))
 
+    if link_personal_clips:
+        stile_link_clip = ParagraphStyle('LinkClip', parent=stili['Normal'], fontSize=10.5, spaceBefore=8)
+        elementi.append(Paragraph(f'<a href="{link_personal_clips}" color="#15304f"><u>Personal clips</u></a>', stile_link_clip))
+
     return elementi
 
-def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None, mappe_extra=None):
+# ============================================================
+# ESTENSIONI PDF SHOOTING TREND: pagina "Matches Analyzed", pulsantiera Expected Goals con
+# soglie colorate e link opzionali per micro-zona, tabelle "duelli" (giocatori accettabili /
+# pericolosi), dati anagrafici opzionali e link "Personal clips" per giocatore.
+# ============================================================
+def _colore_soglia_expected_goals(pct_reale, tot_tiri, expected_pct):
+    """Colore di sfondo per un pulsante della tastiera, secondo le soglie basate sull'Expected
+    Goal % del profilo attivo:
+    - meno di 5 tiri: nessun colore (bianco/neutro)
+    - % >= expected: rosso (il tiratore realizza sopra la media attesa — zona pericolosa)
+    - % < expected e >= expected-5: arancione
+    - % < expected-5 e >= expected-10: giallo
+    - % < expected-10: verde (il tiratore realizza molto sotto la media attesa)"""
+    if tot_tiri < 5 or expected_pct is None:
+        return colors.HexColor('#ffffff')
+    if pct_reale >= expected_pct:
+        return colors.HexColor('#e53935')
+    elif pct_reale >= expected_pct - 5:
+        return colors.HexColor('#fb8c00')
+    elif pct_reale >= expected_pct - 10:
+        return colors.HexColor('#fdd835')
+    else:
+        return colors.HexColor('#43a047')
+
+def tabella_partite_analizzate_pdf(elenco_partite):
+    """elenco_partite: lista di dict con almeno 'nome' e 'data'. Restituisce una tabella
+    reportlab con le partite ordinate cronologicamente, data in evidenza."""
+    partite_ordinate = sorted(elenco_partite, key=lambda p: str(p['data']))
+    dati = [['Date', 'Match']] + [[str(p['data']), p['nome']] for p in partite_ordinate]
+    t = Table(dati, colWidths=[4 * cm, 19 * cm])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#eef2f7')]),
+        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    return t
+
+def calcola_tabelle_duelli(df, soglia_tiri_minimi=6):
+    """Per ogni giocatore e ogni micro-zona con almeno soglia_tiri_minimi tiri, confronta la %
+    realizzativa con l'Expected Goal % del profilo attivo ± 5. Restituisce (accettabili,
+    pericolosi): liste di dict {'giocatore','zona','goal','tot','pct'} — accettabili con % sotto
+    expected-5 (ordinati dal più basso), pericolosi con % sopra expected+5 (dal più alto)."""
+    if df.empty or 'TIRATORE_ID' not in df.columns or 'TIRO_CLEAN' not in df.columns:
+        return [], []
+    zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona)
+    accettabili, pericolosi = [], []
+    for giocatore, df_g in df.groupby('TIRATORE_ID'):
+        zona_g = zona_normalizzata.loc[df_g.index]
+        for zona in TUTTI_I_TASTI_TIRATORI:
+            df_z = df_g[zona_g == zona]
+            tot = len(df_z)
+            if tot < soglia_tiri_minimi:
+                continue
+            expected = ottieni_expected_goal_pct(zona)
+            if expected is None:
+                continue
+            goal = len(df_z[df_z['RESULT_CLEAN'].isin(['goal', 'g'])])
+            pct = goal / tot * 100
+            riga = {'giocatore': giocatore, 'zona': zona, 'goal': goal, 'tot': tot, 'pct': pct}
+            if pct < expected - 5:
+                accettabili.append(riga)
+            elif pct > expected + 5:
+                pericolosi.append(riga)
+    accettabili.sort(key=lambda r: r['pct'])
+    pericolosi.sort(key=lambda r: -r['pct'])
+    return accettabili, pericolosi
+
+def _tabella_duelli_pdf(righe, link_giocatori=None):
+    """Costruisce la tabella reportlab per una delle due liste di calcola_tabelle_duelli, col
+    nome giocatore opzionalmente cliccabile (link_giocatori: dict nome->url)."""
+    stili = getSampleStyleSheet()
+    stile_cella = ParagraphStyle('CellaDuelli', parent=stili['Normal'], fontSize=9.5, leading=13)
+    if not righe:
+        return Paragraph("No player meets these criteria in this selection.", stili['Normal'])
+    dati = [['Player', 'Zone', 'Result']]
+    for r in righe:
+        nome_cella = r['giocatore']
+        url = (link_giocatori or {}).get(r['giocatore'])
+        testo_nome = f'<a href="{url}" color="#15304f"><u>{nome_cella}</u></a>' if url else nome_cella
+        dati.append([Paragraph(testo_nome, stile_cella), r['zona'], f"{r['goal']}/{r['tot']} = {r['pct']:.0f}%"])
+    t = Table(dati, colWidths=[5.5 * cm, 3 * cm, 3.5 * cm])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9.5),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f5f5')]),
+        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    return t
+
+def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
+    """Costruisce la pulsantiera come TABELLA reportlab (non immagine, per poter avere link
+    cliccabili), colorata secondo le soglie Expected Goal % (vedi _colore_soglia_expected_goals),
+    con testo opzionalmente cliccabile per micro-zona (link_per_zona: dict zona->url)."""
+    stili = getSampleStyleSheet()
+    stile_cella = ParagraphStyle('CellaPulsantieraExp', parent=stili['Normal'], fontSize=9,
+                                  alignment=TA_CENTER, textColor=colors.white, fontName='Helvetica-Bold', leading=12)
+    zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona) if not df.empty and 'TIRO_CLEAN' in df.columns else pd.Series(dtype=object)
+    blocco_righe = []
+    for riga_zone in ORDINE_TASTIERA_TIRATORI:
+        riga_celle, colori_riga = [], []
+        for zona in riga_zone:
+            df_z = df[zona_normalizzata == zona] if not df.empty else df.iloc[0:0]
+            tot = len(df_z)
+            goal = len(df_z[df_z['RESULT_CLEAN'].isin(['goal', 'g'])]) if tot > 0 else 0
+            pct = (goal / tot * 100) if tot > 0 else 0.0
+            expected = ottieni_expected_goal_pct(zona)
+            colore_sfondo = _colore_soglia_expected_goals(pct, tot, expected)
+            testo_cella = f"{zona}<br/>{goal}/{tot} = {pct:.0f}%" if tot > 0 else f"{zona}<br/>0/0"
+            url = (link_per_zona or {}).get(zona)
+            colore_testo_hex = '#ffffff' if colore_sfondo != colors.HexColor('#ffffff') else '#333333'
+            if url:
+                testo_cella = f'<a href="{url}" color="{colore_testo_hex}"><u>{testo_cella}</u></a>'
+            stile_cella_riga = ParagraphStyle(f'CellaExp_{zona}', parent=stile_cella, textColor=colors.HexColor(colore_testo_hex))
+            riga_celle.append(Paragraph(testo_cella, stile_cella_riga))
+            colori_riga.append(colore_sfondo)
+        larghezza_cella = 25.5 * cm / len(riga_zone)
+        t = Table([riga_celle], colWidths=[larghezza_cella] * len(riga_zone))
+        stile_t = [('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 8),
+                   ('BOTTOMPADDING', (0, 0), (-1, -1), 8), ('BOX', (0, 0), (-1, -1), 0.5, colors.white),
+                   ('INNERGRID', (0, 0), (-1, -1), 1.5, colors.white)]
+        for idx_c, colore in enumerate(colori_riga):
+            stile_t.append(('BACKGROUND', (idx_c, 0), (idx_c, 0), colore))
+        t.setStyle(TableStyle(stile_t))
+        t.hAlign = 'CENTER'
+        blocco_righe.append(t)
+        blocco_righe.append(Spacer(1, 0.15 * cm))
+    return blocco_righe
+
+def legenda_expected_goals_pdf():
+    """Legenda dei colori della pulsantiera Expected Goals."""
+    stili = getSampleStyleSheet()
+    stile_voce = ParagraphStyle('VoceLegendaExp', parent=stili['Normal'], fontSize=9.5, leading=13)
+    voci = [
+        ('#ffffff', 'Fewer than 5 shots — not enough data'),
+        ('#e53935', 'Goal % ≥ Expected Goal % — dangerous zone'),
+        ('#fb8c00', 'Goal % between Expected and Expected -5'),
+        ('#fdd835', 'Goal % between Expected -5 and Expected -10'),
+        ('#43a047', 'Goal % below Expected -10 — safest zone'),
+    ]
+    righe = [[Table([['']], colWidths=[0.5 * cm], rowHeights=[0.5 * cm],
+                     style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(hexcol)),
+                                        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#999999'))])),
+              Paragraph(testo, stile_voce)] for hexcol, testo in voci]
+    t = Table(righe, colWidths=[0.9 * cm, 20 * cm])
+    t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 3),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
+    return t
+
+def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None, mappe_extra=None,
+                         elenco_partite_analizzate=None, link_video_microzone=None, link_giocatori_duelli=None,
+                         anagrafica_giocatori=None, link_personal_clips=None):
     """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con UNA PAGINA per
     ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto).
     Se df_squadra_riepilogo è fornito (dataframe aggregato dell'intera selezione), il PDF apre
@@ -4741,8 +5034,19 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
 
     blocchi_pagine = []
 
+    # Nuova pagina 1: elenco delle partite analizzate (facoltativa, solo se fornita) — condivide
+    # la copertina con blocco_titolo (nessun salto pagina prima), esattamente come faceva finora
+    # la General Shot Map, che ora scala di una pagina e riceve il proprio salto pagina.
+    if elenco_partite_analizzate:
+        blocchi_pagine.append([
+            Paragraph("Matches Analyzed", sezione_stile), Spacer(1, 0.3 * cm),
+            tabella_partite_analizzate_pdf(elenco_partite_analizzate)
+        ])
+
     if df_squadra_riepilogo is not None and not df_squadra_riepilogo.empty:
-        # Pagina 1: mappa generale di squadra (porta + tastiera con heat map)
+        # Mappa generale di squadra (porta + tastiera con heat map) — riceve un salto pagina
+        # esplicito solo se la pagina "Matches Analyzed" l'ha preceduta; altrimenti resta la
+        # prima pagina come sempre, condividendo la copertina.
         pagina1 = [Paragraph("General Shot Map", sezione_stile), Spacer(1, 0.2 * cm)]
         tot_p_sq, goal_p_sq = costruisci_conteggi_porta(df_squadra_riepilogo)
         fig_p_sq = disegna_porta(tot_p_sq, goal_p_sq)
@@ -4844,6 +5148,36 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
             img_torta_macro_settore_pdf,
         ])
 
+
+        # Pulsantiera Expected Goals: colori a soglia rispetto al profilo attivo, con link
+        # opzionali per micro-zona (aprono il video dei tiri di quella zona, se fornito).
+        pagina_expected = [Paragraph("Expected Goals — Shot Zones", sezione_stile), Spacer(1, 0.3 * cm)]
+        pagina_expected.extend(costruisci_pulsantiera_expected_pdf(df_squadra_riepilogo, link_video_microzone))
+        pagina_expected.append(Spacer(1, 0.3 * cm))
+        pagina_expected.append(legenda_expected_goals_pdf())
+        blocchi_pagine.append(pagina_expected)
+
+        # Doppia tabella "duelli": giocatori/micro-zone sotto media attesa (accettabile) a
+        # sinistra, sopra media attesa (pericolosi) a destra — nomi opzionalmente cliccabili.
+        accettabili_pdf, pericolosi_pdf = calcola_tabelle_duelli(df_squadra_riepilogo)
+        stile_titolo_accett = ParagraphStyle('TitoloAccett', parent=sezione_stile, textColor=colors.HexColor('#1e7d34'))
+        stile_titolo_pericol = ParagraphStyle('TitoloPericol', parent=sezione_stile, textColor=colors.HexColor('#b5231a'))
+        colonna_sinistra = [Paragraph("Players we can accept the duel with", stile_titolo_accett),
+                             Spacer(1, 0.2 * cm), _tabella_duelli_pdf(accettabili_pdf, link_giocatori_duelli)]
+        colonna_destra = [Paragraph("Most dangerous players", stile_titolo_pericol),
+                           Spacer(1, 0.2 * cm), _tabella_duelli_pdf(pericolosi_pdf, link_giocatori_duelli)]
+        riga_duelli = Table([[colonna_sinistra, colonna_destra]], colWidths=[13.5 * cm, 13.5 * cm])
+        riga_duelli.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
+        stile_legenda_duelli = ParagraphStyle('LegendaDuelli', parent=stili['Normal'], fontSize=9, spaceBefore=10,
+                                               textColor=colors.HexColor('#555555'))
+        legenda_duelli = Paragraph(
+            "Criteria: minimum 6 shots taken from that micro-zone. <b>Left</b> — Goal % more than 5 "
+            "points below the Expected Goal % for that zone (the shooter underperforms there). "
+            "<b>Right</b> — Goal % more than 5 points above the Expected Goal % (the shooter "
+            "overperforms there). Players/zones in between aren't shown.", stile_legenda_duelli
+        )
+        blocchi_pagine.append([riga_duelli, legenda_duelli])
+
     if mappe_extra:
         mappe_valide = [m for m in mappe_extra if not m['df'].empty]
         if mappe_valide:
@@ -4858,7 +5192,10 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
     giocatori_validi = [(g, df_g) for g, df_g in dati_per_giocatore.items() if not df_g.empty]
     for nome_giocatore, df_g in giocatori_validi:
         nota_html = note_markup_a_reportlab(note_dict.get(nome_giocatore, '')) if note_dict.get(nome_giocatore) else None
-        blocchi_pagine.append(_blocco_giocatore_pdf(nome_giocatore, df_g, stili, sezione_stile, nota_html))
+        dati_anagrafici_g = (anagrafica_giocatori or {}).get(nome_giocatore)
+        link_clip_g = (link_personal_clips or {}).get(nome_giocatore)
+        blocchi_pagine.append(_blocco_giocatore_pdf(nome_giocatore, df_g, stili, sezione_stile, nota_html,
+                                                      dati_anagrafici_g, link_clip_g))
 
     elementi = [blocco_titolo, Spacer(1, 0.5 * cm)]
     if blocchi_pagine:
@@ -7346,14 +7683,39 @@ with tab4:
                         if nota_nuova.strip():
                             st.markdown(note_markup_a_html_streamlit(nota_nuova), unsafe_allow_html=True)
 
+                        with st.expander(f"🪪 Player profile & Personal clips (optional) — {nome_giocatore}"):
+                            profilo_attuale_g = st.session_state['anagrafica_giocatori'].get(nome_giocatore, {})
+                            col_pr1, col_pr2, col_pr3 = st.columns(3)
+                            with col_pr1:
+                                nome_completo_g = st.text_input("Full name", value=profilo_attuale_g.get('nome_completo', ''), key=f"prof_nome_{nome_giocatore}")
+                                numero_maglia_g = st.text_input("Jersey number", value=profilo_attuale_g.get('numero_maglia', ''), key=f"prof_maglia_{nome_giocatore}")
+                            with col_pr2:
+                                altezza_g = st.text_input("Height (cm)", value=profilo_attuale_g.get('altezza', ''), key=f"prof_altezza_{nome_giocatore}")
+                                peso_g = st.text_input("Weight (kg)", value=profilo_attuale_g.get('peso', ''), key=f"prof_peso_{nome_giocatore}")
+                            with col_pr3:
+                                ruolo_g = st.text_input("Primary role", value=profilo_attuale_g.get('ruolo', ''), key=f"prof_ruolo_{nome_giocatore}")
+                                link_clip_g_input = st.text_input("Personal clips link", value=profilo_attuale_g.get('link_clip', ''), key=f"prof_clip_{nome_giocatore}")
+                            nuovo_profilo_g = {'nome_completo': nome_completo_g, 'numero_maglia': numero_maglia_g,
+                                                'altezza': altezza_g, 'peso': peso_g, 'ruolo': ruolo_g, 'link_clip': link_clip_g_input}
+                            if nuovo_profilo_g != profilo_attuale_g:
+                                if any(nuovo_profilo_g.values()):
+                                    st.session_state['anagrafica_giocatori'][nome_giocatore] = nuovo_profilo_g
+                                elif nome_giocatore in st.session_state['anagrafica_giocatori']:
+                                    del st.session_state['anagrafica_giocatori'][nome_giocatore]
+                                salva_anagrafica_su_disco(st.session_state['anagrafica_giocatori'])
+
                         # ---- Single-player PDF ----
                         if st.button(f"📄 Generate PDF — {nome_giocatore}", key=f"pdf_{nome_giocatore}"):
                             with st.spinner("Generating PDF..."):
                                 try:
+                                    profilo_g_pdf = st.session_state['anagrafica_giocatori'].get(nome_giocatore)
+                                    link_clip_g_pdf = profilo_g_pdf.get('link_clip') if profilo_g_pdf else None
                                     pdf_bytes_g = genera_pdf_tiratori(
                                         f"{titolo_dashboard} — {nome_giocatore}",
                                         {nome_giocatore: df_giocatore_vista},
-                                        {nome_giocatore: nota_nuova}
+                                        {nome_giocatore: nota_nuova},
+                                        anagrafica_giocatori={nome_giocatore: profilo_g_pdf} if profilo_g_pdf else None,
+                                        link_personal_clips={nome_giocatore: link_clip_g_pdf} if link_clip_g_pdf else None
                                     )
                                     st.download_button(
                                         label="⬇️ Download PDF", data=pdf_bytes_g,
@@ -7395,6 +7757,32 @@ with tab4:
                             mappe_trend_correnti.pop(i)
                             st.rerun()
 
+                includi_matches_analyzed = st.checkbox("📋 Include a 'Matches Analyzed' page (optional)", key="includi_matches_analyzed_tir")
+                testo_partite_manuale = ""
+                if includi_matches_analyzed:
+                    elenco_auto = "\n".join(f"{m['nome']} - {m['data']}" for m in sorted(match_filtrati, key=lambda m: str(m['data'])))
+                    testo_partite_manuale = st.text_area(
+                        "One match per line, format 'Name - Date'. Pre-filled automatically from the matches in "
+                        "this selection — if it's a Bulk Zone-Only import (no individual matches known), the list "
+                        "may be empty or incomplete: edit it freely below.",
+                        value=elenco_auto, height=140, key="testo_partite_matches_analyzed"
+                    )
+
+                with st.expander("🎬 Video links per micro-zone (optional)"):
+                    st.caption("Attach a video link to any micro-zone button in the PDF's Expected Goals keyboard. "
+                               "Leave blank for zones with no video.")
+                    link_zona_squadra_attuali = st.session_state['link_video_zone'].get(titolo_dashboard, {})
+                    df_link_zone_editor = pd.DataFrame({
+                        'Zone': TUTTI_I_TASTI_TIRATORI,
+                        'Video Link': [link_zona_squadra_attuali.get(z, '') for z in TUTTI_I_TASTI_TIRATORI]
+                    })
+                    df_link_zone_modificato = st.data_editor(df_link_zone_editor, hide_index=True, use_container_width=True,
+                                                               key="editor_link_zone_tir", disabled=['Zone'])
+                    nuovi_link_zona = {r['Zone']: r['Video Link'] for _, r in df_link_zone_modificato.iterrows() if r['Video Link'].strip()}
+                    if nuovi_link_zona != link_zona_squadra_attuali:
+                        st.session_state['link_video_zone'][titolo_dashboard] = nuovi_link_zona
+                        salva_link_zone_su_disco(st.session_state['link_video_zone'])
+
                 col_pdf1, col_pdf2 = st.columns(2)
                 with col_pdf1:
                     if st.button("📄 Generate PDF for this selection"):
@@ -7402,11 +7790,26 @@ with tab4:
                             try:
                                 note_selezione = {g: st.session_state['note_tiratori'].get(g, '') for g in dati_pdf_giocatori}
                                 logo_squadra_tir = st.session_state['loghi_squadre'].get(titolo_dashboard) if modalita_tir == "Team" else None
+                                elenco_partite_pdf = None
+                                if includi_matches_analyzed and testo_partite_manuale.strip():
+                                    elenco_partite_pdf = []
+                                    for riga_p in testo_partite_manuale.strip().split("\n"):
+                                        if ' - ' in riga_p:
+                                            nome_p, data_p = riga_p.rsplit(' - ', 1)
+                                            elenco_partite_pdf.append({'nome': nome_p.strip(), 'data': data_p.strip()})
+                                anagrafica_pdf_sel = {g: st.session_state['anagrafica_giocatori'][g]
+                                                       for g in dati_pdf_giocatori if g in st.session_state['anagrafica_giocatori']}
+                                link_clip_pdf_sel = {g: p['link_clip'] for g, p in anagrafica_pdf_sel.items() if p.get('link_clip')}
                                 pdf_bytes_sel = genera_pdf_tiratori(
                                     titolo_dashboard, dati_pdf_giocatori, note_selezione,
                                     df_squadra_riepilogo=(df_selezione if modalita_tir == "Team" else None),
                                     logo_squadra_b64=logo_squadra_tir,
-                                    mappe_extra=mappe_trend_correnti
+                                    mappe_extra=mappe_trend_correnti,
+                                    elenco_partite_analizzate=elenco_partite_pdf,
+                                    link_video_microzone=st.session_state['link_video_zone'].get(titolo_dashboard),
+                                    link_giocatori_duelli=link_clip_pdf_sel,
+                                    anagrafica_giocatori=anagrafica_pdf_sel,
+                                    link_personal_clips=link_clip_pdf_sel
                                 )
                                 st.download_button(
                                     label="⬇️ Download PDF", data=pdf_bytes_sel,
