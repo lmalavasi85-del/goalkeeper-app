@@ -4937,8 +4937,8 @@ def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
     cliccabili), colorata secondo le soglie Expected Goal % (vedi _colore_soglia_expected_goals),
     con testo opzionalmente cliccabile per micro-zona (link_per_zona: dict zona->url)."""
     stili = getSampleStyleSheet()
-    stile_cella = ParagraphStyle('CellaPulsantieraExp', parent=stili['Normal'], fontSize=9,
-                                  alignment=TA_CENTER, textColor=colors.white, fontName='Helvetica-Bold', leading=12)
+    stile_cella = ParagraphStyle('CellaPulsantieraExp', parent=stili['Normal'], fontSize=7.5,
+                                  alignment=TA_CENTER, textColor=colors.white, fontName='Helvetica-Bold', leading=9.5)
     zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona) if not df.empty and 'TIRO_CLEAN' in df.columns else pd.Series(dtype=object)
     blocco_righe = []
     for riga_zone in ORDINE_TASTIERA_TIRATORI:
@@ -4961,22 +4961,22 @@ def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
             colori_riga.append(colore_sfondo)
         larghezza_cella = 25.5 * cm / len(riga_zone)
         t = Table([riga_celle], colWidths=[larghezza_cella] * len(riga_zone))
-        stile_t = [('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 8),
-                   ('BOTTOMPADDING', (0, 0), (-1, -1), 8), ('BOX', (0, 0), (-1, -1), 0.5, colors.white),
+        stile_t = [('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 4),
+                   ('BOTTOMPADDING', (0, 0), (-1, -1), 4), ('BOX', (0, 0), (-1, -1), 0.5, colors.white),
                    ('INNERGRID', (0, 0), (-1, -1), 1.5, colors.white)]
         for idx_c, colore in enumerate(colori_riga):
             stile_t.append(('BACKGROUND', (idx_c, 0), (idx_c, 0), colore))
         t.setStyle(TableStyle(stile_t))
         t.hAlign = 'CENTER'
         blocco_righe.append(t)
-        blocco_righe.append(Spacer(1, 0.15 * cm))
+        blocco_righe.append(Spacer(1, 0.08 * cm))
     return blocco_righe
 
 def legenda_expected_goals_pdf():
     """Legenda dei colori della pulsantiera Expected Goals."""
     stili = getSampleStyleSheet()
-    stile_voce = ParagraphStyle('VoceLegendaExp', parent=stili['Normal'], fontSize=9.5, leading=13)
-    stile_nota_sp = ParagraphStyle('NotaSP', parent=stili['Normal'], fontSize=9.5, leading=13, spaceAfter=6,
+    stile_voce = ParagraphStyle('VoceLegendaExp', parent=stili['Normal'], fontSize=8.5, leading=11)
+    stile_nota_sp = ParagraphStyle('NotaSP', parent=stili['Normal'], fontSize=8.5, leading=11, spaceAfter=4,
                                     textColor=colors.HexColor('#555555'))
     nota_sp = Paragraph(
         "<b>S.P.</b> = Expected Goal % for that zone, from the currently active profile (S.P. Value, "
@@ -4991,13 +4991,13 @@ def legenda_expected_goals_pdf():
         ('#fdd835', 'Goal % between S.P. -5 and S.P. -10'),
         ('#43a047', 'Goal % below S.P. -10 — safest zone'),
     ]
-    righe = [[Table([['']], colWidths=[0.5 * cm], rowHeights=[0.5 * cm],
+    righe = [[Table([['']], colWidths=[0.4 * cm], rowHeights=[0.4 * cm],
                      style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(hexcol)),
                                         ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#999999'))])),
               Paragraph(testo, stile_voce)] for hexcol, testo in voci]
-    t = Table(righe, colWidths=[0.9 * cm, 20 * cm])
-    t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 3),
-                            ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
+    t = Table(righe, colWidths=[0.8 * cm, 20 * cm])
+    t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 1.5),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 1.5)]))
     return [nota_sp, t]
 
 def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None, mappe_extra=None,
@@ -7770,14 +7770,16 @@ with tab4:
                             st.rerun()
 
                 st.markdown("**📋 Matches Analyzed page**")
-                includi_matches_analyzed = st.checkbox("Include a 'Matches Analyzed' page in the PDF", value=True, key="includi_matches_analyzed_tir")
+                chiave_contesto_ma = _chiave_css_sicura(f"{titolo_dashboard}_{len(match_filtrati)}")
+                includi_matches_analyzed = st.checkbox("Include a 'Matches Analyzed' page in the PDF", value=True,
+                                                         key=f"includi_matches_analyzed_tir_{chiave_contesto_ma}")
                 elenco_auto = "\n".join(f"{m['nome']} - {m['data']}" for m in sorted(match_filtrati, key=lambda m: str(m['data'])))
                 testo_partite_manuale = st.text_area(
                     "One match per line, format 'Name - Date'. Pre-filled automatically from the matches in "
                     "this selection — if it's a Bulk Zone-Only import (no individual matches known), the list "
                     "may be empty or show the aggregated import name instead of real match names: edit it "
                     "freely below to list the actual matches.",
-                    value=elenco_auto, height=140, key="testo_partite_matches_analyzed",
+                    value=elenco_auto, height=140, key=f"testo_partite_matches_analyzed_{chiave_contesto_ma}",
                     disabled=not includi_matches_analyzed
                 )
 
