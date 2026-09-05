@@ -3677,6 +3677,78 @@ def salva_anagrafica_su_disco(anagrafica_dict):
         pickle.dump(anagrafica_dict, f)
 
 # ============================================================
+# LINK "DUELS" (facoltativi, per la sezione Duels di Shooting Trend e le due tabelle duelli nel
+# PDF): SPECIFICI per combinazione giocatore+micro-zona — es. il link per "Smetanka" da "bt2,5"
+# riguarda solo i suoi tiri da quella zona, indipendente da qualunque altro link (incluso
+# "Personal clips" nel profilo, che è un'altra cosa). Chiave di storage: "giocatore|zona".
+# ============================================================
+PLAYER_DUEL_LINKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_duel_links.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_link_duelli():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES)
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('PlayerDuelLinks')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='PlayerDuelLinks', rows=500, cols=2)
+        worksheet.append_row(['giocatore_zona', 'link'])
+    return worksheet
+
+def carica_link_duelli_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_link_duelli()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                if os.path.exists(PLAYER_DUEL_LINKS_FILE):
+                    try:
+                        with open(PLAYER_DUEL_LINKS_FILE, 'rb') as f:
+                            backup = pickle.load(f)
+                        if backup:
+                            st.sidebar.error(
+                                "⚠️ Google Sheets duel links look EMPTY, but a local backup was found — "
+                                "using the backup instead. Please check Google Sheets' Version History "
+                                "on the 'PlayerDuelLinks' tab to confirm and restore it there too."
+                            )
+                            return backup
+                    except Exception:
+                        pass
+                return {}
+            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            return {}
+    if os.path.exists(PLAYER_DUEL_LINKS_FILE):
+        try:
+            with open(PLAYER_DUEL_LINKS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_link_duelli_su_disco(link_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_link_duelli()
+            righe = [[k, v] for k, v in link_dict.items()]
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            worksheet.clear()
+            worksheet.append_row(['giocatore_zona', 'link'])
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save duel links to Google Sheets: {e}")
+    with open(PLAYER_DUEL_LINKS_FILE, 'wb') as f:
+        pickle.dump(link_dict, f)
+
+# ============================================================
 # LINK VIDEO PER MICRO-ZONA (facoltativi, per la pulsantiera Expected Goals nel PDF Shooting
 # Trend): indicizzati per squadra, {squadra: {zona: url}}.
 # ============================================================
@@ -4552,6 +4624,8 @@ if 'anagrafica_giocatori' not in st.session_state:
     st.session_state['anagrafica_giocatori'] = carica_anagrafica_da_disco()
 if 'link_video_zone' not in st.session_state:
     st.session_state['link_video_zone'] = carica_link_zone_da_disco()
+if 'link_duelli' not in st.session_state:
+    st.session_state['link_duelli'] = carica_link_duelli_da_disco()
 if 'foto_giocatori' not in st.session_state:
     st.session_state['foto_giocatori'] = carica_foto_da_disco()
 if 'db_h2h' not in st.session_state:
@@ -5005,9 +5079,10 @@ def calcola_tabelle_duelli(df, soglia_tiri_minimi=6):
     pericolosi.sort(key=lambda r: -r['pct'])
     return accettabili, pericolosi
 
-def _tabella_duelli_pdf(righe, link_giocatori=None):
+def _tabella_duelli_pdf(righe, link_duelli=None):
     """Costruisce la tabella reportlab per una delle due liste di calcola_tabelle_duelli, col
-    nome giocatore opzionalmente cliccabile (link_giocatori: dict nome->url)."""
+    nome giocatore opzionalmente cliccabile — link SPECIFICO per combinazione giocatore+zona
+    (link_duelli: dict "giocatore|zona" -> url), non un link generico del giocatore."""
     stili = getSampleStyleSheet()
     stile_cella = ParagraphStyle('CellaDuelli', parent=stili['Normal'], fontSize=9.5, leading=13)
     if not righe:
@@ -5015,7 +5090,7 @@ def _tabella_duelli_pdf(righe, link_giocatori=None):
     dati = [['Player', 'Zone', 'Result']]
     for r in righe:
         nome_cella = r['giocatore']
-        url = (link_giocatori or {}).get(r['giocatore'])
+        url = (link_duelli or {}).get(f"{r['giocatore']}|{r['zona']}")
         testo_nome = f'<a href="{url}" color="#15304f"><u>{nome_cella}</u></a>' if url else nome_cella
         dati.append([Paragraph(testo_nome, stile_cella), r['zona'], f"{r['goal']}/{r['tot']} = {r['pct']:.0f}%"])
     t = Table(dati, colWidths=[5.5 * cm, 3 * cm, 3.5 * cm])
@@ -5100,7 +5175,7 @@ def legenda_expected_goals_pdf():
     return [nota_sp, t]
 
 def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None, mappe_extra=None,
-                         elenco_partite_analizzate=None, link_video_microzone=None, link_giocatori_duelli=None,
+                         elenco_partite_analizzate=None, link_video_microzone=None, link_duelli_pdf=None,
                          anagrafica_giocatori=None, link_personal_clips=None):
     """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con UNA PAGINA per
     ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto).
@@ -5323,9 +5398,9 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         stile_titolo_accett = ParagraphStyle('TitoloAccett', parent=sezione_stile, textColor=colors.HexColor('#1e7d34'))
         stile_titolo_pericol = ParagraphStyle('TitoloPericol', parent=sezione_stile, textColor=colors.HexColor('#b5231a'))
         colonna_sinistra = [Paragraph("Players we can accept the duel with", stile_titolo_accett),
-                             Spacer(1, 0.2 * cm), _tabella_duelli_pdf(accettabili_pdf, link_giocatori_duelli)]
+                             Spacer(1, 0.2 * cm), _tabella_duelli_pdf(accettabili_pdf, link_duelli_pdf)]
         colonna_destra = [Paragraph("Most dangerous players", stile_titolo_pericol),
-                           Spacer(1, 0.2 * cm), _tabella_duelli_pdf(pericolosi_pdf, link_giocatori_duelli)]
+                           Spacer(1, 0.2 * cm), _tabella_duelli_pdf(pericolosi_pdf, link_duelli_pdf)]
         riga_duelli = Table([[colonna_sinistra, colonna_destra]], colWidths=[13.5 * cm, 13.5 * cm])
         riga_duelli.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
         stile_legenda_duelli = ParagraphStyle('LegendaDuelli', parent=stili['Normal'], fontSize=9, spaceBefore=10,
@@ -7557,19 +7632,24 @@ with tab4:
                     st.caption("Minimum 6 shots taken from that micro-zone. **Left** — Goal % more than 5 "
                                "points below the Expected Goal % for that zone (the shooter underperforms "
                                "there). **Right** — Goal % more than 5 points above (the shooter "
-                               "overperforms there). The optional Link column is the same link used for "
-                               "'Personal clips' in the player's profile below, and for the clickable name "
-                               "in the PDF export — editing it here updates it everywhere.")
+                               "overperforms there). The optional Link column is SPECIFIC to that player+zone "
+                               "combination — e.g. a link on 'Smetanka, bt2,5' only covers his shots from "
+                               "bt2,5, and is unrelated to 'Personal clips' or to any other zone. Leave blank "
+                               "if you don't have a specific clip for that combination.")
                     accettabili_ui, pericolosi_ui = calcola_tabelle_duelli(df_selezione)
                     chiave_duelli = _chiave_css_sicura(titolo_dashboard)
 
-                    def _aggiorna_link_giocatore_duelli(nome_g, nuovo_link):
-                        profilo_g = st.session_state['anagrafica_giocatori'].get(nome_g, {})
-                        if profilo_g.get('link_clip', '') != nuovo_link:
-                            profilo_g = dict(profilo_g)
-                            profilo_g['link_clip'] = nuovo_link
-                            st.session_state['anagrafica_giocatori'][nome_g] = profilo_g
-                            salva_anagrafica_su_disco(st.session_state['anagrafica_giocatori'])
+                    def _chiave_link_duello(nome_g, zona_g):
+                        return f"{nome_g}|{zona_g}"
+
+                    def _aggiorna_link_duello(nome_g, zona_g, nuovo_link):
+                        chiave_gz = _chiave_link_duello(nome_g, zona_g)
+                        if st.session_state['link_duelli'].get(chiave_gz, '') != nuovo_link:
+                            if nuovo_link:
+                                st.session_state['link_duelli'][chiave_gz] = nuovo_link
+                            elif chiave_gz in st.session_state['link_duelli']:
+                                del st.session_state['link_duelli'][chiave_gz]
+                            salva_link_duelli_su_disco(st.session_state['link_duelli'])
 
                     cdu1, cdu2 = st.columns(2)
                     with cdu1:
@@ -7580,7 +7660,7 @@ with tab4:
                             df_acc_editor = pd.DataFrame([
                                 {'Player': r['giocatore'], 'Zone': r['zona'],
                                  'Result': f"{r['goal']}/{r['tot']} = {r['pct']:.0f}%",
-                                 'Link': st.session_state['anagrafica_giocatori'].get(r['giocatore'], {}).get('link_clip', '')}
+                                 'Link': st.session_state['link_duelli'].get(_chiave_link_duello(r['giocatore'], r['zona']), '')}
                                 for r in accettabili_ui
                             ])
                             df_acc_modificato = st.data_editor(
@@ -7588,7 +7668,7 @@ with tab4:
                                 key=f"duelli_accett_{chiave_duelli}", disabled=['Player', 'Zone', 'Result']
                             )
                             for _, riga_m in df_acc_modificato.iterrows():
-                                _aggiorna_link_giocatore_duelli(riga_m['Player'], riga_m['Link'])
+                                _aggiorna_link_duello(riga_m['Player'], riga_m['Zone'], riga_m['Link'])
                     with cdu2:
                         st.markdown("**🔴 Most dangerous players**")
                         if not pericolosi_ui:
@@ -7597,7 +7677,7 @@ with tab4:
                             df_per_editor = pd.DataFrame([
                                 {'Player': r['giocatore'], 'Zone': r['zona'],
                                  'Result': f"{r['goal']}/{r['tot']} = {r['pct']:.0f}%",
-                                 'Link': st.session_state['anagrafica_giocatori'].get(r['giocatore'], {}).get('link_clip', '')}
+                                 'Link': st.session_state['link_duelli'].get(_chiave_link_duello(r['giocatore'], r['zona']), '')}
                                 for r in pericolosi_ui
                             ])
                             df_per_modificato = st.data_editor(
@@ -7605,7 +7685,7 @@ with tab4:
                                 key=f"duelli_pericol_{chiave_duelli}", disabled=['Player', 'Zone', 'Result']
                             )
                             for _, riga_m in df_per_modificato.iterrows():
-                                _aggiorna_link_giocatore_duelli(riga_m['Player'], riga_m['Link'])
+                                _aggiorna_link_duello(riga_m['Player'], riga_m['Zone'], riga_m['Link'])
                 else:
                     df_passivo_giocatore = filtra_tiri_passivi(df_selezione)
                     if not df_passivo_giocatore.empty:
@@ -8036,7 +8116,7 @@ with tab4:
                                     mappe_extra=mappe_trend_correnti,
                                     elenco_partite_analizzate=elenco_partite_pdf,
                                     link_video_microzone=st.session_state['link_video_zone'].get(titolo_dashboard),
-                                    link_giocatori_duelli=link_clip_pdf_sel,
+                                    link_duelli_pdf=st.session_state['link_duelli'],
                                     anagrafica_giocatori=anagrafica_pdf_sel,
                                     link_personal_clips=link_clip_pdf_sel
                                 )
