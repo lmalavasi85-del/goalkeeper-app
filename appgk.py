@@ -188,9 +188,11 @@ def tabella_distribuzione_macro_universale(df):
 
 def tabella_distribuzione_micro_universale(df):
     """Come tabella_distribuzione_macro_universale, ma per ogni singola micro-zona della
-    tastiera usata ovunque nel software (lw1, lw2, ... fb3), nell'ordine naturale della
-    pulsantiera. Per ciascuna micro-zona: % realizzativa, % sul totale di tutti i tiri della
-    selezione, e % sul totale del proprio macro-settore. Micro-zone senza tiri non compaiono."""
+    tastiera usata ovunque nel software (lw1, lw2, ... fb3), in ordine di numerazione naturale
+    (rw1 prima di rw2 — diverso dall'ordine spaziale della pulsantiera, dove rw2 precede rw1 per
+    l'orientamento rispetto al campo). Per ciascuna micro-zona: % realizzativa, % sul totale di
+    tutti i tiri della selezione, e % sul totale del proprio macro-settore. Micro-zone senza tiri
+    non compaiono."""
     colonne_vuote = ['Micro-Zone', 'Macro-Sector', 'Goal % (Shots)', '% of Total', '% of Macro-Sector']
     if df.empty or 'TIRO_CLEAN' not in df.columns:
         return pd.DataFrame(columns=colonne_vuote)
@@ -199,7 +201,7 @@ def tabella_distribuzione_micro_universale(df):
     totale_tiri = len(df)
     totali_macro = macro_per_riga.value_counts().to_dict()
     righe = []
-    for settore in TUTTI_I_TASTI_TIRATORI:
+    for settore in TUTTI_I_TASTI_TABELLE:
         df_s = df[zona_normalizzata == settore]
         tot_s = len(df_s)
         if tot_s == 0:
@@ -215,7 +217,7 @@ def tabella_distribuzione_micro_universale(df):
     if not righe:
         return pd.DataFrame(columns=colonne_vuote)
     df_r = pd.DataFrame(righe)
-    ordine_map = {s: i for i, s in enumerate(TUTTI_I_TASTI_TIRATORI)}
+    ordine_map = {s: i for i, s in enumerate(TUTTI_I_TASTI_TABELLE)}
     df_r['_ord'] = df_r['Micro-Zone'].map(ordine_map)
     df_r = df_r.sort_values('_ord').drop(columns='_ord').reset_index(drop=True)
     df_r['Goal % (Shots)'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
@@ -560,6 +562,11 @@ ORDINE_TASTIERA_TIRATORI = [
     ['fb1', 'fb2', 'fb3'],
 ]
 TUTTI_I_TASTI_TIRATORI = [t for riga in ORDINE_TASTIERA_TIRATORI for t in riga]
+
+# Ordine delle micro-zone usato SOLO nelle TABELLE (mai nelle pulsantiere/tastiere, che restano
+# con rw2 prima di rw1 per l'orientamento spaziale rispetto al campo): qui rw1 precede rw2,
+# coerente con la numerazione naturale delle altre zone (1 prima di 2 ovunque).
+TUTTI_I_TASTI_TABELLE = [t if t not in ('rw1', 'rw2') else {'rw2': 'rw1', 'rw1': 'rw2'}[t] for t in TUTTI_I_TASTI_TIRATORI]
 
 # ============================================================
 # PULSANTIERA INTERATTIVA (la tastiera dei settori di campo, come vera pulsantiera cliccabile,
@@ -3618,6 +3625,24 @@ def carica_anagrafica_da_disco():
         try:
             worksheet = _ottieni_worksheet_anagrafica()
             valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                # Foglio sospettosamente vuoto: potrebbe essere un salvataggio interrotto a
+                # metà (stessa lezione imparata con la stagione tiratori). Se un backup locale
+                # ha più profili, uso quello invece di accettare zero come verità.
+                if os.path.exists(PLAYER_PROFILE_FILE):
+                    try:
+                        with open(PLAYER_PROFILE_FILE, 'rb') as f:
+                            backup = pickle.load(f)
+                        if backup:
+                            st.sidebar.error(
+                                "⚠️ Google Sheets player profiles look EMPTY, but a local backup was "
+                                "found — using the backup instead. Please check Google Sheets' Version "
+                                "History on the 'PlayerProfile' tab to confirm and restore it there too."
+                            )
+                            return backup
+                    except Exception:
+                        pass
+                return {}
             return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
             return {}
@@ -3633,9 +3658,16 @@ def salva_anagrafica_su_disco(anagrafica_dict):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_anagrafica()
+            righe = [[g, json.dumps(dati)] for g, dati in anagrafica_dict.items()]
+            # Validazione PRIMA di cancellare il foglio: se qualche riga fosse troppo grande
+            # per una cella di Google Sheets, meglio fermarsi subito che cancellare e scoprirlo
+            # dopo — è esattamente così che si è persa la stagione tiratori la volta scorsa.
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             worksheet.clear()
             worksheet.append_row(['giocatore', 'dati_json'])
-            righe = [[g, json.dumps(dati)] for g, dati in anagrafica_dict.items()]
             if righe:
                 worksheet.append_rows(righe)
             return
@@ -3669,6 +3701,21 @@ def carica_link_zone_da_disco():
         try:
             worksheet = _ottieni_worksheet_link_zone()
             valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                if os.path.exists(TEAM_ZONE_LINKS_FILE):
+                    try:
+                        with open(TEAM_ZONE_LINKS_FILE, 'rb') as f:
+                            backup = pickle.load(f)
+                        if backup:
+                            st.sidebar.error(
+                                "⚠️ Google Sheets zone video links look EMPTY, but a local backup was "
+                                "found — using the backup instead. Please check Google Sheets' Version "
+                                "History on the 'TeamZoneLinks' tab to confirm and restore it there too."
+                            )
+                            return backup
+                    except Exception:
+                        pass
+                return {}
             return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
             return {}
@@ -3684,9 +3731,13 @@ def salva_link_zone_su_disco(link_dict):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_link_zone()
+            righe = [[sq, json.dumps(link)] for sq, link in link_dict.items()]
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             worksheet.clear()
             worksheet.append_row(['squadra', 'link_json'])
-            righe = [[sq, json.dumps(link)] for sq, link in link_dict.items()]
             if righe:
                 worksheet.append_rows(righe)
             return
