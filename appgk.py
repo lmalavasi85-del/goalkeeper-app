@@ -3749,6 +3749,79 @@ def salva_link_duelli_su_disco(link_dict):
         pickle.dump(link_dict, f)
 
 # ============================================================
+# COMPETIZIONE DI RIFERIMENTO PER PARTITA (facoltativa, per la pagina "Matches Analyzed" del PDF
+# Shooting Trend): testo libero — friendly match, European Championship, il nome di un torneo
+# specifico, ecc. Indicizzata per "nome_partita|data" cosi che, una volta inserita per una
+# partita reale, ricompaia automaticamente ogni volta che quella stessa partita viene ritrovata,
+# anche in un'altra sessione o dopo aver chiuso l'app.
+# ============================================================
+MATCH_COMPETITIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "match_competitions.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_competizioni_partite():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES)
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('MatchCompetitions')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='MatchCompetitions', rows=1000, cols=2)
+        worksheet.append_row(['partita_data', 'competizione'])
+    return worksheet
+
+def carica_competizioni_partite_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_competizioni_partite()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                if os.path.exists(MATCH_COMPETITIONS_FILE):
+                    try:
+                        with open(MATCH_COMPETITIONS_FILE, 'rb') as f:
+                            backup = pickle.load(f)
+                        if backup:
+                            st.sidebar.error(
+                                "⚠️ Google Sheets match competitions look EMPTY, but a local backup was "
+                                "found — using the backup instead. Please check Google Sheets' Version "
+                                "History on the 'MatchCompetitions' tab to confirm and restore it there too."
+                            )
+                            return backup
+                    except Exception:
+                        pass
+                return {}
+            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            return {}
+    if os.path.exists(MATCH_COMPETITIONS_FILE):
+        try:
+            with open(MATCH_COMPETITIONS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_competizioni_partite_su_disco(competizioni_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_competizioni_partite()
+            righe = [[k, v] for k, v in competizioni_dict.items()]
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            worksheet.clear()
+            worksheet.append_row(['partita_data', 'competizione'])
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save match competitions to Google Sheets: {e}")
+    with open(MATCH_COMPETITIONS_FILE, 'wb') as f:
+        pickle.dump(competizioni_dict, f)
+
+# ============================================================
 # LINK VIDEO PER MICRO-ZONA (facoltativi, per la pulsantiera Expected Goals nel PDF Shooting
 # Trend): indicizzati per squadra, {squadra: {zona: url}}.
 # ============================================================
@@ -4626,6 +4699,8 @@ if 'link_video_zone' not in st.session_state:
     st.session_state['link_video_zone'] = carica_link_zone_da_disco()
 if 'link_duelli' not in st.session_state:
     st.session_state['link_duelli'] = carica_link_duelli_da_disco()
+if 'competizioni_partite' not in st.session_state:
+    st.session_state['competizioni_partite'] = carica_competizioni_partite_da_disco()
 if 'foto_giocatori' not in st.session_state:
     st.session_state['foto_giocatori'] = carica_foto_da_disco()
 if 'db_h2h' not in st.session_state:
@@ -5021,9 +5096,21 @@ def tabella_partite_analizzate_pdf(elenco_partite):
     else:
         due_colonne, font_size, padding_v = True, 7, 2
 
-    def _costruisci_tabella(partite, larghezza_data, larghezza_nome):
-        dati = [['Date', 'Match']] + [[str(p['data']), p['nome']] for p in partite]
-        t = Table(dati, colWidths=[larghezza_data, larghezza_nome])
+    # La colonna Competition compare solo se almeno una partita la valorizza — quando nessuno
+    # la usa, la tabella resta esattamente com'era (2 colonne), coerente col fatto che l'intera
+    # funzionalità è facoltativa.
+    mostra_competizione = any(p.get('competizione') for p in partite_ordinate)
+
+    def _costruisci_tabella(partite, larghezza_data, larghezza_nome, larghezza_comp=None):
+        if mostra_competizione:
+            intestazione = ['Date', 'Match', 'Competition']
+            dati = [intestazione] + [[str(p['data']), p['nome'], p.get('competizione') or '—'] for p in partite]
+            colonne = [larghezza_data, larghezza_nome, larghezza_comp]
+        else:
+            intestazione = ['Date', 'Match']
+            dati = [intestazione] + [[str(p['data']), p['nome']] for p in partite]
+            colonne = [larghezza_data, larghezza_nome]
+        t = Table(dati, colWidths=colonne)
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -5038,13 +5125,19 @@ def tabella_partite_analizzate_pdf(elenco_partite):
         return t
 
     if not due_colonne:
+        if mostra_competizione:
+            return _costruisci_tabella(partite_ordinate, 3.5 * cm, 11 * cm, 8.5 * cm)
         return _costruisci_tabella(partite_ordinate, 4 * cm, 19 * cm)
 
     # Elenco lungo: divido a metà (prima metà = le più vecchie, a sinistra; seconda metà = le
     # più recenti, a destra) — entrambe le colonne restano comunque nella stessa pagina.
     meta = (n + 1) // 2
-    tabella_sx = _costruisci_tabella(partite_ordinate[:meta], 3 * cm, 9.5 * cm)
-    tabella_dx = _costruisci_tabella(partite_ordinate[meta:], 3 * cm, 9.5 * cm)
+    if mostra_competizione:
+        tabella_sx = _costruisci_tabella(partite_ordinate[:meta], 2.6 * cm, 6.5 * cm, 4.4 * cm)
+        tabella_dx = _costruisci_tabella(partite_ordinate[meta:], 2.6 * cm, 6.5 * cm, 4.4 * cm)
+    else:
+        tabella_sx = _costruisci_tabella(partite_ordinate[:meta], 3 * cm, 9.5 * cm)
+        tabella_dx = _costruisci_tabella(partite_ordinate[meta:], 3 * cm, 9.5 * cm)
     doppia = Table([[tabella_sx, tabella_dx]], colWidths=[12.7 * cm, 12.7 * cm])
     doppia.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (1, 0), (1, 0), 0.6 * cm)]))
     return doppia
@@ -8058,14 +8151,21 @@ with tab4:
                 chiave_contesto_ma = _chiave_css_sicura(f"{titolo_dashboard}_{len(match_filtrati)}")
                 includi_matches_analyzed = st.checkbox("Include a 'Matches Analyzed' page in the PDF", value=True,
                                                          key=f"includi_matches_analyzed_tir_{chiave_contesto_ma}")
-                elenco_auto = "\n".join(f"{m['nome']} - {m['data']}" for m in sorted(match_filtrati, key=lambda m: str(m['data'])))
-                testo_partite_manuale = st.text_area(
-                    "One match per line, format 'Name - Date'. Pre-filled automatically from the matches in "
-                    "this selection — if it's a Bulk Zone-Only import (no individual matches known), the list "
-                    "may be empty or show the aggregated import name instead of real match names: edit it "
-                    "freely below to list the actual matches.",
-                    value=elenco_auto, height=140, key=f"testo_partite_matches_analyzed_{chiave_contesto_ma}",
-                    disabled=not includi_matches_analyzed
+                st.caption("Match and Date are pre-filled automatically from the matches in this selection — "
+                           "if it's a Bulk Zone-Only import (no individual matches known), the list may be "
+                           "empty or show the aggregated import name instead: edit freely below to list the "
+                           "actual matches. Competition is entirely optional free text (friendly match, "
+                           "European Championship, a tournament's own name...) — once set for a real match, "
+                           "it's remembered permanently and pre-filled again automatically next time.")
+                partite_ordinate_ma = sorted(match_filtrati, key=lambda m: str(m['data']))
+                df_matches_editor_base = pd.DataFrame([
+                    {'Match': m['nome'], 'Date': str(m['data']),
+                     'Competition': st.session_state['competizioni_partite'].get(f"{m['nome']}|{m['data']}", '')}
+                    for m in partite_ordinate_ma
+                ]) if partite_ordinate_ma else pd.DataFrame([{'Match': '', 'Date': '', 'Competition': ''}])
+                df_matches_editor = st.data_editor(
+                    df_matches_editor_base, hide_index=True, use_container_width=True, num_rows="dynamic",
+                    key=f"editor_matches_analyzed_{chiave_contesto_ma}", disabled=not includi_matches_analyzed
                 )
 
                 with st.expander("🎬 Video links per micro-zone (optional)"):
@@ -8091,21 +8191,28 @@ with tab4:
                                 note_selezione = {g: st.session_state['note_tiratori'].get(g, '') for g in dati_pdf_giocatori}
                                 logo_squadra_tir = st.session_state['loghi_squadre'].get(titolo_dashboard) if modalita_tir == "Team" else None
                                 elenco_partite_pdf = None
-                                if includi_matches_analyzed and testo_partite_manuale.strip():
+                                if includi_matches_analyzed:
                                     elenco_partite_pdf = []
-                                    for riga_p in testo_partite_manuale.strip().split("\n"):
-                                        riga_p = riga_p.strip()
-                                        if not riga_p:
+                                    for _, riga_p in df_matches_editor.iterrows():
+                                        nome_p = str(riga_p.get('Match', '') or '').strip()
+                                        data_p = str(riga_p.get('Date', '') or '').strip()
+                                        comp_p = str(riga_p.get('Competition', '') or '').strip()
+                                        if not nome_p and not data_p:
                                             continue
-                                        # Formato preferito "Nome - Data", ma qualunque riga non
-                                        # vuota viene comunque inclusa (mai scartata in
-                                        # silenzio): se non c'è un ' - ' riconoscibile, l'intera
-                                        # riga diventa il nome e la data resta vuota.
-                                        if ' - ' in riga_p:
-                                            nome_p, data_p = riga_p.rsplit(' - ', 1)
-                                            elenco_partite_pdf.append({'nome': nome_p.strip(), 'data': data_p.strip()})
-                                        else:
-                                            elenco_partite_pdf.append({'nome': riga_p, 'data': ''})
+                                        elenco_partite_pdf.append({'nome': nome_p, 'data': data_p, 'competizione': comp_p})
+                                        # La competizione, una volta inserita per una partita reale
+                                        # (nome e data entrambi presenti), resta in memoria in modo
+                                        # permanente — ricompare da sola la prossima volta che quella
+                                        # stessa partita viene ritrovata, anche dopo aver chiuso l'app.
+                                        if nome_p and data_p:
+                                            chiave_comp = f"{nome_p}|{data_p}"
+                                            if comp_p:
+                                                if st.session_state['competizioni_partite'].get(chiave_comp) != comp_p:
+                                                    st.session_state['competizioni_partite'][chiave_comp] = comp_p
+                                                    salva_competizioni_partite_su_disco(st.session_state['competizioni_partite'])
+                                            elif chiave_comp in st.session_state['competizioni_partite']:
+                                                del st.session_state['competizioni_partite'][chiave_comp]
+                                                salva_competizioni_partite_su_disco(st.session_state['competizioni_partite'])
                                 anagrafica_pdf_sel = {g: st.session_state['anagrafica_giocatori'][g]
                                                        for g in dati_pdf_giocatori if g in st.session_state['anagrafica_giocatori']}
                                 link_clip_pdf_sel = {g: p['link_clip'] for g, p in anagrafica_pdf_sel.items() if p.get('link_clip')}
