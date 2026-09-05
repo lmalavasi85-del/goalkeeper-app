@@ -4833,6 +4833,8 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
             pezzi_anagrafica.append(f"#{dati_anagrafici['numero_maglia']}")
         if dati_anagrafici.get('ruolo'):
             pezzi_anagrafica.append(dati_anagrafici['ruolo'])
+        if dati_anagrafici.get('data_nascita'):
+            pezzi_anagrafica.append(f"b. {dati_anagrafici['data_nascita']}")
         if dati_anagrafici.get('altezza'):
             pezzi_anagrafica.append(f"{dati_anagrafici['altezza']} cm")
         if dati_anagrafici.get('peso'):
@@ -7847,6 +7849,7 @@ with tab4:
                             with col_pr1:
                                 nome_completo_g = st.text_input("Full name", value=profilo_attuale_g.get('nome_completo', ''), key=f"prof_nome_{nome_giocatore}")
                                 numero_maglia_g = st.text_input("Jersey number", value=profilo_attuale_g.get('numero_maglia', ''), key=f"prof_maglia_{nome_giocatore}")
+                                data_nascita_g = st.text_input("Date of birth", value=profilo_attuale_g.get('data_nascita', ''), key=f"prof_nascita_{nome_giocatore}")
                             with col_pr2:
                                 altezza_g = st.text_input("Height (cm)", value=profilo_attuale_g.get('altezza', ''), key=f"prof_altezza_{nome_giocatore}")
                                 peso_g = st.text_input("Weight (kg)", value=profilo_attuale_g.get('peso', ''), key=f"prof_peso_{nome_giocatore}")
@@ -7854,6 +7857,7 @@ with tab4:
                                 ruolo_g = st.text_input("Primary role", value=profilo_attuale_g.get('ruolo', ''), key=f"prof_ruolo_{nome_giocatore}")
                                 link_clip_g_input = st.text_input("Personal clips link", value=profilo_attuale_g.get('link_clip', ''), key=f"prof_clip_{nome_giocatore}")
                             nuovo_profilo_g = {'nome_completo': nome_completo_g, 'numero_maglia': numero_maglia_g,
+                                                'data_nascita': data_nascita_g,
                                                 'altezza': altezza_g, 'peso': peso_g, 'ruolo': ruolo_g, 'link_clip': link_clip_g_input}
                             if nuovo_profilo_g != profilo_attuale_g:
                                 if any(nuovo_profilo_g.values()):
