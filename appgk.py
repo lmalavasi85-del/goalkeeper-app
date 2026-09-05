@@ -3822,6 +3822,79 @@ def salva_competizioni_partite_su_disco(competizioni_dict):
         pickle.dump(competizioni_dict, f)
 
 # ============================================================
+# ELENCO PARTITE INSERITE MANUALMENTE nella pagina "Matches Analyzed" (facoltativo): serve per
+# i casi (tipicamente import Bulk Zone-Only) in cui non esistono partite reali da precompilare
+# automaticamente, quindi l'utente scrive Match/Date a mano — queste righe, prima, venivano
+# ricostruite da zero ogni volta che si riapriva la pagina (solo la Competition restava in
+# memoria). Ora l'intero elenco resta permanente, indicizzato per squadra/selezione.
+# ============================================================
+MATCHES_ANALYZED_MANUALI_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "matches_analyzed_manuali.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_matches_analyzed_manuali():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES)
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('MatchesAnalyzedManual')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='MatchesAnalyzedManual', rows=500, cols=2)
+        worksheet.append_row(['squadra_selezione', 'righe_json'])
+    return worksheet
+
+def carica_matches_analyzed_manuali_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_matches_analyzed_manuali()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                if os.path.exists(MATCHES_ANALYZED_MANUALI_FILE):
+                    try:
+                        with open(MATCHES_ANALYZED_MANUALI_FILE, 'rb') as f:
+                            backup = pickle.load(f)
+                        if backup:
+                            st.sidebar.error(
+                                "⚠️ Google Sheets manually-entered matches look EMPTY, but a local backup "
+                                "was found — using the backup instead. Please check Google Sheets' Version "
+                                "History on the 'MatchesAnalyzedManual' tab to confirm and restore it there too."
+                            )
+                            return backup
+                    except Exception:
+                        pass
+                return {}
+            return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            return {}
+    if os.path.exists(MATCHES_ANALYZED_MANUALI_FILE):
+        try:
+            with open(MATCHES_ANALYZED_MANUALI_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_matches_analyzed_manuali_su_disco(dati_dict):
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_matches_analyzed_manuali()
+            righe = [[k, json.dumps(v)] for k, v in dati_dict.items()]
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            worksheet.clear()
+            worksheet.append_row(['squadra_selezione', 'righe_json'])
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save manually-entered matches to Google Sheets: {e}")
+    with open(MATCHES_ANALYZED_MANUALI_FILE, 'wb') as f:
+        pickle.dump(dati_dict, f)
+
+# ============================================================
 # LINK VIDEO PER MICRO-ZONA (facoltativi, per la pulsantiera Expected Goals nel PDF Shooting
 # Trend): indicizzati per squadra, {squadra: {zona: url}}.
 # ============================================================
@@ -4701,6 +4774,8 @@ if 'link_duelli' not in st.session_state:
     st.session_state['link_duelli'] = carica_link_duelli_da_disco()
 if 'competizioni_partite' not in st.session_state:
     st.session_state['competizioni_partite'] = carica_competizioni_partite_da_disco()
+if 'matches_analyzed_manuali' not in st.session_state:
+    st.session_state['matches_analyzed_manuali'] = carica_matches_analyzed_manuali_da_disco()
 if 'foto_giocatori' not in st.session_state:
     st.session_state['foto_giocatori'] = carica_foto_da_disco()
 if 'db_h2h' not in st.session_state:
@@ -8157,16 +8232,34 @@ with tab4:
                            "actual matches. Competition is entirely optional free text (friendly match, "
                            "European Championship, a tournament's own name...) — once set for a real match, "
                            "it's remembered permanently and pre-filled again automatically next time.")
-                partite_ordinate_ma = sorted(match_filtrati, key=lambda m: str(m['data']))
-                df_matches_editor_base = pd.DataFrame([
-                    {'Match': m['nome'], 'Date': str(m['data']),
-                     'Competition': st.session_state['competizioni_partite'].get(f"{m['nome']}|{m['data']}", '')}
-                    for m in partite_ordinate_ma
-                ]) if partite_ordinate_ma else pd.DataFrame([{'Match': '', 'Date': '', 'Competition': ''}])
+                # Base dell'editor: parto dalle righe salvate PERMANENTEMENTE per questa
+                # squadra/selezione (incluse quelle scritte a mano, che altrimenti sparirebbero
+                # ad ogni nuova sessione, essendo assenti da match_filtrati), poi aggiungo
+                # eventuali partite reali automatiche non ancora presenti in quell'elenco.
+                righe_salvate_ma = st.session_state['matches_analyzed_manuali'].get(titolo_dashboard, [])
+                chiavi_gia_presenti_ma = {(r.get('Match', ''), r.get('Date', '')) for r in righe_salvate_ma}
+                righe_base_ma = list(righe_salvate_ma)
+                for m in sorted(match_filtrati, key=lambda m: str(m['data'])):
+                    chiave_m = (m['nome'], str(m['data']))
+                    if chiave_m not in chiavi_gia_presenti_ma:
+                        righe_base_ma.append({
+                            'Match': m['nome'], 'Date': str(m['data']),
+                            'Competition': st.session_state['competizioni_partite'].get(f"{m['nome']}|{m['data']}", '')
+                        })
+                if not righe_base_ma:
+                    righe_base_ma = [{'Match': '', 'Date': '', 'Competition': ''}]
+                df_matches_editor_base = pd.DataFrame(righe_base_ma)
                 df_matches_editor = st.data_editor(
                     df_matches_editor_base, hide_index=True, use_container_width=True, num_rows="dynamic",
                     key=f"editor_matches_analyzed_{chiave_contesto_ma}", disabled=not includi_matches_analyzed
                 )
+                # Salvo SEMPRE l'intero contenuto corrente dell'editor in modo permanente (non
+                # solo la Competition): così anche le righe scritte a mano restano dopo aver
+                # chiuso e riaperto l'app, non solo finché dura la sessione del browser.
+                righe_editor_attuali = df_matches_editor.to_dict('records')
+                if righe_editor_attuali != st.session_state['matches_analyzed_manuali'].get(titolo_dashboard, []):
+                    st.session_state['matches_analyzed_manuali'][titolo_dashboard] = righe_editor_attuali
+                    salva_matches_analyzed_manuali_su_disco(st.session_state['matches_analyzed_manuali'])
 
                 with st.expander("🎬 Video links per micro-zone (optional)"):
                     st.caption("Attach a video link to any micro-zone button in the PDF's Expected Goals keyboard. "
