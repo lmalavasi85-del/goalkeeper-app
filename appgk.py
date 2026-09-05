@@ -7551,6 +7551,61 @@ with tab4:
                         with cp2:
                             st.markdown("**By Goal %**")
                             st.dataframe(df_passivo_pct, use_container_width=True, hide_index=True)
+
+                    st.markdown("---")
+                    st.subheader(f"🥊 Duels — {titolo_dashboard}")
+                    st.caption("Minimum 6 shots taken from that micro-zone. **Left** — Goal % more than 5 "
+                               "points below the Expected Goal % for that zone (the shooter underperforms "
+                               "there). **Right** — Goal % more than 5 points above (the shooter "
+                               "overperforms there). The optional Link column is the same link used for "
+                               "'Personal clips' in the player's profile below, and for the clickable name "
+                               "in the PDF export — editing it here updates it everywhere.")
+                    accettabili_ui, pericolosi_ui = calcola_tabelle_duelli(df_selezione)
+                    chiave_duelli = _chiave_css_sicura(titolo_dashboard)
+
+                    def _aggiorna_link_giocatore_duelli(nome_g, nuovo_link):
+                        profilo_g = st.session_state['anagrafica_giocatori'].get(nome_g, {})
+                        if profilo_g.get('link_clip', '') != nuovo_link:
+                            profilo_g = dict(profilo_g)
+                            profilo_g['link_clip'] = nuovo_link
+                            st.session_state['anagrafica_giocatori'][nome_g] = profilo_g
+                            salva_anagrafica_su_disco(st.session_state['anagrafica_giocatori'])
+
+                    cdu1, cdu2 = st.columns(2)
+                    with cdu1:
+                        st.markdown("**🟢 Players we can accept the duel with**")
+                        if not accettabili_ui:
+                            st.caption("No player meets these criteria in this selection.")
+                        else:
+                            df_acc_editor = pd.DataFrame([
+                                {'Player': r['giocatore'], 'Zone': r['zona'],
+                                 'Result': f"{r['goal']}/{r['tot']} = {r['pct']:.0f}%",
+                                 'Link': st.session_state['anagrafica_giocatori'].get(r['giocatore'], {}).get('link_clip', '')}
+                                for r in accettabili_ui
+                            ])
+                            df_acc_modificato = st.data_editor(
+                                df_acc_editor, hide_index=True, use_container_width=True,
+                                key=f"duelli_accett_{chiave_duelli}", disabled=['Player', 'Zone', 'Result']
+                            )
+                            for _, riga_m in df_acc_modificato.iterrows():
+                                _aggiorna_link_giocatore_duelli(riga_m['Player'], riga_m['Link'])
+                    with cdu2:
+                        st.markdown("**🔴 Most dangerous players**")
+                        if not pericolosi_ui:
+                            st.caption("No player meets these criteria in this selection.")
+                        else:
+                            df_per_editor = pd.DataFrame([
+                                {'Player': r['giocatore'], 'Zone': r['zona'],
+                                 'Result': f"{r['goal']}/{r['tot']} = {r['pct']:.0f}%",
+                                 'Link': st.session_state['anagrafica_giocatori'].get(r['giocatore'], {}).get('link_clip', '')}
+                                for r in pericolosi_ui
+                            ])
+                            df_per_modificato = st.data_editor(
+                                df_per_editor, hide_index=True, use_container_width=True,
+                                key=f"duelli_pericol_{chiave_duelli}", disabled=['Player', 'Zone', 'Result']
+                            )
+                            for _, riga_m in df_per_modificato.iterrows():
+                                _aggiorna_link_giocatore_duelli(riga_m['Player'], riga_m['Link'])
                 else:
                     df_passivo_giocatore = filtra_tiri_passivi(df_selezione)
                     if not df_passivo_giocatore.empty:
