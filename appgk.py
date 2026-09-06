@@ -1710,15 +1710,18 @@ def elabora_file_portieri(df_raw):
     df['GPI_Tiro'] = gpi_list
     df['Is_Stress_Test'] = stress_list
 
-    # Gol in porta vuota (rilevati dalla colonna THROW SECTOR, se presente): NON tocco GPI_Tiro
-    # né macro_settore, che restano quelli reali per tutte le statistiche (stagione, tabelle per
-    # settore, % di parata...). Segno solo un flag: conta SOLO quando il tiro è un vero gol (non
-    # save/miss) — l'override "eg / valore 0" si applica poi esclusivamente al disegno del
-    # grafico GPI del match singolo, mai ai dati sottostanti.
+    # Gol in porta vuota (rilevati dalla colonna THROW SECTOR, se presente): il portiere non ha
+    # colpe esplicite quando subisce un gol a porta vuota, quindi il suo GPI viene azzerato alla
+    # FONTE (non solo nel disegno del grafico) — così ogni tabella, somma o media in QUALSIASI
+    # parte dell'app (Detailed Statistics, Seasonal Report, Universal Stats...) riflette
+    # automaticamente il valore corretto, senza bisogno di gestire il caso separatamente ovunque.
+    # macro_settore resta comunque quello reale (serve per le tabelle per zona), conta SOLO
+    # quando il tiro è un vero gol (non save/miss).
     if 'EMPTY_GOAL' in df.columns:
         df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool) & df['RESULT_CLEAN'].isin(['goal', 'g'])
     else:
         df['Is_Empty_Goal'] = False
+    df.loc[df['Is_Empty_Goal'], 'GPI_Tiro'] = 0.0
 
     df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
 
@@ -2016,7 +2019,9 @@ def arricchisci_gk_per_database_principale(df_gk):
     timeline/minuto/punteggio — usato quando questi dati vengono inseriti nel database
     principale (non nello storage isolato di Tag & Go) per arricchirlo in modo permanente.
     GPI viene comunque calcolato correttamente (in base a macro-settore ed esito), semplicemente
-    non potrà mai risultare Money Time, dato che non esiste un vero minuto di gara."""
+    non potrà mai risultare Money Time, dato che non esiste un vero minuto di gara. I gol in
+    porta vuota (Is_Empty_Goal, già presente da elabora_file_tag_go) hanno sempre GPI 0: il
+    portiere non ha colpe esplicite in quel caso."""
     if df_gk.empty:
         return df_gk
     df = df_gk.copy()
@@ -2024,6 +2029,8 @@ def arricchisci_gk_per_database_principale(df_gk):
     df['Scarto_Punteggio'] = 0
     risultati_gpi = df.apply(lambda r: calcola_gpi_riga(r['macro_settore'], r['RESULT_CLEAN'], 0, 0), axis=1)
     df['GPI_Tiro'] = risultati_gpi.apply(lambda t: t[0])
+    if 'Is_Empty_Goal' in df.columns:
+        df.loc[df['Is_Empty_Goal'], 'GPI_Tiro'] = 0.0
     df['Is_Stress_Test'] = False
     return df
 
@@ -3316,6 +3323,10 @@ def _riga_sheet_a_match(riga):
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'GPI_Tiro' in df.columns:
         df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
+        # Corregge anche le partite salvate PRIMA di questa regola: un gol in porta vuota non è
+        # mai colpa del portiere, il suo GPI deve essere sempre 0, qui come ovunque nell'app.
+        if 'Is_Empty_Goal' in df.columns:
+            df.loc[df['Is_Empty_Goal'].fillna(False), 'GPI_Tiro'] = 0.0
     if 'Is_Stress_Test' in df.columns:
         df['Is_Stress_Test'] = df['Is_Stress_Test'].astype(bool)
     if 'PORTIERE_ID' not in df.columns and 'PORTIERE_CLEAN' in df.columns:
@@ -3354,6 +3365,8 @@ def carica_stagione_da_disco():
                             for m in db_backup:
                                 if 'PORTIERE_ID' not in m['dati'].columns and 'PORTIERE_CLEAN' in m['dati'].columns:
                                     m['dati']['PORTIERE_ID'] = m['dati']['PORTIERE_CLEAN'].apply(identita_giocatore)
+                                if 'GPI_Tiro' in m['dati'].columns and 'Is_Empty_Goal' in m['dati'].columns:
+                                    m['dati'].loc[m['dati']['Is_Empty_Goal'].fillna(False), 'GPI_Tiro'] = 0.0
                             return db_backup
                     except Exception:
                         pass
@@ -3369,6 +3382,8 @@ def carica_stagione_da_disco():
             for m in db:
                 if 'PORTIERE_ID' not in m['dati'].columns and 'PORTIERE_CLEAN' in m['dati'].columns:
                     m['dati']['PORTIERE_ID'] = m['dati']['PORTIERE_CLEAN'].apply(identita_giocatore)
+                if 'GPI_Tiro' in m['dati'].columns and 'Is_Empty_Goal' in m['dati'].columns:
+                    m['dati'].loc[m['dati']['Is_Empty_Goal'].fillna(False), 'GPI_Tiro'] = 0.0
             return db
         except Exception:
             return []
