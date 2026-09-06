@@ -9424,19 +9424,32 @@ with tab7:
             st.subheader(titolo_sezione)
             includi = st.checkbox(f"📄 Include '{titolo_sezione}' in PDF export", key=chiave_pdf)
             st.caption(soglia_testo)
+            escludi_pochi_tiri = False
+            sotto_tabelle_filtrate = sotto_tabelle
             if df_generale.empty:
                 st.info("No one meets the minimum shots threshold in this selection.")
             else:
                 st.dataframe(df_generale, use_container_width=True, hide_index=True)
                 if sotto_tabelle:
                     with st.expander("📂 By macro-sector"):
+                        colonna_tiri = 'Shots Faced' if 'Shots Faced' in next(iter(sotto_tabelle.values())).columns else 'Shots'
+                        escludi_pochi_tiri = st.checkbox(
+                            "Exclude players/goalkeepers with fewer than 5 shots in that macro-sector",
+                            key=f"{chiave_pdf}_min5"
+                        )
+                        sotto_tabelle_filtrate = {}
                         for etichetta_macro, df_macro in sotto_tabelle.items():
+                            df_mostrata = df_macro[df_macro[colonna_tiri] >= 5] if escludi_pochi_tiri else df_macro
+                            sotto_tabelle_filtrate[etichetta_macro] = df_mostrata
                             st.markdown(f"**{etichetta_macro}**")
-                            st.dataframe(df_macro, use_container_width=True, hide_index=True)
-            return includi
+                            if df_mostrata.empty:
+                                st.caption("No one meets this threshold in this macro-sector.")
+                            else:
+                                st.dataframe(df_mostrata, use_container_width=True, hide_index=True)
+            return includi, sotto_tabelle_filtrate
 
         gen_gk_us, sotto_gk_us = classifiche_portieri_universale(df_universale, soglia_tiri_minimi=100)
-        includi_pdf_gk_rank = _mostra_classifica_con_sottotabelle(
+        includi_pdf_gk_rank, sotto_gk_us = _mostra_classifica_con_sottotabelle(
             gen_gk_us, sotto_gk_us, "🧤 Goalkeeper Rankings",
             "Only goalkeepers with at least 100 total shots faced in this selection are ranked — "
             "sorted by Save %, then Efficiency %, then shots faced. The same 100-shot threshold "
@@ -9445,7 +9458,7 @@ with tab7:
         )
 
         gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
-        includi_pdf_shooter_rank = _mostra_classifica_con_sottotabelle(
+        includi_pdf_shooter_rank, sotto_tir_us = _mostra_classifica_con_sottotabelle(
             gen_tir_us, sotto_tir_us, "🎯 Shooter Rankings",
             "Only shooters with at least 20 total shots taken in this selection are ranked — "
             "sorted by Goal %, then shots taken. The same 20-shot threshold (on the TOTAL, not "
