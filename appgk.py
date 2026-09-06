@@ -2442,14 +2442,55 @@ def tabella_macro_tiratori(df):
         righe.append({'Macro-Zone': ETICHETTA_MACRO_TIRATORI[macro], 'Goals': goal, 'Shots': tot, 'Goal %': round(pct, 1)})
     return pd.DataFrame(righe) if righe else pd.DataFrame({'Macro-Zone': [], 'Goals': [], 'Shots': [], 'Goal %': []})
 
+def tabella_macro_zone_tiratori_compatta(df):
+    """Come tabella_macro_tiratori, ma nel formato compatto (Macro-Zone, Goal % (Shots), % of
+    Total) usato in Shooting Trend — uniforme al formato già usato per macro-sector lì, dove
+    'Goal % (Shots)' riassume da solo Goals/Shots/Goal % (colonne separate, ridondanti, tolte)."""
+    df_base = tabella_macro_tiratori(df)
+    if df_base.empty:
+        return pd.DataFrame(columns=['Macro-Zone', 'Goal % (Shots)', '% of Total'])
+    totale = df_base['Shots'].sum()
+    df_base = df_base.copy()
+    df_base['Goal % (Shots)'] = df_base.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
+    df_base['% of Total'] = df_base['Shots'].apply(lambda s: f"{s}/{totale} = {s / totale * 100:.0f}%" if totale else '—')
+    return df_base[['Macro-Zone', 'Goal % (Shots)', '% of Total']]
+
+def tabella_macro_sector_tiratori_compatta(df):
+    """Come tabella_distribuzione_macro_universale, ma con l'aggiunta di '% of Total' (già
+    presente nella tabella micro-zone) — usata in Shooting Trend, uniforme al formato compatto
+    di tabella_macro_zone_tiratori_compatta."""
+    df_base = tabella_distribuzione_macro_universale(df)
+    if df_base.empty:
+        return pd.DataFrame(columns=['Macro-Sector', 'Goal % (Shots)', '% of Total'])
+    totale = df_base['Shots'].sum()
+    df_base = df_base.copy()
+    df_base['% of Total'] = df_base['Shots'].apply(lambda s: f"{s}/{totale} = {s / totale * 100:.0f}%" if totale else '—')
+    return df_base[['Macro-Sector', 'Result', '% of Total']].rename(columns={'Result': 'Goal % (Shots)'})
+
 def tabella_macro_zone_universale(df, ruolo='tiratore'):
     """Tabella per macro-zona (LW, RW, 7m, FB, Zone 1...3), calcolata al volo da TIRO_CLEAN —
-    non richiede colonne precalcolate, quindi funziona sia per dati tiratori (ruolo='tiratore',
-    mostra la % realizzativa) sia per dati portieri (ruolo='portiere', mostra la % di parata)."""
+    non richiede colonne precalcolate. Per ruolo='portiere' ha le STESSE 7 colonne della tabella
+    per macro-sector (Saves, Goals, Miss, Save %, Efficiency %, GPI), cosicché le due tabelle
+    mostrino sempre gli stessi dati, solo raggruppati diversamente. Per ruolo='tiratore' resta
+    invariata (Goals, Shots, Goal %) — quel caso è gestito a parte da tabella_macro_tiratori."""
     if ruolo == 'portiere':
-        colonna_esito, esiti_successo, etichetta_pct = 'Saves', ('save', 's'), 'Save %'
-    else:
-        colonna_esito, esiti_successo, etichetta_pct = 'Goals', ('goal', 'g'), 'Goal %'
+        colonne_vuote = ['Macro-Zone', 'Saves', 'Goals', 'Miss', 'Save %', 'Efficiency %', 'GPI']
+        if df.empty or 'TIRO_CLEAN' not in df.columns:
+            return pd.DataFrame(columns=colonne_vuote)
+        macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+        righe = []
+        for macro in ORDINE_MACRO_TIRATORI:
+            df_m = df[macro_per_riga == macro]
+            if df_m.empty:
+                continue
+            s, g, m, pct, eff = calcola_metriche_gruppo(df_m)
+            righe.append({
+                'Macro-Zone': ETICHETTA_MACRO_TIRATORI[macro], 'Saves': s, 'Goals': g, 'Miss': m,
+                'Save %': round(pct, 1), 'Efficiency %': round(eff, 1), 'GPI': round(df_m['GPI_Tiro'].sum(), 1)
+            })
+        return pd.DataFrame(righe) if righe else pd.DataFrame(columns=colonne_vuote)
+
+    colonna_esito, esiti_successo, etichetta_pct = 'Goals', ('goal', 'g'), 'Goal %'
     colonne_vuote = ['Macro-Zone', colonna_esito, 'Shots', etichetta_pct]
     if df.empty or 'TIRO_CLEAN' not in df.columns:
         return pd.DataFrame(columns=colonne_vuote)
@@ -5095,8 +5136,8 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     elementi.append(riga_mappe)
     elementi.append(Spacer(1, 0.5 * cm))
 
-    df_macro = tabella_macro_tiratori(df_giocatore)
-    df_macro_sector = tabella_distribuzione_macro_universale(df_giocatore)
+    df_macro = tabella_macro_zone_tiratori_compatta(df_giocatore)
+    df_macro_sector = tabella_macro_sector_tiratori_compatta(df_giocatore)
     df_micro = tabella_distribuzione_micro_universale(df_giocatore)
     stile_intestazione_macro = ParagraphStyle('IntestazioneMacroPdf', parent=stili['Heading4'], fontSize=11, spaceAfter=6)
     if not df_macro.empty:
@@ -5106,8 +5147,7 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
     elementi.append(Spacer(1, 0.3 * cm))
 
     if not df_macro_sector.empty:
-        tabella_macro_sector_pdf = _df_to_reportlab_table(
-            df_macro_sector[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}), font_size=10)
+        tabella_macro_sector_pdf = _df_to_reportlab_table(df_macro_sector, font_size=10)
         elementi.append(KeepTogether([Paragraph("By macro-sector", stile_intestazione_macro), tabella_macro_sector_pdf]))
         elementi.append(Spacer(1, 0.3 * cm))
 
@@ -5537,26 +5577,29 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         # Pagina 3: statistiche per macro-zona di squadra (ingrandita), più sotto la stessa
         # scomposizione a macro-settore (7m/LW/RW/6M/9M/BT/FB) usata in Universal Stats — stessa
         # nomenclatura "macro-sector" per distinguerla dalla "macro-zone" (Sector 1/1.5/2...).
-        distribuzione_macro_settore_pdf = tabella_distribuzione_macro_universale(df_squadra_riepilogo)
+        # Stesso formato compatto (Goal % (Shots) + % of Total) usato nell'app, per entrambe.
+        distribuzione_macro_zone_pdf = tabella_macro_zone_tiratori_compatta(df_squadra_riepilogo)
+        distribuzione_macro_settore_pdf_completa = tabella_distribuzione_macro_universale(df_squadra_riepilogo)
         pagina3 = [KeepTogether([
             Paragraph("By Macro-Zone (team total)", sezione_stile), Spacer(1, 0.3 * cm),
-            _df_to_reportlab_table(tabella_macro_tiratori(df_squadra_riepilogo), font_size=12),
+            _df_to_reportlab_table(distribuzione_macro_zone_pdf, font_size=12) if not distribuzione_macro_zone_pdf.empty
+            else Paragraph("No shots in this selection.", stili['Normal']),
         ])]
         pagina3.append(Spacer(1, 0.5 * cm))
+        distribuzione_macro_settore_pdf = tabella_macro_sector_tiratori_compatta(df_squadra_riepilogo)
         if distribuzione_macro_settore_pdf.empty:
             tabella_macro_settore_pdf = Paragraph("No shots in this selection.", stili['Normal'])
         else:
-            tabella_macro_settore_pdf = _df_to_reportlab_table(
-                distribuzione_macro_settore_pdf[['Macro-Sector', 'Result']].rename(
-                    columns={'Result': 'Goal % (Shots)'}), font_size=12)
+            tabella_macro_settore_pdf = _df_to_reportlab_table(distribuzione_macro_settore_pdf, font_size=12)
         pagina3.append(KeepTogether([
             Paragraph("Goal % by macro-sector (team total)", sezione_stile), Spacer(1, 0.3 * cm), tabella_macro_settore_pdf,
         ]))
         blocchi_pagine.append(pagina3)
 
         # Pagina successiva: grafico a torta della distribuzione per macro-settore (lo stesso
-        # tipo di grafico usato in Universal Stats).
-        fig_torta_macro_settore_pdf = disegna_torta_macro_universale(distribuzione_macro_settore_pdf, titolo=None)
+        # tipo di grafico usato in Universal Stats). Usa la versione COMPLETA (non quella
+        # compatta), dato che disegna_torta_macro_universale si aspetta le colonne originali.
+        fig_torta_macro_settore_pdf = disegna_torta_macro_universale(distribuzione_macro_settore_pdf_completa, titolo=None)
         img_torta_macro_settore_pdf = _immagine_da_figura_matplotlib(fig_torta_macro_settore_pdf, 15, 13.8)
         blocchi_pagine.append([
             Paragraph("Macro-Sector Shot Distribution (team total)", sezione_stile), Spacer(1, 0.3 * cm),
@@ -7276,12 +7319,10 @@ with tab2:
 
                 if modalita_match_tir == "Team":
                     st.markdown("**By macro-zone**")
-                    st.dataframe(tabella_macro_tiratori(df_selezione_match_tir), use_container_width=True, hide_index=True)
+                    st.dataframe(tabella_macro_zone_tiratori_compatta(df_selezione_match_tir), use_container_width=True, hide_index=True)
 
                     st.markdown("**By macro-sector**")
-                    df_macsett_mt = tabella_distribuzione_macro_universale(df_selezione_match_tir)
-                    st.dataframe(df_macsett_mt[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_mt.empty else df_macsett_mt,
-                                 use_container_width=True, hide_index=True)
+                    st.dataframe(tabella_macro_sector_tiratori_compatta(df_selezione_match_tir), use_container_width=True, hide_index=True)
 
                     st.markdown("**By micro-zone**")
                     st.dataframe(tabella_distribuzione_micro_universale(df_selezione_match_tir), use_container_width=True, hide_index=True)
@@ -7709,12 +7750,10 @@ with tab4:
                 st.caption(f"Overall: {goal_lega}/{tot_lega} = {pct_lega:.1f}%  —  "
                            f"{len(squadre_tir)} team(s), {len(giocatori_tir)} player(s), {len(db_tir)} match record(s).")
                 st.markdown("**By macro-zone**")
-                st.dataframe(tabella_macro_tiratori(df_lega_totale), use_container_width=True, hide_index=True)
+                st.dataframe(tabella_macro_zone_tiratori_compatta(df_lega_totale), use_container_width=True, hide_index=True)
 
                 st.markdown("**By macro-sector**")
-                df_macsett_lega = tabella_distribuzione_macro_universale(df_lega_totale)
-                st.dataframe(df_macsett_lega[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_lega.empty else df_macsett_lega,
-                             use_container_width=True, hide_index=True)
+                st.dataframe(tabella_macro_sector_tiratori_compatta(df_lega_totale), use_container_width=True, hide_index=True)
 
                 st.markdown("**By micro-zone**")
                 st.dataframe(tabella_distribuzione_micro_universale(df_lega_totale), use_container_width=True, hide_index=True)
@@ -8032,12 +8071,10 @@ with tab4:
                         st.dataframe(tabella_micro_di_un_macro(df_selezione, macro_key), use_container_width=True, hide_index=True)
                     else:
                         st.markdown("**By macro-zone**")
-                        st.dataframe(tabella_macro_tiratori(df_selezione), use_container_width=True, hide_index=True)
+                        st.dataframe(tabella_macro_zone_tiratori_compatta(df_selezione), use_container_width=True, hide_index=True)
 
                         st.markdown("**By macro-sector**")
-                        df_macsett_sq = tabella_distribuzione_macro_universale(df_selezione)
-                        st.dataframe(df_macsett_sq[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_sq.empty else df_macsett_sq,
-                                     use_container_width=True, hide_index=True)
+                        st.dataframe(tabella_macro_sector_tiratori_compatta(df_selezione), use_container_width=True, hide_index=True)
 
                         st.markdown("**By micro-zone**")
                         st.dataframe(tabella_distribuzione_micro_universale(df_selezione), use_container_width=True, hide_index=True)
@@ -8142,12 +8179,10 @@ with tab4:
                             st.dataframe(tabella_micro_di_un_macro(df_giocatore, macro_key), use_container_width=True, hide_index=True)
                         else:
                             st.markdown("**By macro-zone**")
-                            st.dataframe(tabella_macro_tiratori(df_giocatore), use_container_width=True, hide_index=True)
+                            st.dataframe(tabella_macro_zone_tiratori_compatta(df_giocatore), use_container_width=True, hide_index=True)
 
                             st.markdown("**By macro-sector**")
-                            df_macsett_g = tabella_distribuzione_macro_universale(df_giocatore)
-                            st.dataframe(df_macsett_g[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_g.empty else df_macsett_g,
-                                         use_container_width=True, hide_index=True)
+                            st.dataframe(tabella_macro_sector_tiratori_compatta(df_giocatore), use_container_width=True, hide_index=True)
 
                             st.markdown("**By micro-zone**")
                             st.dataframe(tabella_distribuzione_micro_universale(df_giocatore), use_container_width=True, hide_index=True)
