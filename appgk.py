@@ -6804,9 +6804,10 @@ with tab2:
             tabella_sequenza = pd.DataFrame({
                 'Timeline': df_match['Tempo_Visuale'].values,
                 'Goalkeeper': df_match['PORTIERE_CLEAN'].values,
-                'Shot Type': df_match['TIRO_CLEAN'].values,
+                'Shot Type': df_match.apply(lambda r: 'eg' if r.get('Is_Empty_Goal', False) else r['TIRO_CLEAN'], axis=1).values,
                 'Outcome': df_match['RESULT_CLEAN'].values,
-                'GPI': df_match['GPI_Tiro'].apply(lambda x: f"+{x}" if x > 0 else str(x)).values,
+                'GPI': df_match.apply(lambda r: '0' if r.get('Is_Empty_Goal', False)
+                                       else (f"+{r['GPI_Tiro']:g}" if r['GPI_Tiro'] > 0 else f"{r['GPI_Tiro']:g}"), axis=1).values,
                 'Money Time': df_match['Is_Stress_Test'].map({True: 'Yes', False: ''}).values
             })
             st.dataframe(tabella_sequenza, use_container_width=True, hide_index=True, height=450)
@@ -8029,6 +8030,13 @@ with tab4:
                 st.markdown("---")
                 dati_pdf_giocatori = {}
                 dati_completi_per_giocatore_stagione = {}
+                chiave_roster_ctx = _chiave_css_sicura(titolo_dashboard)
+                if modalita_tir == "Team":
+                    st.caption("Untick a player below to leave them out of the team PDF export (e.g. injured, "
+                               "not called up) — everyone is included by default.")
+                    if st.button("☑️ Include the Entire Roster in the PDF", key=f"include_roster_intero_{chiave_roster_ctx}"):
+                        for nome_g_reset in giocatori_da_mostrare:
+                            st.session_state[f"include_pdf_{chiave_roster_ctx}_{_chiave_css_sicura(nome_g_reset)}"] = True
                 for nome_giocatore in giocatori_da_mostrare:
                     frammenti_g = []
                     lista_partite_g = []
@@ -8056,6 +8064,11 @@ with tab4:
                         df_giocatore_vista = df_giocatore
 
                     with st.expander(f"🤾 {nome_giocatore}", expanded=(modalita_tir == "Player")):
+                        chiave_include_pdf_g = f"include_pdf_{chiave_roster_ctx}_{_chiave_css_sicura(nome_giocatore)}"
+                        if modalita_tir == "Team":
+                            includi_giocatore_pdf = st.checkbox("Include in PDF", value=True, key=chiave_include_pdf_g)
+                        else:
+                            includi_giocatore_pdf = True
                         gestisci_foto_giocatore(nome_giocatore, key_prefix="tir")
                         goal_tot, shots_tot, pct_tot = calcola_metriche_tiratori_gruppo(df_giocatore_vista)
                         cA, cB, cC = st.columns(3)
@@ -8190,7 +8203,8 @@ with tab4:
                                 except Exception as e:
                                     st.error(f"Error generating PDF: {e}")
 
-                        dati_pdf_giocatori[nome_giocatore] = df_giocatore_vista
+                        if includi_giocatore_pdf:
+                            dati_pdf_giocatori[nome_giocatore] = df_giocatore_vista
 
                     dati_completi_per_giocatore_stagione[nome_giocatore] = df_giocatore
 
