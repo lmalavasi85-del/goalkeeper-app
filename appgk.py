@@ -191,15 +191,26 @@ def tabella_distribuzione_micro_universale(df):
     tastiera usata ovunque nel software (lw1, lw2, ... fb3), in ordine di numerazione naturale
     (rw1 prima di rw2 — diverso dall'ordine spaziale della pulsantiera, dove rw2 precede rw1 per
     l'orientamento rispetto al campo). Per ciascuna micro-zona: % realizzativa, % sul totale di
-    tutti i tiri della selezione, e % sul totale del proprio macro-settore. Micro-zone senza tiri
-    non compaiono."""
-    colonne_vuote = ['Micro-Zone', 'Macro-Sector', 'Goal % (Shots)', '% of Total', '% of Macro-Sector']
+    tutti i tiri della selezione, % sul totale del proprio macro-settore (6M/9M/BT/LW/RW/7m/FB) e
+    % sul totale della propria macro-zona (Zone 1/1.5/2/2.5/3, LW/RW/7m/FB). Per i tiratori
+    (rilevati dalla presenza di TIRATORE_CLEAN/TIRATORE_ID — i portieri non guadagnano questa
+    colonna, dato che hanno già Expected Efficiency % nella loro tabella per settore dedicata,
+    da non toccare) aggiunge anche 'Expected Goal %': il valore S.P. (modificabile in Upload
+    Match Sheets) per quella specifica micro-zona, per un confronto diretto riga per riga.
+    Micro-zone senza tiri non compaiono."""
+    e_tiratore = 'TIRATORE_CLEAN' in df.columns or 'TIRATORE_ID' in df.columns
+    colonne_vuote = ['Micro-Zone', 'Macro-Sector', 'Goal % (Shots)']
+    if e_tiratore:
+        colonne_vuote.append('Expected Goal %')
+    colonne_vuote += ['% of Total', '% of Macro-Sector', '% of Macro-Zone']
     if df.empty or 'TIRO_CLEAN' not in df.columns:
         return pd.DataFrame(columns=colonne_vuote)
     zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona)
-    macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore)
+    macro_settore_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore)
+    macro_zona_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
     totale_tiri = len(df)
-    totali_macro = macro_per_riga.value_counts().to_dict()
+    totali_macro_settore = macro_settore_per_riga.value_counts().to_dict()
+    totali_macro_zona = macro_zona_per_riga.value_counts().to_dict()
     righe = []
     for settore in TUTTI_I_TASTI_TABELLE:
         df_s = df[zona_normalizzata == settore]
@@ -208,12 +219,18 @@ def tabella_distribuzione_micro_universale(df):
             continue
         goal_s = len(df_s[df_s['RESULT_CLEAN'].isin(['goal', 'g'])])
         macro_s = mappa_macro_settore(settore)
-        tot_macro = totali_macro.get(macro_s, 0)
-        righe.append({
+        macro_z = mappa_macro_settore_tiratori(settore)
+        tot_macro_settore = totali_macro_settore.get(macro_s, 0)
+        tot_macro_zona = totali_macro_zona.get(macro_z, 0)
+        riga_dict = {
             'Micro-Zone': settore, 'Macro-Sector': ETICHETTA_MACRO_UNIVERSALE.get(macro_s, macro_s or '—'),
             'Goals': goal_s, 'Shots': tot_s, 'Goal %': round(goal_s / tot_s * 100, 1),
-            'TotShots': totale_tiri, 'MacroShots': tot_macro,
-        })
+            'TotShots': totale_tiri, 'MacroSettoreShots': tot_macro_settore, 'MacroZonaShots': tot_macro_zona,
+        }
+        if e_tiratore:
+            expected_z = ottieni_expected_goal_pct(settore)
+            riga_dict['Expected Goal %'] = round(expected_z, 1) if expected_z is not None else None
+        righe.append(riga_dict)
     if not righe:
         return pd.DataFrame(columns=colonne_vuote)
     df_r = pd.DataFrame(righe)
@@ -224,8 +241,40 @@ def tabella_distribuzione_micro_universale(df):
     df_r['% of Total'] = df_r.apply(
         lambda r: f"{int(r['Shots'])}/{int(r['TotShots'])} = {r['Shots'] / r['TotShots'] * 100:.0f}%" if r['TotShots'] > 0 else "0/0 = 0%", axis=1)
     df_r['% of Macro-Sector'] = df_r.apply(
-        lambda r: f"{int(r['Shots'])}/{int(r['MacroShots'])} = {r['Shots'] / r['MacroShots'] * 100:.0f}%" if r['MacroShots'] > 0 else "0/0 = 0%", axis=1)
+        lambda r: f"{int(r['Shots'])}/{int(r['MacroSettoreShots'])} = {r['Shots'] / r['MacroSettoreShots'] * 100:.0f}%" if r['MacroSettoreShots'] > 0 else "0/0 = 0%", axis=1)
+    df_r['% of Macro-Zone'] = df_r.apply(
+        lambda r: f"{int(r['Shots'])}/{int(r['MacroZonaShots'])} = {r['Shots'] / r['MacroZonaShots'] * 100:.0f}%" if r['MacroZonaShots'] > 0 else "0/0 = 0%", axis=1)
+    if e_tiratore:
+        df_r['Expected Goal %'] = df_r['Expected Goal %'].apply(lambda x: f"{x:.0f}%" if x is not None else '—')
     return df_r[colonne_vuote]
+
+def applica_colori_expected_micro_tiratori(df_micro):
+    """Come applica_colori_expected (portieri), ma per la tabella micro-zone dei tiratori:
+    colora ogni riga confrontando 'Goal %' (numerico, ricavato da 'Goal % (Shots)') con
+    'Expected Goal %' — stessa logica identica: verde = sopra media attesa, giallo = in media,
+    rosso = sotto media attesa. Righe senza un Expected Goal % mappato restano senza colore."""
+    if df_micro.empty or 'Expected Goal %' not in df_micro.columns:
+        return df_micro
+
+    def _colora_riga(row):
+        expected_testo = row.get('Expected Goal %', '')
+        if expected_testo in ('', '—', None):
+            return [''] * len(row)
+        expected = float(str(expected_testo).rstrip('%'))
+        try:
+            reale = float(row['Goal % (Shots)'].split('=')[-1].strip().rstrip('%'))
+        except (ValueError, IndexError):
+            return [''] * len(row)
+        differenza = reale - expected
+        if abs(differenza) < 0.5:
+            colore = 'background-color: #ffeb9c'
+        elif differenza > 0:
+            colore = 'background-color: #c6efce'
+        else:
+            colore = 'background-color: #ffc7ce'
+        return [colore] * len(row)
+
+    return df_micro.style.apply(_colora_riga, axis=1)
 
 def disegna_torta_macro_universale(df_distribuzione, titolo=None):
     """Grafico a torta della distribuzione del VOLUME di tiri per macro-settore (non della %
@@ -2718,6 +2767,46 @@ def _tabella_settore_reportlab(df_settore, col_widths=None, font_size=7):
     t.setStyle(TableStyle(comandi_stile))
     return t
 
+def _tabella_micro_tiratori_reportlab(df_micro, col_widths=None, font_size=7):
+    """Come _tabella_settore_reportlab, ma per la tabella micro-zone dei TIRATORI: colora ogni
+    riga confrontando 'Goal % (Shots)' con 'Expected Goal %' (stesso valore S.P. usato ovunque
+    nell'app) — stessa identica logica a 3 colori. Righe senza un Expected Goal % mappato
+    restano bianche/grigie alternate come al solito."""
+    if 'Expected Goal %' not in df_micro.columns:
+        return _df_to_reportlab_table(df_micro, col_widths=col_widths, font_size=font_size)
+    dati = [list(df_micro.columns)] + df_micro.astype(str).values.tolist()
+    t = Table(dati, colWidths=col_widths, repeatRows=1)
+    comandi_stile = [
+        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTSIZE', (0, 0), (-1, -1), font_size),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ]
+    for i, (_, row) in enumerate(df_micro.iterrows(), start=1):
+        expected_testo = row.get('Expected Goal %', '')
+        colore_riga = None
+        if expected_testo not in ('', '—', None):
+            try:
+                expected = float(str(expected_testo).rstrip('%'))
+                reale = float(str(row['Goal % (Shots)']).split('=')[-1].strip().rstrip('%'))
+                differenza = reale - expected
+                if abs(differenza) < 0.5:
+                    colore_riga = COLORE_EXPECTED_UGUALE
+                elif differenza > 0:
+                    colore_riga = COLORE_EXPECTED_SOPRA
+                else:
+                    colore_riga = COLORE_EXPECTED_SOTTO
+            except (ValueError, IndexError):
+                colore_riga = None
+        if colore_riga is None:
+            colore_riga = colors.white if i % 2 == 1 else colors.HexColor('#f2f2f2')
+        comandi_stile.append(('BACKGROUND', (0, i), (-1, i), colore_riga))
+    t.setStyle(TableStyle(comandi_stile))
+    return t
+
 def _dimensioni_adattate(larghezza_px, altezza_px, max_larghezza_cm, max_altezza_cm):
     """Calcola le dimensioni (in cm) per stare dentro un riquadro massimo, mantenendo le proporzioni originali."""
     scala = min(max_larghezza_cm / larghezza_px, max_altezza_cm / altezza_px)
@@ -4973,7 +5062,7 @@ def genera_pdf_universal_stats(titolo_report, sezioni):
                 if not df_micro.empty:
                     elementi.append(KeepTogether([
                         Paragraph(f"{sezione['titolo']} — By specific micro-zone", sezione_stile),
-                        Spacer(1, 0.2 * cm), _df_to_reportlab_table(df_micro, font_size=8)
+                        Spacer(1, 0.2 * cm), _tabella_micro_tiratori_reportlab(df_micro, font_size=8)
                     ]))
                     elementi.append(Spacer(1, 0.3 * cm))
             if not sezione['df'].empty:
@@ -5152,7 +5241,7 @@ def _blocco_giocatore_pdf(nome_giocatore, df_giocatore, stili, sezione_stile, no
         elementi.append(Spacer(1, 0.3 * cm))
 
     if not df_micro.empty:
-        elementi.append(KeepTogether([Paragraph("By micro-zone", stile_intestazione_macro), _df_to_reportlab_table(df_micro, font_size=7)]))
+        elementi.append(KeepTogether([Paragraph("By micro-zone", stile_intestazione_macro), _tabella_micro_tiratori_reportlab(df_micro, font_size=7)]))
         elementi.append(Spacer(1, 0.3 * cm))
 
     if nota_html:
@@ -7325,7 +7414,7 @@ with tab2:
                     st.dataframe(tabella_macro_sector_tiratori_compatta(df_selezione_match_tir), use_container_width=True, hide_index=True)
 
                     st.markdown("**By micro-zone**")
-                    st.dataframe(tabella_distribuzione_micro_universale(df_selezione_match_tir), use_container_width=True, hide_index=True)
+                    st.dataframe(applica_colori_expected_micro_tiratori(tabella_distribuzione_micro_universale(df_selezione_match_tir)), use_container_width=True, hide_index=True)
 
                     st.markdown("**Shooters — Goal %**")
                     st.dataframe(classifica_tiratori_per_volume(df_selezione_match_tir), use_container_width=True, hide_index=True)
@@ -7756,7 +7845,7 @@ with tab4:
                 st.dataframe(tabella_macro_sector_tiratori_compatta(df_lega_totale), use_container_width=True, hide_index=True)
 
                 st.markdown("**By micro-zone**")
-                st.dataframe(tabella_distribuzione_micro_universale(df_lega_totale), use_container_width=True, hide_index=True)
+                st.dataframe(applica_colori_expected_micro_tiratori(tabella_distribuzione_micro_universale(df_lega_totale)), use_container_width=True, hide_index=True)
 
                 macro_lega_scelto = st.selectbox(
                     "Break down a macro-zone into micro-zones (optional):",
@@ -8077,7 +8166,7 @@ with tab4:
                         st.dataframe(tabella_macro_sector_tiratori_compatta(df_selezione), use_container_width=True, hide_index=True)
 
                         st.markdown("**By micro-zone**")
-                        st.dataframe(tabella_distribuzione_micro_universale(df_selezione), use_container_width=True, hide_index=True)
+                        st.dataframe(applica_colori_expected_micro_tiratori(tabella_distribuzione_micro_universale(df_selezione)), use_container_width=True, hide_index=True)
 
                 st.markdown("---")
                 dati_pdf_giocatori = {}
@@ -8185,7 +8274,7 @@ with tab4:
                             st.dataframe(tabella_macro_sector_tiratori_compatta(df_giocatore), use_container_width=True, hide_index=True)
 
                             st.markdown("**By micro-zone**")
-                            st.dataframe(tabella_distribuzione_micro_universale(df_giocatore), use_container_width=True, hide_index=True)
+                            st.dataframe(applica_colori_expected_micro_tiratori(tabella_distribuzione_micro_universale(df_giocatore)), use_container_width=True, hide_index=True)
 
                         # ---- Home/Away & Money Time summary ----
                         split_casa_tir = calcola_split_casa_trasferta(lista_partite_g, 'goals', 'shots')
@@ -8918,7 +9007,7 @@ with tab6:
                     st.dataframe(df_macsett_tg[['Macro-Sector', 'Result']].rename(columns={'Result': 'Goal % (Shots)'}) if not df_macsett_tg.empty else df_macsett_tg,
                                  use_container_width=True, hide_index=True)
                     st.markdown(f"**By micro-zone — {titolo_tg}**")
-                    st.dataframe(tabella_distribuzione_micro_universale(df_sel_tg), use_container_width=True, hide_index=True)
+                    st.dataframe(applica_colori_expected_micro_tiratori(tabella_distribuzione_micro_universale(df_sel_tg)), use_container_width=True, hide_index=True)
 
                     st.markdown("---")
                     st.subheader(f"📝 Notes — {titolo_tg}")
@@ -9268,7 +9357,7 @@ with tab7:
                 if df_micro.empty:
                     st.caption("No shots in this selection.")
                 else:
-                    st.dataframe(df_micro, use_container_width=True, hide_index=True, key=f"tabella_micro_{chiave}")
+                    st.dataframe(applica_colori_expected_micro_tiratori(df_micro), use_container_width=True, hide_index=True, key=f"tabella_micro_{chiave}")
 
             st.markdown(f"**Goal % by macro-zone — {titolo_torta}**")
             df_macrozone = tabella_macro_zone_con_dettaglio_micro(df_sorgente, ruolo='tiratore')
