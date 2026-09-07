@@ -4720,6 +4720,25 @@ def carica_sessioni_allenamento_da_disco():
             worksheet_meta = _ottieni_worksheet_training_meta()
             valori_meta = worksheet_meta.get_all_values()
             if len(valori_meta) <= 1:
+                # Il foglio sembra vuoto: potrebbe essere un salvataggio interrotto a metà (il
+                # foglio viene cancellato PRIMA di riscriverlo — se qualcosa va storto durante la
+                # riscrittura, resta vuoto). Prima di accettarlo come verità, controllo se esiste
+                # un backup locale più ricco — è così che si sono già persi altri dati in passato.
+                if os.path.exists(TRAINING_SESSIONS_FILE):
+                    try:
+                        with open(TRAINING_SESSIONS_FILE, 'rb') as f:
+                            backup = pickle.load(f)
+                        if backup:
+                            st.sidebar.error(
+                                "⚠️ Google Sheets training sessions look EMPTY, but a local backup with "
+                                f"{len(backup)} session(s) was found — using the backup instead. This "
+                                "usually means an earlier save was interrupted partway through. Please "
+                                "check Google Sheets' Version History on the 'TrainingSessionsMeta' and "
+                                "'TrainingSessionsPDF' tabs to confirm and restore them there too."
+                            )
+                            return backup
+                    except Exception:
+                        pass
                 return []
             worksheet_pdf = _ottieni_worksheet_training_pdf()
             valori_pdf = worksheet_pdf.get_all_values()
@@ -4759,19 +4778,12 @@ def carica_sessioni_allenamento_da_disco():
 def salva_sessioni_allenamento_su_disco(lista_sessioni):
     if _google_sheets_configurato():
         try:
-            worksheet_meta = _ottieni_worksheet_training_meta()
-            worksheet_meta.clear()
-            worksheet_meta.append_row(['id', 'nome_sessione', 'dati_json'])
             righe_meta = [[
                 s['id'], s['nome_sessione'],
                 json.dumps({'link_list': s['link_list'], 'note_generali': s['note_generali'],
                             'assegnazioni': s['assegnazioni'], 'gruppo': s.get('gruppo')})
             ] for s in lista_sessioni]
-            _scrivi_righe_a_blocchi(worksheet_meta, righe_meta)
 
-            worksheet_pdf = _ottieni_worksheet_training_pdf()
-            worksheet_pdf.clear()
-            worksheet_pdf.append_row(['id', 'indice_chunk', 'chunk_base64'])
             righe_pdf = []
             for s in lista_sessioni:
                 if not s.get('pdf_bytes'):
@@ -4779,6 +4791,23 @@ def salva_sessioni_allenamento_su_disco(lista_sessioni):
                 b64_completo = base64.b64encode(s['pdf_bytes']).decode('utf-8')
                 for indice, inizio in enumerate(range(0, len(b64_completo), DIMENSIONE_CHUNK_PDF)):
                     righe_pdf.append([s['id'], indice, b64_completo[inizio:inizio + DIMENSIONE_CHUNK_PDF]])
+
+            # Validazione PRIMA di cancellare ENTRAMBI i fogli: se qualche cella superasse
+            # comunque il limite di Google Sheets, meglio fermarsi subito senza aver toccato
+            # nulla, che cancellare e scoprirlo dopo — è già successo altrove in questa app.
+            for riga in righe_meta + righe_pdf:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking — aborting before touching either sheet.")
+
+            worksheet_meta = _ottieni_worksheet_training_meta()
+            worksheet_meta.clear()
+            worksheet_meta.append_row(['id', 'nome_sessione', 'dati_json'])
+            _scrivi_righe_a_blocchi(worksheet_meta, righe_meta)
+
+            worksheet_pdf = _ottieni_worksheet_training_pdf()
+            worksheet_pdf.clear()
+            worksheet_pdf.append_row(['id', 'indice_chunk', 'chunk_base64'])
             # Scritto A BLOCCHI PICCOLI (non tutto insieme): con molte sessioni corpose (es. 40
             # PDF scansionati) una singola chiamata enorme rischia di superare il limite di
             # dimensione per richiesta di Google Sheets e fallire SILENZIOSAMENTE — lasciando i
