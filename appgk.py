@@ -13,6 +13,7 @@ import os
 import pickle
 import io
 import tempfile
+import time
 import base64
 import matplotlib
 matplotlib.use('Agg')
@@ -3272,6 +3273,51 @@ def _scrivi_righe_a_blocchi(worksheet, righe, dimensione_blocco=200):
             worksheet.append_rows(blocco)
 
 # ============================================================
+# AFFIDABILITÀ GOOGLE SHEETS: l'app usa OLTRE 20 fogli separati (uno per ogni tipo di dato —
+# stagione, note, foto, sessioni di allenamento, ecc.), tutti letti in sequenza all'avvio. Con
+# così tante chiamate ravvicinate è possibile superare temporaneamente il limite di richieste
+# dell'API di Google Sheets (rate limit/quota) — in quel caso una singola lettura fallisce con
+# un errore transitorio, e SENZA questo meccanismo l'app la interpreterebbe come "foglio vuoto",
+# facendo sembrare i dati persi anche se sono ancora tutti lì. _con_retry_sheets riprova
+# automaticamente (con attesa crescente) solo per questo tipo di errore temporaneo — mai per
+# errori reali (permessi, foglio inesistente), che vengono sollevati subito come prima.
+# _WorksheetConRetry applica questo automaticamente a OGNI chiamata (get_all_values, clear,
+# append_row, append_rows, resize...) di OGNI worksheet dell'app, senza dover toccare le decine
+# di punti che già li usano.
+# ============================================================
+def _con_retry_sheets(funzione_chiamata, tentativi_massimi=5, attesa_iniziale=1.5):
+    ultimo_errore = None
+    for tentativo in range(tentativi_massimi):
+        try:
+            return funzione_chiamata()
+        except Exception as e:
+            ultimo_errore = e
+            testo_errore = str(e).lower()
+            transitorio = any(s in testo_errore for s in
+                               ['429', 'quota', 'rate limit', 'ratelimit', 'timeout', 'timed out',
+                                '500', '502', '503', 'internal error', 'temporarily', 'deadline exceeded',
+                                'connection', 'reset by peer'])
+            if not transitorio or tentativo == tentativi_massimi - 1:
+                raise
+            time.sleep(attesa_iniziale * (2 ** tentativo))
+    raise ultimo_errore
+
+class _WorksheetConRetry:
+    """Avvolge un worksheet gspread applicando automaticamente retry-with-backoff a ogni
+    chiamata di metodo — trasparente per chi lo usa, si comporta come il worksheet originale."""
+    def __init__(self, worksheet_reale):
+        self._worksheet_reale = worksheet_reale
+
+    def __getattr__(self, nome_attributo):
+        attributo_originale = getattr(self._worksheet_reale, nome_attributo)
+        if not callable(attributo_originale):
+            return attributo_originale
+
+        def metodo_con_retry(*args, **kwargs):
+            return _con_retry_sheets(lambda: attributo_originale(*args, **kwargs))
+        return metodo_con_retry
+
+# ============================================================
 # TAG & GO ANALYSIS: sezione completamente svincolata dal resto dell'app (i suoi dati non
 # entrano MAI nelle statistiche generali, nel Full Backup, né in Reset All Data). Storage isolato
 # in worksheet dedicati. Pensata per analizzare un video di soli tiri estrapolati da più partite
@@ -3293,7 +3339,7 @@ def _ottieni_worksheet_tag_go():
     except Exception:
         worksheet = foglio.add_worksheet(title='TagGoAnalysis', rows=200, cols=2)
         worksheet.append_row(['chiave', 'valore_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_tag_go_da_disco():
     """Restituisce lo stato salvato di Tag & Go (df_gk/df_tir come JSON, note, mappe salvate,
@@ -3394,7 +3440,7 @@ def _ottieni_worksheet_stagione():
     except Exception:
         worksheet = foglio.add_worksheet(title='SeasonData', rows=2000, cols=50)
         worksheet.append_row(GOOGLE_SHEETS_HEADER)
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 # ============================================================
 # Google Sheets limita ogni SINGOLA CELLA a 50.000 caratteri. Una partita con molti tiri (o con
@@ -3569,7 +3615,7 @@ def _ottieni_worksheet_tiratori():
     except Exception:
         worksheet = foglio.add_worksheet(title='ShooterSeasonData', rows=2000, cols=50)
         worksheet.append_row(['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'dati_json', 'neutro'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def _match_a_riga_sheet_tiratori(match):
     dati_json = match['dati'].to_json(orient='split', date_format='iso')
@@ -3703,7 +3749,7 @@ def _ottieni_worksheet_note():
     except Exception:
         worksheet = foglio.add_worksheet(title='ShooterNotes', rows=500, cols=2)
         worksheet.append_row(['giocatore', 'nota'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_note_da_disco():
     if _google_sheets_configurato():
@@ -3763,7 +3809,7 @@ def _ottieni_worksheet_anagrafica():
     except Exception:
         worksheet = foglio.add_worksheet(title='PlayerProfile', rows=500, cols=2)
         worksheet.append_row(['giocatore', 'dati_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_anagrafica_da_disco():
     if _google_sheets_configurato():
@@ -3841,7 +3887,7 @@ def _ottieni_worksheet_link_duelli():
     except Exception:
         worksheet = foglio.add_worksheet(title='PlayerDuelLinks', rows=500, cols=2)
         worksheet.append_row(['giocatore_zona', 'link'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_link_duelli_da_disco():
     if _google_sheets_configurato():
@@ -3914,7 +3960,7 @@ def _ottieni_worksheet_competizioni_partite():
     except Exception:
         worksheet = foglio.add_worksheet(title='MatchCompetitions', rows=1000, cols=2)
         worksheet.append_row(['partita_data', 'competizione'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_competizioni_partite_da_disco():
     if _google_sheets_configurato():
@@ -3987,7 +4033,7 @@ def _ottieni_worksheet_matches_analyzed_manuali():
     except Exception:
         worksheet = foglio.add_worksheet(title='MatchesAnalyzedManual', rows=500, cols=2)
         worksheet.append_row(['squadra_selezione', 'righe_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_matches_analyzed_manuali_da_disco():
     if _google_sheets_configurato():
@@ -4057,7 +4103,7 @@ def _ottieni_worksheet_link_zone():
     except Exception:
         worksheet = foglio.add_worksheet(title='TeamZoneLinks', rows=500, cols=2)
         worksheet.append_row(['squadra', 'link_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_link_zone_da_disco():
     if _google_sheets_configurato():
@@ -4143,7 +4189,7 @@ def _ottieni_worksheet_foto():
     except Exception:
         worksheet = foglio.add_worksheet(title='PlayerPhotos', rows=500, cols=2)
         worksheet.append_row(['giocatore', 'foto_base64'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def _migra_chiavi_a_identita(diz):
     """Rimappa le chiavi di un dizionario (foto o note) all'identità del giocatore (senza
@@ -4213,7 +4259,7 @@ def _ottieni_worksheet_h2h():
     except Exception:
         worksheet = foglio.add_worksheet(title='H2HData', rows=2000, cols=4)
         worksheet.append_row(['nome', 'data', 'dati_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def _backfill_id_h2h(df):
     if 'PORTIERE_ID' not in df.columns and 'PORTIERE_CLEAN' in df.columns:
@@ -4296,7 +4342,7 @@ def _ottieni_worksheet_tiro_portiere():
     except Exception:
         worksheet = foglio.add_worksheet(title='GkOwnShots', rows=500, cols=3)
         worksheet.append_row(['nome', 'data', 'dati_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_tiro_portiere_da_disco():
     if _google_sheets_configurato():
@@ -4367,7 +4413,7 @@ def _ottieni_worksheet_alias_giocatori():
     except Exception:
         worksheet = foglio.add_worksheet(title='PlayerAliases', rows=200, cols=1)
         worksheet.append_row(['gruppo_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_alias_giocatori_da_disco():
     if _google_sheets_configurato():
@@ -4423,7 +4469,7 @@ def _ottieni_worksheet_campionati():
     except Exception:
         worksheet = foglio.add_worksheet(title='Championships', rows=200, cols=4)
         worksheet.append_row(['nome', 'squadre_json', 'data_inizio', 'data_fine'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_campionati_da_disco():
     if _google_sheets_configurato():
@@ -4529,7 +4575,7 @@ def _ottieni_worksheet_expected():
     except Exception:
         worksheet = foglio.add_worksheet(title='ExpectedProfiles', rows=10, cols=1)
         worksheet.append_row(['dati_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_profili_expected_da_disco():
     default = {'profili': {'S.P. Value': dict(SP_VALUE_DEFAULT)}, 'attivo': 'S.P. Value'}
@@ -4597,7 +4643,7 @@ def _ottieni_worksheet_gruppi_sessioni():
     except Exception:
         worksheet = foglio.add_worksheet(title='TrainingGroups', rows=200, cols=1)
         worksheet.append_row(['nome_gruppo'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_gruppi_sessioni_da_disco():
     if _google_sheets_configurato():
@@ -4646,7 +4692,7 @@ def _ottieni_worksheet_training_teams():
     except Exception:
         worksheet = foglio.add_worksheet(title='TrainingTeams', rows=200, cols=2)
         worksheet.append_row(['nome', 'logo_base64'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_squadre_allenate_da_disco():
     if _google_sheets_configurato():
@@ -4694,7 +4740,7 @@ def _ottieni_worksheet_training_meta():
     except Exception:
         worksheet = foglio.add_worksheet(title='TrainingSessionsMeta', rows=500, cols=3)
         worksheet.append_row(['id', 'nome_sessione', 'dati_json'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 @st.cache_resource
 def _ottieni_worksheet_training_pdf():
@@ -4712,7 +4758,7 @@ def _ottieni_worksheet_training_pdf():
     except Exception:
         worksheet = foglio.add_worksheet(title='TrainingSessionsPDF', rows=20000, cols=3)
         worksheet.append_row(['id', 'indice_chunk', 'chunk_base64'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_sessioni_allenamento_da_disco():
     if _google_sheets_configurato():
@@ -4842,7 +4888,7 @@ def _ottieni_worksheet_loghi_squadra():
     except Exception:
         worksheet = foglio.add_worksheet(title='TeamLogos', rows=500, cols=2)
         worksheet.append_row(['squadra', 'logo_base64'])
-    return worksheet
+    return _WorksheetConRetry(worksheet)
 
 def carica_loghi_squadra_da_disco():
     if _google_sheets_configurato():
