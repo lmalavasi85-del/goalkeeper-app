@@ -5180,10 +5180,15 @@ def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessi
                 if len(str(cella)) > 49000:
                     raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking.")
 
-        valori_attuali = worksheet_pdf.get_all_values()
+        # Leggo SOLO la colonna degli ID (col_values), non l'intero foglio (get_all_values):
+        # quest'ultima scaricherebbe anche tutti i chunk pesanti (fino a 40.000 caratteri
+        # ciascuno) delle ALTRE sessioni solo per individuare le poche righe che mi servono —
+        # è esattamente questo che rendeva l'operazione ancora lenta nonostante toccasse solo
+        # una sessione: la lettura iniziale era comunque pesante quanto l'intero foglio.
+        colonna_id_attuale = worksheet_pdf.col_values(1)
         # Individuo le righe (1-based, +1 per l'intestazione) che appartengono a questo ID, per
         # toccare SOLO quelle — tutte le altre sessioni restano completamente intatte.
-        indici_riga_da_sostituire = [i + 2 for i, riga in enumerate(valori_attuali[1:]) if riga and riga[0] == id_sessione]
+        indici_riga_da_sostituire = [i + 2 for i, id_riga in enumerate(colonna_id_attuale[1:]) if id_riga == id_sessione]
 
         if indici_riga_da_sostituire and indici_riga_da_sostituire == list(range(indici_riga_da_sostituire[0], indici_riga_da_sostituire[-1] + 1)):
             # Le righe esistenti di questa sessione sono contigue (il caso normale, dato che
@@ -9393,15 +9398,25 @@ with tab5:
                     col_pdf1, col_pdf2 = st.columns(2)
                     with col_pdf1:
                         tipo_file_esistente = _rileva_tipo_file_sessione(sessione.get('pdf_bytes'))
-                        if tipo_file_esistente == 'pdf':
-                            st.download_button("⬇️ View original file", data=sessione['pdf_bytes'],
-                                                file_name=f"{sessione['nome_sessione']}.pdf", mime="application/pdf",
-                                                key=f"dl_orig_{chiave_sess}")
-                        elif tipo_file_esistente == 'image':
-                            estensione_immagine = 'png' if sessione['pdf_bytes'][:8] == b'\x89PNG\r\n\x1a\n' else 'jpg'
-                            st.download_button("⬇️ View original file", data=sessione['pdf_bytes'],
-                                                file_name=f"{sessione['nome_sessione']}.{estensione_immagine}",
-                                                mime=f"image/{estensione_immagine}", key=f"dl_orig_{chiave_sess}")
+                        if tipo_file_esistente:
+                            # Il vero download_button (con i byte del file allegati) viene
+                            # preparato SOLO dopo questo click, non per ogni sessione ad ogni
+                            # rerun della pagina: gli expander eseguono il loro contenuto anche
+                            # da chiusi, quindi preparare tutti i download in anticipo per tutte
+                            # le sessioni (specie quelle ancora con PDF pesanti) rallentava
+                            # qualunque interazione nella pagina, non solo il salvataggio.
+                            if st.button("⬇️ Prepare download", key=f"prep_dl_{chiave_sess}"):
+                                st.session_state[f"_mostra_dl_{chiave_sess}"] = True
+                            if st.session_state.get(f"_mostra_dl_{chiave_sess}"):
+                                if tipo_file_esistente == 'pdf':
+                                    st.download_button("⬇️ View original file", data=sessione['pdf_bytes'],
+                                                        file_name=f"{sessione['nome_sessione']}.pdf", mime="application/pdf",
+                                                        key=f"dl_orig_{chiave_sess}")
+                                else:
+                                    estensione_immagine = 'png' if sessione['pdf_bytes'][:8] == b'\x89PNG\r\n\x1a\n' else 'jpg'
+                                    st.download_button("⬇️ View original file", data=sessione['pdf_bytes'],
+                                                        file_name=f"{sessione['nome_sessione']}.{estensione_immagine}",
+                                                        mime=f"image/{estensione_immagine}", key=f"dl_orig_{chiave_sess}")
                         else:
                             st.caption("No file attached.")
                     with col_pdf2:
