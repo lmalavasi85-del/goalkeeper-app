@@ -3304,9 +3304,14 @@ def _con_retry_sheets(funzione_chiamata, tentativi_massimi=5, attesa_iniziale=1.
 
 class _WorksheetConRetry:
     """Avvolge un worksheet gspread applicando automaticamente retry-with-backoff a ogni
-    chiamata di metodo — trasparente per chi lo usa, si comporta come il worksheet originale."""
-    def __init__(self, worksheet_reale):
+    chiamata di metodo — trasparente per chi lo usa, si comporta come il worksheet originale.
+    tentativi_massimi/attesa_iniziale personalizzabili per i pochi fogli che possono contenere
+    MOLTI dati (es. i PDF delle sessioni di allenamento, spezzati in centinaia di righe) e quindi
+    rischiano più facilmente un timeout — per quelli conviene un margine più ampio del default."""
+    def __init__(self, worksheet_reale, tentativi_massimi=5, attesa_iniziale=1.5):
         self._worksheet_reale = worksheet_reale
+        self._tentativi_massimi = tentativi_massimi
+        self._attesa_iniziale = attesa_iniziale
 
     def __getattr__(self, nome_attributo):
         attributo_originale = getattr(self._worksheet_reale, nome_attributo)
@@ -3314,7 +3319,9 @@ class _WorksheetConRetry:
             return attributo_originale
 
         def metodo_con_retry(*args, **kwargs):
-            return _con_retry_sheets(lambda: attributo_originale(*args, **kwargs))
+            return _con_retry_sheets(lambda: attributo_originale(*args, **kwargs),
+                                      tentativi_massimi=self._tentativi_massimi,
+                                      attesa_iniziale=self._attesa_iniziale)
         return metodo_con_retry
 
 # ============================================================
@@ -4799,7 +4806,10 @@ def _ottieni_worksheet_training_pdf():
     except Exception:
         worksheet = foglio.add_worksheet(title='TrainingSessionsPDF', rows=20000, cols=3)
         worksheet.append_row(['id', 'indice_chunk', 'chunk_base64'])
-    return _WorksheetConRetry(worksheet)
+    # Questo è il foglio più a rischio di diventare molto grande (ogni PDF di allenamento è
+    # spezzato in decine/centinaia di righe): un margine di retry più ampio del default riduce
+    # il rischio che una lettura pesante fallisca per timeout prima di riuscire.
+    return _WorksheetConRetry(worksheet, tentativi_massimi=8, attesa_iniziale=2.0)
 
 def carica_sessioni_allenamento_da_disco():
     if _google_sheets_configurato():
@@ -8813,6 +8823,40 @@ with tab5:
         st.subheader("📚 Your sessions")
         if not st.session_state['sessioni_allenamento']:
             st.info("No sessions yet — upload some PDFs above to get started.")
+            with st.expander("🔍 Not what you expected? Diagnose and retry loading"):
+                st.caption("If you had sessions before and they're not showing up, this checks "
+                           "exactly what's happening right now, instead of guessing.")
+                if st.button("🔄 Retry loading training sessions now", key="retry_carica_sessioni"):
+                    with st.spinner("Checking Google Sheets and the local backup..."):
+                        dettagli_diagnosi = []
+                        if _google_sheets_configurato():
+                            try:
+                                ws_meta = _ottieni_worksheet_training_meta()
+                                valori_meta = ws_meta.get_all_values()
+                                dettagli_diagnosi.append(f"✅ Connected to Google Sheets — 'TrainingSessionsMeta' tab has {max(0, len(valori_meta) - 1)} session row(s).")
+                                try:
+                                    ws_pdf = _ottieni_worksheet_training_pdf()
+                                    valori_pdf = ws_pdf.get_all_values()
+                                    dettagli_diagnosi.append(f"✅ 'TrainingSessionsPDF' tab has {max(0, len(valori_pdf) - 1)} PDF chunk row(s).")
+                                except Exception as e_pdf:
+                                    dettagli_diagnosi.append(f"❌ Could not read 'TrainingSessionsPDF': {e_pdf}")
+                            except Exception as e_meta:
+                                dettagli_diagnosi.append(f"❌ Could not read 'TrainingSessionsMeta': {e_meta}")
+                        else:
+                            dettagli_diagnosi.append("⚠️ Google Sheets is not configured for this app right now — using local storage only.")
+                        if os.path.exists(TRAINING_SESSIONS_FILE):
+                            try:
+                                with open(TRAINING_SESSIONS_FILE, 'rb') as f_diag:
+                                    backup_diag = pickle.load(f_diag)
+                                dettagli_diagnosi.append(f"📦 Local backup file found — {len(backup_diag)} session(s) in it.")
+                            except Exception as e_backup:
+                                dettagli_diagnosi.append(f"❌ Local backup file exists but could not be read: {e_backup}")
+                        else:
+                            dettagli_diagnosi.append("📦 No local backup file exists yet.")
+                        for riga_diag in dettagli_diagnosi:
+                            st.write(riga_diag)
+                        st.session_state['sessioni_allenamento'] = carica_sessioni_allenamento_da_disco()
+                        st.rerun()
         else:
             filtro_gruppo = st.selectbox(
                 "Filter by group:", ["(All sessions)"] + st.session_state['gruppi_sessioni_allenamento'] + ["(Ungrouped)"],
