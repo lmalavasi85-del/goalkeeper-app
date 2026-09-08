@@ -9407,10 +9407,13 @@ with tab5:
                     with col_pdf2:
                         nuovo_pdf = st.file_uploader("Replace file (PDF, JPG or PNG)", type=['pdf', 'jpg', 'jpeg', 'png'], key=f"replace_pdf_{chiave_sess}")
                         if nuovo_pdf is not None:
-                            with st.spinner("Updating just this session's file..."):
-                                sostituisci_file_singola_sessione(sessione['id'], nuovo_pdf.read(), st.session_state['sessioni_allenamento'])
-                            st.success("File replaced.")
-                            st.rerun()
+                            marcatore_pdf = f"{nuovo_pdf.name}-{nuovo_pdf.size}"
+                            if st.session_state.get(f"_processato_replace_pdf_{chiave_sess}") != marcatore_pdf:
+                                with st.spinner("Updating just this session's file..."):
+                                    sostituisci_file_singola_sessione(sessione['id'], nuovo_pdf.read(), st.session_state['sessioni_allenamento'])
+                                st.session_state[f"_processato_replace_pdf_{chiave_sess}"] = marcatore_pdf
+                                st.success("File replaced.")
+                                st.rerun()
 
                     st.markdown("**Exercise video links**")
                     for i_link, link in enumerate(sessione['link_list']):
