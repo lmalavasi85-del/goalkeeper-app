@@ -3414,6 +3414,13 @@ def salva_tag_go_su_disco(df_gk, df_tir, note_giocatori, nome_analisi):
         'note_giocatori': note_giocatori,
         'nome_analisi': nome_analisi,
     }
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — stessa protezione
+    # applicata a tutte le altre funzioni di salvataggio dell'app.
+    try:
+        with open(TAG_GO_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(stato, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_tag_go()
@@ -3606,6 +3613,16 @@ def carica_stagione_da_disco():
     return []
 
 def salva_stagione_su_disco(db, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(SEASON_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(db, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_stagione()
@@ -3760,6 +3777,16 @@ def carica_stagione_tiratori_da_disco():
     return []
 
 def salva_stagione_tiratori_su_disco(db, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(SHOOTER_SEASON_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(db, _f_backup_preventivo)
+    except Exception:
+        pass
     intestazione_tiratori = ['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'neutro', 'num_chunk']
     if _google_sheets_configurato():
         try:
@@ -3831,6 +3858,16 @@ def carica_note_da_disco():
     return {}
 
 def salva_note_su_disco(note_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(SHOOTER_NOTES_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(note_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_note()
@@ -3909,6 +3946,16 @@ def carica_anagrafica_da_disco():
     return {}
 
 def salva_anagrafica_su_disco(anagrafica_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(PLAYER_PROFILE_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(anagrafica_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_anagrafica()
@@ -3992,6 +4039,16 @@ def carica_link_duelli_da_disco():
     return {}
 
 def salva_link_duelli_su_disco(link_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(PLAYER_DUEL_LINKS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(link_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_link_duelli()
@@ -4073,6 +4130,16 @@ def carica_competizioni_partite_da_disco():
     return {}
 
 def salva_competizioni_partite_su_disco(competizioni_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(MATCH_COMPETITIONS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(competizioni_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_competizioni_partite()
@@ -4154,6 +4221,16 @@ def carica_matches_analyzed_manuali_da_disco():
     return {}
 
 def salva_matches_analyzed_manuali_su_disco(dati_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(MATCHES_ANALYZED_MANUALI_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(dati_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_matches_analyzed_manuali()
@@ -4232,6 +4309,16 @@ def carica_link_zone_da_disco():
     return {}
 
 def salva_link_zone_su_disco(link_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(TEAM_ZONE_LINKS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(link_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_link_zone()
@@ -4328,6 +4415,16 @@ def carica_foto_da_disco():
     return {}
 
 def salva_foto_su_disco(foto_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(PLAYER_PHOTOS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(foto_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_foto()
@@ -4417,6 +4514,16 @@ def carica_h2h_da_disco():
     return []
 
 def salva_h2h_su_disco(db, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(H2H_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(db, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_h2h()
@@ -4485,6 +4592,16 @@ def carica_tiro_portiere_da_disco():
     return []
 
 def salva_tiro_portiere_su_disco(db, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(TIRO_PORTIERE_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(db, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_tiro_portiere()
@@ -4557,6 +4674,16 @@ def carica_alias_giocatori_da_disco():
     return []
 
 def salva_alias_giocatori_su_disco(gruppi_alias, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(PLAYER_ALIASES_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(gruppi_alias, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_alias_giocatori()
@@ -4628,6 +4755,16 @@ def carica_campionati_da_disco():
     return []
 
 def salva_campionati_su_disco(lista_campionati, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(CHAMPIONSHIPS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(lista_campionati, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_campionati()
@@ -4742,10 +4879,21 @@ def carica_profili_expected_da_disco():
             return default
     return default
 
-def salva_profili_expected_su_disco(dati):
+def salva_profili_expected_su_disco(dati, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(EXPECTED_PROFILES_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(dati, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_expected()
+            _blocca_se_svuotamento_sospetto(worksheet, dati, permetti_svuotamento, "Expected Values profile(s)")
             worksheet.clear()
             worksheet.append_row(['dati_json'])
             worksheet.append_row([json.dumps(dati)])
@@ -4803,6 +4951,16 @@ def carica_gruppi_sessioni_da_disco():
     return []
 
 def salva_gruppi_sessioni_su_disco(gruppi, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(TRAINING_GROUPS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(gruppi, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_gruppi_sessioni()
@@ -4859,6 +5017,16 @@ def carica_squadre_allenate_da_disco():
     return []
 
 def salva_squadre_allenate_su_disco(lista_squadre, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(TRAINING_TEAMS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(lista_squadre, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_training_teams()
@@ -4979,6 +5147,16 @@ def carica_sessioni_allenamento_da_disco():
     return []
 
 def salva_sessioni_allenamento_su_disco(lista_sessioni, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(TRAINING_SESSIONS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(lista_sessioni, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             righe_meta = [[
@@ -5004,26 +5182,19 @@ def salva_sessioni_allenamento_su_disco(lista_sessioni, permetti_svuotamento=Fal
                         raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking — aborting before touching either sheet.")
 
             worksheet_meta = _ottieni_worksheet_training_meta()
-            # Protezione anti-svuotamento-accidentale: se stiamo per scrivere ZERO sessioni ma il
-            # foglio ne ha ancora, quasi sempre significa che i dati non si sono caricati
-            # correttamente in questa sessione (non che l'utente vuole davvero cancellare tutto)
-            # — è esattamente come si sono persi i metadati delle sessioni la volta scorsa.
-            # permetti_svuotamento=True (solo da un'azione di reset esplicitamente confermata)
-            # bypassa questo controllo.
-            if not lista_sessioni and not permetti_svuotamento:
-                righe_attuali = _numero_righe_dati_attuali(worksheet_meta)
-                if righe_attuali > 0:
-                    raise ValueError(
-                        f"Refusing to save: this would clear {righe_attuali} existing training "
-                        f"session(s) with an empty list. This almost always means the sessions "
-                        f"didn't load correctly in this run, not that you meant to delete them all. "
-                        f"Reload the page and check 'Your sessions' before trying again."
-                    )
+            # Protezione anti-svuotamento-accidentale su ENTRAMBI i fogli separatamente: prima
+            # era applicata solo al foglio dei metadati, non a quello dei PDF — è esattamente
+            # per questo che la volta scorsa i metadati sono stati azzerati mentre i PDF
+            # (chunk ancora presenti) sono sopravvissuti, disallineati e non più raggiungibili
+            # dal caricamento normale. permetti_svuotamento=True (solo da un reset esplicito)
+            # bypassa entrambi i controlli.
+            _blocca_se_svuotamento_sospetto(worksheet_meta, lista_sessioni, permetti_svuotamento, "training session(s)")
             worksheet_meta.clear()
             worksheet_meta.append_row(['id', 'nome_sessione', 'dati_json'])
             _scrivi_righe_a_blocchi(worksheet_meta, righe_meta)
 
             worksheet_pdf = _ottieni_worksheet_training_pdf()
+            _blocca_se_svuotamento_sospetto(worksheet_pdf, righe_pdf, permetti_svuotamento, "training session PDF chunk(s)")
             worksheet_pdf.clear()
             worksheet_pdf.append_row(['id', 'indice_chunk', 'chunk_base64'])
             # Scritto A BLOCCHI PICCOLI (non tutto insieme): con molte sessioni corpose (es. 40
@@ -5087,6 +5258,16 @@ def carica_loghi_squadra_da_disco():
     return {}
 
 def salva_loghi_squadra_su_disco(loghi_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile: è così che si sono persi i dati la
+    # volta scorsa (il backup locale esisteva solo come fallback DOPO un errore, mai come
+    # copia sistematica di ogni salvataggio riuscito).
+    try:
+        with open(TEAM_LOGOS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(loghi_dict, _f_backup_preventivo)
+    except Exception:
+        pass
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_loghi_squadra()
