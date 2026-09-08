@@ -8769,24 +8769,27 @@ with tab4:
 
                 filtri_tir_shared = selettore_filtri_avanzati(df_selezione, key_prefix="tir_shared")
                 df_selezione = applica_filtri_avanzati(df_selezione_base, filtri_tir_shared)
+                # Dati per la Shot Map (porta + pulsantiera): con i filtri macro-zona/macro-
+                # settore applicati, così ENTRAMBE si aggiornano insieme quando li si sceglie
+                # sopra — non solo la porta, come succedeva prima. df_selezione stesso resta
+                # SENZA questo filtro, perché le tabelle 'By macro-zone/sector/micro-zone' più
+                # sotto devono continuare a mostrare la distribuzione completa tra tutte le
+                # zone, non solo quella scelta.
+                df_selezione_shotmap = filtra_per_macro_settore(filtra_per_macro_zona(df_selezione, macro_key), settore_key)
                 if 'tasto_focus_shared' not in st.session_state:
                     st.session_state['tasto_focus_shared'] = None
-                tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione)
+                tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione_shotmap)
                 if st.session_state['tasto_focus_shared'] not in TUTTI_I_TASTI_TIRATORI:
                     st.session_state['tasto_focus_shared'] = None
                 tasto_scelto = st.session_state['tasto_focus_shared']
 
                 if tasto_scelto:
-                    df_porta_sel = df_selezione[df_selezione['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
-                    if macro_key:
-                        df_porta_sel = df_porta_sel[df_porta_sel['macro_settore_tir'] == macro_key]
-                    df_porta_sel = filtra_per_macro_settore(df_porta_sel, settore_key)
+                    df_porta_sel = df_selezione_shotmap[df_selezione_shotmap['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
                     g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_porta_sel)
                     expected_sel = ottieni_expected_goal_pct(tasto_scelto)
                     colore_cornice_sel = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
                 else:
-                    df_porta_sel = df_selezione if not macro_key else df_selezione[df_selezione['macro_settore_tir'] == macro_key]
-                    df_porta_sel = filtra_per_macro_settore(df_porta_sel, settore_key)
+                    df_porta_sel = df_selezione_shotmap
                     colore_cornice_sel = None
                 tot_p_sel, goal_p_sel = costruisci_conteggi_porta(df_porta_sel)
                 fig_p_sel = disegna_porta(tot_p_sel, goal_p_sel, colore_cornice=colore_cornice_sel)
@@ -8893,10 +8896,7 @@ with tab4:
                         # sono già mostrate, identiche, nella Shot Map in cima alla pagina) ----
                         if modalita_tir == "Team":
                             if tasto_scelto:
-                                df_per_porta = df_giocatore[df_giocatore['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
-                                if macro_key:
-                                    df_per_porta = df_per_porta[df_per_porta['macro_settore_tir'] == macro_key]
-                                df_per_porta = filtra_per_macro_settore(df_per_porta, settore_key)
+                                df_per_porta = df_giocatore_vista[df_giocatore_vista['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
                                 g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_per_porta)
                                 expected_sel = ottieni_expected_goal_pct(tasto_scelto)
                                 colore_cornice = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
@@ -8905,7 +8905,7 @@ with tab4:
                                 tot_porta, goal_porta = costruisci_conteggi_porta(df_giocatore_vista)
                                 colore_cornice = None
                             fig_p = disegna_porta(tot_porta, goal_porta, colore_cornice=colore_cornice)
-                            tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore)
+                            tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore_vista)
 
                             chiave_giocatore = _chiave_css_sicura(nome_giocatore)
                             col_porta, col_tast = st.columns([1, 2])
