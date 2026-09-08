@@ -575,6 +575,27 @@ def filtra_per_macro_zona(df, macro_key):
         return df
     return df[df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori) == macro_key]
 
+def selettore_macro_settore(key_prefix, etichetta="Focus on a macro-sector (optional):"):
+    """Come selettore_macro_zona, ma per il macro-settore aggregato (6M/9M/BT/LW/RW/7m/FB —
+    Universal Stats/Shooting Trend 'By macro-sector'), non la macro-zona a fasce (Zone 1/2/3).
+    Restituisce la chiave del macro-settore scelto, o None se '(All sectors)'."""
+    settori_unici = sorted(set(mappa_macro_settore(t) for t in TUTTI_I_TASTI_TIRATORI if mappa_macro_settore(t)))
+    etichette_settori = {s: ETICHETTA_MACRO_UNIVERSALE.get(s, s.upper()) for s in settori_unici}
+    settore_scelto = st.selectbox(
+        etichetta, ["(All sectors)"] + [etichette_settori[s] for s in settori_unici],
+        key=f"{key_prefix}_settore_scelto"
+    )
+    if settore_scelto == "(All sectors)":
+        return None
+    return next(k for k, v in etichette_settori.items() if v == settore_scelto)
+
+def filtra_per_macro_settore(df, settore_key):
+    """Filtra un qualsiasi dataframe (portieri o tiratori) per macro-settore aggregato, usando
+    TIRO_CLEAN. Se settore_key è None, restituisce il dataframe invariato."""
+    if not settore_key or df.empty:
+        return df
+    return df[df['TIRO_CLEAN'].apply(mappa_macro_settore) == settore_key]
+
 def selettore_avversario(df_h2h_scope, identita_giocatore_corrente, e_portiere, key_prefix):
     """Selettore 'faccia a faccia': per un portiere, l'elenco dei tiratori affrontati nell'ambito
     scelto (partita singola / stagione / selezione); per un tiratore, l'elenco dei portieri
@@ -2442,14 +2463,16 @@ def selettore_filtri_avanzati(df, key_prefix):
             filtri_scelti[chiave] = scelto
     return filtri_scelti
 
-def descrivi_filtri_attivi(macro_key=None, tasto_scelto=None, filtri_avanzati=None, avversario=None):
-    """Costruisce una descrizione leggibile dei filtri attualmente attivi (macro-settore,
-    settore di campo specifico, avversario faccia a faccia, dimensioni di tagging avanzato),
-    usata come titolo automatico quando si salva una mappa per il PDF. Restituisce 'All shots'
-    se non è attivo nessun filtro."""
+def descrivi_filtri_attivi(macro_key=None, tasto_scelto=None, filtri_avanzati=None, avversario=None, settore_key=None):
+    """Costruisce una descrizione leggibile dei filtri attualmente attivi (macro-zona,
+    macro-settore, settore di campo specifico, avversario faccia a faccia, dimensioni di
+    tagging avanzato), usata come titolo automatico quando si salva una mappa per il PDF.
+    Restituisce 'All shots' se non è attivo nessun filtro."""
     parti = []
     if macro_key:
         parti.append(ETICHETTA_MACRO_TIRATORI.get(macro_key, macro_key))
+    if settore_key:
+        parti.append(ETICHETTA_MACRO_UNIVERSALE.get(settore_key, settore_key.upper()))
     if tasto_scelto:
         parti.append(tasto_scelto)
     if avversario:
@@ -7702,15 +7725,18 @@ with tab2:
                     # ---- Shot Map del portiere: porta + pulsantiera + filtri incrociati ----
                     st.markdown("**Shot Map**")
                     chiave_gk_sicura = _chiave_css_sicura(gk)
-                    col_macro_gk, col_avv_gk = st.columns(2)
+                    col_macro_gk, col_settore_gk, col_avv_gk = st.columns(3)
                     with col_macro_gk:
                         macro_key_gk = selettore_macro_zona(key_prefix=f"gk_single_{chiave_gk_sicura}")
+                    with col_settore_gk:
+                        settore_key_gk = selettore_macro_settore(key_prefix=f"gk_single_{chiave_gk_sicura}")
                     with col_avv_gk:
                         avversario_gk = selettore_avversario(df_h2h_match, identita_giocatore(gk), True, key_prefix=f"gk_single_{chiave_gk_sicura}")
                     filtri_gk = selettore_filtri_avanzati(df_gk, key_prefix=f"gk_single_{chiave_gk_sicura}")
                     df_gk_base = applica_filtro_avversario(df_gk, df_h2h_match, identita_giocatore(gk), True, avversario_gk)
                     df_gk_filtrato = applica_filtri_avanzati(df_gk_base, filtri_gk)
                     df_gk_filtrato = filtra_per_macro_zona(df_gk_filtrato, macro_key_gk)
+                    df_gk_filtrato = filtra_per_macro_settore(df_gk_filtrato, settore_key_gk)
 
                     key_focus_gk = f"tasto_focus_gk_single_{chiave_gk_sicura}"
                     if key_focus_gk not in st.session_state:
@@ -7756,7 +7782,7 @@ with tab2:
 
                     if 'mappe_extra_pdf_match' not in st.session_state:
                         st.session_state['mappe_extra_pdf_match'] = {}
-                    titolo_mappa_gk_single = f"{gk} — {descrivi_filtri_attivi(macro_key_gk, tasto_sel_gk, filtri_gk, avversario_gk)}"
+                    titolo_mappa_gk_single = f"{gk} — {descrivi_filtri_attivi(macro_key_gk, tasto_sel_gk, filtri_gk, avversario_gk, settore_key_gk)}"
                     pulsante_salva_mappa_pdf(
                         st.session_state['mappe_extra_pdf_match'], scelta, titolo_mappa_gk_single,
                         df_per_porta_gk, key=f"salva_mappa_gk_single_{chiave_gk_sicura}"
@@ -7954,9 +7980,11 @@ with tab2:
                 st.markdown("**Shot Map**")
                 chiave_match_tir_sicura = _chiave_css_sicura(titolo_match_tir)
 
-                col_macro_mt, col_avv_mt = st.columns(2)
+                col_macro_mt, col_settore_mt, col_avv_mt = st.columns(3)
                 with col_macro_mt:
                     macro_key_mt = selettore_macro_zona(key_prefix=f"match_tir_{chiave_match_tir_sicura}")
+                with col_settore_mt:
+                    settore_key_mt = selettore_macro_settore(key_prefix=f"match_tir_{chiave_match_tir_sicura}")
                 with col_avv_mt:
                     if modalita_match_tir == "Player":
                         avversario_mt = selettore_avversario(df_h2h_match, titolo_match_tir, False,
@@ -7979,6 +8007,7 @@ with tab2:
 
                 df_mt_filtrato = applica_filtri_avanzati(df_base_mt, filtri_mt)
                 df_mt_filtrato = filtra_per_macro_zona(df_mt_filtrato, macro_key_mt)
+                df_mt_filtrato = filtra_per_macro_settore(df_mt_filtrato, settore_key_mt)
 
                 key_focus_mt = f"tasto_focus_match_tir_{chiave_match_tir_sicura}"
                 if key_focus_mt not in st.session_state:
@@ -8024,7 +8053,7 @@ with tab2:
 
                 if 'mappe_extra_pdf_match_tir' not in st.session_state:
                     st.session_state['mappe_extra_pdf_match_tir'] = {}
-                titolo_mappa_mt = f"{titolo_match_tir} — {descrivi_filtri_attivi(macro_key_mt, tasto_sel_mt, filtri_mt, avversario_mt)}"
+                titolo_mappa_mt = f"{titolo_match_tir} — {descrivi_filtri_attivi(macro_key_mt, tasto_sel_mt, filtri_mt, avversario_mt, settore_key_mt)}"
                 pulsante_salva_mappa_pdf(
                     st.session_state['mappe_extra_pdf_match_tir'], scelta, titolo_mappa_mt, df_porta_mt,
                     key=f"salva_mappa_match_tir_{chiave_match_tir_sicura}"
@@ -8299,15 +8328,18 @@ with tab3:
                     df_h2h_stagione = pd.concat(_frammenti_h2h_stagione, ignore_index=True) if _frammenti_h2h_stagione else pd.DataFrame(
                         columns=['PORTIERE_ID', 'TIRATORE_ID', 'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN'])
 
-                    col_macro_gk_stag, col_avv_gk_stag = st.columns(2)
+                    col_macro_gk_stag, col_settore_gk_stag, col_avv_gk_stag = st.columns(3)
                     with col_macro_gk_stag:
                         macro_key_gk_stag = selettore_macro_zona(key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
+                    with col_settore_gk_stag:
+                        settore_key_gk_stag = selettore_macro_settore(key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
                     with col_avv_gk_stag:
                         avversario_gk_stag = selettore_avversario(df_h2h_stagione, gk, True, key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
                     filtri_gk_stag = selettore_filtri_avanzati(df_gk_tot, key_prefix=f"gk_seasonal_{chiave_gk_stag_sicura}")
                     df_gk_stag_base = applica_filtro_avversario(df_gk_tot, df_h2h_stagione, gk, True, avversario_gk_stag)
                     df_gk_stag_filtrato = applica_filtri_avanzati(df_gk_stag_base, filtri_gk_stag)
                     df_gk_stag_filtrato = filtra_per_macro_zona(df_gk_stag_filtrato, macro_key_gk_stag)
+                    df_gk_stag_filtrato = filtra_per_macro_settore(df_gk_stag_filtrato, settore_key_gk_stag)
 
                     key_focus_gk_stag = f"tasto_focus_gk_seasonal_{chiave_gk_stag_sicura}"
                     if key_focus_gk_stag not in st.session_state:
@@ -8354,7 +8386,7 @@ with tab3:
 
                     if 'mappe_extra_pdf_stagione' not in st.session_state:
                         st.session_state['mappe_extra_pdf_stagione'] = {}
-                    titolo_mappa_gk_stag = f"{gk} — {descrivi_filtri_attivi(macro_key_gk_stag, tasto_sel_gk_stag, filtri_gk_stag, avversario_gk_stag)}"
+                    titolo_mappa_gk_stag = f"{gk} — {descrivi_filtri_attivi(macro_key_gk_stag, tasto_sel_gk_stag, filtri_gk_stag, avversario_gk_stag, settore_key_gk_stag)}"
                     pulsante_salva_mappa_pdf(
                         st.session_state['mappe_extra_pdf_stagione'], titolo_report, titolo_mappa_gk_stag,
                         df_per_porta_gk_stag, key=f"salva_mappa_gk_seasonal_{chiave_gk_stag_sicura}"
@@ -8514,7 +8546,7 @@ with tab4:
                 if selezione_match_tir else match_rilevanti_ord
             )
 
-            col_a, col_b = st.columns(2)
+            col_a, col_b, col_c = st.columns(3)
             with col_a:
                 solo_money_time = st.checkbox("Money Time only (from 50', score margin ±5)", key="mt_toggle_tir")
             with col_b:
@@ -8523,6 +8555,8 @@ with tab4:
                     ["(All zones)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
                     key="macro_scelto_tir"
                 )
+            with col_c:
+                settore_key = selettore_macro_settore(key_prefix="tir_shared")
             macro_key = None
             if macro_scelto != "(All zones)":
                 macro_key = next(k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v == macro_scelto)
@@ -8652,15 +8686,19 @@ with tab4:
                         chiave_hc = _chiave_css_sicura(titolo_dashboard)
                         mostra_mappe_hc = st.checkbox("🗺️ Show Hot/Cold shot maps", key=f"mostra_hc_{chiave_hc}")
                         if mostra_mappe_hc:
-                            st.markdown(f"**🔥 Hot Shot Map** ({tot_hot} shots)")
-                            if tot_hot > 0:
-                                _mostra_porta_tastiera_hot_cold(df_hot_giocatore, f"hot_{chiave_hc}")
+                            # Riusa gli stessi filtri macro-zona/macro-settore già scelti in cima
+                            # alla pagina, per coerenza con la Shot Map principale qui sopra.
+                            df_hot_hc_filtrato = filtra_per_macro_settore(filtra_per_macro_zona(df_hot_giocatore, macro_key), settore_key)
+                            df_cold_hc_filtrato = filtra_per_macro_settore(filtra_per_macro_zona(df_cold_giocatore, macro_key), settore_key)
+                            st.markdown(f"**🔥 Hot Shot Map** ({len(df_hot_hc_filtrato)} shots)")
+                            if len(df_hot_hc_filtrato) > 0:
+                                _mostra_porta_tastiera_hot_cold(df_hot_hc_filtrato, f"hot_{chiave_hc}")
                             else:
                                 st.caption("No Hot-state shots in this selection.")
 
-                            st.markdown(f"**❄️ Cold Shot Map** ({tot_cold} shots)")
-                            if tot_cold > 0:
-                                _mostra_porta_tastiera_hot_cold(df_cold_giocatore, f"cold_{chiave_hc}")
+                            st.markdown(f"**❄️ Cold Shot Map** ({len(df_cold_hc_filtrato)} shots)")
+                            if len(df_cold_hc_filtrato) > 0:
+                                _mostra_porta_tastiera_hot_cold(df_cold_hc_filtrato, f"cold_{chiave_hc}")
                             else:
                                 st.caption("No Cold-state shots in this selection.")
 
@@ -8740,11 +8778,13 @@ with tab4:
                     df_porta_sel = df_selezione[df_selezione['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
                     if macro_key:
                         df_porta_sel = df_porta_sel[df_porta_sel['macro_settore_tir'] == macro_key]
+                    df_porta_sel = filtra_per_macro_settore(df_porta_sel, settore_key)
                     g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_porta_sel)
                     expected_sel = ottieni_expected_goal_pct(tasto_scelto)
                     colore_cornice_sel = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
                 else:
                     df_porta_sel = df_selezione if not macro_key else df_selezione[df_selezione['macro_settore_tir'] == macro_key]
+                    df_porta_sel = filtra_per_macro_settore(df_porta_sel, settore_key)
                     colore_cornice_sel = None
                 tot_p_sel, goal_p_sel = costruisci_conteggi_porta(df_porta_sel)
                 fig_p_sel = disegna_porta(tot_p_sel, goal_p_sel, colore_cornice=colore_cornice_sel)
@@ -8774,7 +8814,7 @@ with tab4:
 
                 if 'mappe_extra_pdf_trend' not in st.session_state:
                     st.session_state['mappe_extra_pdf_trend'] = {}
-                titolo_mappa_trend = f"{titolo_dashboard} — {descrivi_filtri_attivi(macro_key, tasto_scelto, filtri_tir_shared, avversario_tir)}"
+                titolo_mappa_trend = f"{titolo_dashboard} — {descrivi_filtri_attivi(macro_key, tasto_scelto, filtri_tir_shared, avversario_tir, settore_key)}"
                 pulsante_salva_mappa_pdf(
                     st.session_state['mappe_extra_pdf_trend'], titolo_dashboard, titolo_mappa_trend,
                     df_porta_sel, key="salva_mappa_trend_shared"
@@ -8831,6 +8871,7 @@ with tab4:
                         df_giocatore_vista = df_giocatore[df_giocatore['macro_settore_tir'] == macro_key]
                     else:
                         df_giocatore_vista = df_giocatore
+                    df_giocatore_vista = filtra_per_macro_settore(df_giocatore_vista, settore_key)
 
                     with st.expander(f"🤾 {nome_giocatore}", expanded=(modalita_tir == "Player")):
                         chiave_include_pdf_g = f"include_pdf_{chiave_roster_ctx}_{_chiave_css_sicura(nome_giocatore)}"
@@ -8853,6 +8894,7 @@ with tab4:
                                 df_per_porta = df_giocatore[df_giocatore['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
                                 if macro_key:
                                     df_per_porta = df_per_porta[df_per_porta['macro_settore_tir'] == macro_key]
+                                df_per_porta = filtra_per_macro_settore(df_per_porta, settore_key)
                                 g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_per_porta)
                                 expected_sel = ottieni_expected_goal_pct(tasto_scelto)
                                 colore_cornice = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
@@ -9708,12 +9750,15 @@ with tab6:
                     st.markdown("---")
                     st.subheader(f"🥅 Shot Map — {titolo_tg}")
                     chiave_tg_sicura = _chiave_css_sicura(f"tir_{titolo_tg}")
-                    col_macro_tg, _ = st.columns(2)
+                    col_macro_tg, col_settore_tg = st.columns(2)
                     with col_macro_tg:
                         macro_key_tg = selettore_macro_zona(key_prefix=f"tag_go_tir_{chiave_tg_sicura}")
+                    with col_settore_tg:
+                        settore_key_tg = selettore_macro_settore(key_prefix=f"tag_go_tir_{chiave_tg_sicura}")
                     filtri_tg = selettore_filtri_avanzati(df_sel_tg, key_prefix=f"tag_go_tir_{chiave_tg_sicura}")
                     df_tg_filtrato = applica_filtri_avanzati(df_sel_tg, filtri_tg)
                     df_tg_filtrato = filtra_per_macro_zona(df_tg_filtrato, macro_key_tg)
+                    df_tg_filtrato = filtra_per_macro_settore(df_tg_filtrato, settore_key_tg)
 
                     key_focus_tg = f"tasto_focus_tag_go_tir_{chiave_tg_sicura}"
                     if key_focus_tg not in st.session_state:
@@ -9749,7 +9794,7 @@ with tab6:
                                 st.session_state[key_focus_tg] = None
                                 st.rerun()
 
-                    titolo_mappa_tg = f"{titolo_tg} — {descrivi_filtri_attivi(macro_key_tg, tasto_sel_tg, filtri_tg)}"
+                    titolo_mappa_tg = f"{titolo_tg} — {descrivi_filtri_attivi(macro_key_tg, tasto_sel_tg, filtri_tg, settore_key=settore_key_tg)}"
                     if st.button("💾 Save this map for PDF", key=f"salva_mappa_tag_go_tir_{chiave_tg_sicura}"):
                         st.session_state['tag_go_mappe_salvate'].append({'titolo': titolo_mappa_tg, 'df': df_porta_tg.copy(), 'ruolo': 'tiratore'})
                         st.success(f"Map '{titolo_mappa_tg}' saved for the PDF export below.")
@@ -9805,12 +9850,15 @@ with tab6:
                     st.markdown("---")
                     st.subheader(f"🥅 Shot Map — {titolo_tg_gk}")
                     chiave_tg_gk_sicura = _chiave_css_sicura(f"gk_{titolo_tg_gk}")
-                    col_macro_tg_gk, _ = st.columns(2)
+                    col_macro_tg_gk, col_settore_tg_gk = st.columns(2)
                     with col_macro_tg_gk:
                         macro_key_tg_gk = selettore_macro_zona(key_prefix=f"tag_go_gk_{chiave_tg_gk_sicura}")
+                    with col_settore_tg_gk:
+                        settore_key_tg_gk = selettore_macro_settore(key_prefix=f"tag_go_gk_{chiave_tg_gk_sicura}")
                     filtri_tg_gk = selettore_filtri_avanzati(df_sel_tg_gk, key_prefix=f"tag_go_gk_{chiave_tg_gk_sicura}")
                     df_tg_gk_filtrato = applica_filtri_avanzati(df_sel_tg_gk, filtri_tg_gk)
                     df_tg_gk_filtrato = filtra_per_macro_zona(df_tg_gk_filtrato, macro_key_tg_gk)
+                    df_tg_gk_filtrato = filtra_per_macro_settore(df_tg_gk_filtrato, settore_key_tg_gk)
 
                     key_focus_tg_gk = f"tasto_focus_tag_go_gk_{chiave_tg_gk_sicura}"
                     if key_focus_tg_gk not in st.session_state:
@@ -9846,7 +9894,7 @@ with tab6:
                                 st.session_state[key_focus_tg_gk] = None
                                 st.rerun()
 
-                    titolo_mappa_tg_gk = f"{titolo_tg_gk} — {descrivi_filtri_attivi(macro_key_tg_gk, tasto_sel_tg_gk, filtri_tg_gk)}"
+                    titolo_mappa_tg_gk = f"{titolo_tg_gk} — {descrivi_filtri_attivi(macro_key_tg_gk, tasto_sel_tg_gk, filtri_tg_gk, settore_key=settore_key_tg_gk)}"
                     if st.button("💾 Save this map for PDF", key=f"salva_mappa_tag_go_gk_{chiave_tg_gk_sicura}"):
                         st.session_state['tag_go_mappe_salvate'].append({'titolo': titolo_mappa_tg_gk, 'df': df_porta_tg_gk.copy(), 'ruolo': 'portiere'})
                         st.success(f"Map '{titolo_mappa_tg_gk}' saved for the PDF export below.")
