@@ -27,6 +27,12 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak, KeepTogether, HRFlowable
 
+# Timer globale: misura quanto impiega l'INTERO script ad ogni esecuzione (Streamlit riesegue
+# tutto il file ad ogni interazione, tab compresi — vedi il caption in sidebar più sotto), utile
+# per capire se il tempo percepito come "lento" viene da una sezione specifica o dall'insieme di
+# tutte le sezioni eseguite ad ogni giro, indipendentemente da quale l'utente sta guardando.
+_t_inizio_esecuzione_script = time.time()
+
 try:
     from pypdf import PdfReader, PdfWriter
     _PYPDF_DISPONIBILE = True
@@ -5149,6 +5155,60 @@ def carica_sessioni_allenamento_da_disco():
             return []
     return []
 
+def aggiorna_metadati_singola_sessione(id_sessione, lista_sessioni_completa):
+    """Salva le modifiche di UNA sola sessione — nome, gruppo, note, link video, assegnazioni —
+    toccando SOLO il foglio dei metadati, senza mai sfiorare quello dei PDF (che può avere
+    centinaia di righe pesanti dalle altre sessioni). La versione precedente richiamava sempre
+    il salvataggio completo per QUALSIASI modifica, anche minima, riscrivendo ogni volta tutti i
+    chunk PDF di tutte le sessioni anche quando il file non era affatto cambiato — questo era il
+    vero motivo per cui aggiungere un link o assegnare una squadra sembrava lento quanto
+    sostituire un intero file. Fa un fallback sicuro al salvataggio completo se qualcosa
+    nell'aggiornamento mirato non torna."""
+    # Backup locale SEMPRE aggiornato per primo, come in ogni altra funzione di salvataggio.
+    try:
+        with open(TRAINING_SESSIONS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(lista_sessioni_completa, _f_backup_preventivo)
+    except Exception:
+        pass
+
+    if not _google_sheets_configurato():
+        return
+
+    sessione_target = next((s for s in lista_sessioni_completa if s['id'] == id_sessione), None)
+    if sessione_target is None:
+        return
+
+    try:
+        worksheet_meta = _ottieni_worksheet_training_meta()
+        dati_json_nuovi = json.dumps({
+            'link_list': sessione_target['link_list'], 'note_generali': sessione_target['note_generali'],
+            'assegnazioni': sessione_target['assegnazioni'], 'gruppo': sessione_target.get('gruppo'),
+        })
+        riga_nuova = [id_sessione, sessione_target['nome_sessione'], dati_json_nuovi]
+        for cella in riga_nuova:
+            if len(str(cella)) > 49000:
+                raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars).")
+
+        # Leggo SOLO la colonna degli ID (leggera), non l'intero foglio, per trovare la riga da
+        # aggiornare — stessa ottimizzazione già usata per il worksheet dei PDF.
+        colonna_id_attuale = worksheet_meta.col_values(1)
+        indici_riga = [i + 2 for i, id_riga in enumerate(colonna_id_attuale[1:]) if id_riga == id_sessione]
+
+        if len(indici_riga) == 1:
+            # Caso normale: una sola riga esistente per questo ID — la aggiorno sul posto con
+            # 'update', senza toccare nessun'altra riga (a differenza di delete+append, un
+            # singolo update in-place è ancora più leggero per una singola riga di metadati).
+            worksheet_meta.update(f"A{indici_riga[0]}:C{indici_riga[0]}", [riga_nuova])
+        elif not indici_riga:
+            # Sessione non ancora presente sul foglio (es. appena creata): la aggiungo in fondo.
+            worksheet_meta.append_row(riga_nuova)
+        else:
+            # Caso raro/inatteso (più righe per lo stesso ID): torno al salvataggio completo
+            # sicuro invece di rischiare di lasciare righe duplicate o incoerenti.
+            salva_sessioni_allenamento_su_disco(lista_sessioni_completa)
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Could not update this session's details on Google Sheets: {e}")
+
 def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessioni_completa):
     """Sostituisce il PDF/immagine di UNA sola sessione, toccando solo le sue righe nel foglio
     Google Sheets — non l'intero foglio con tutte le altre sessioni. La versione precedente
@@ -6346,11 +6406,15 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
     seguita dalle pagine del PDF originale caricato (esportato da OneNote), se presente e se
     pypdf è disponibile. Copertina in orizzontale a due colonne, come le tipiche pagine OneNote
     esportate, per un documento finale visivamente coerente e senza spazio bianco sprecato."""
-    # Rileva la dimensione esatta della prima pagina del file originale (PDF o immagine — a
-    # volte molto più grande di un normale foglio, es. formati "widescreen" o pagine OneNote
-    # esportate a canvas ampio), e calcola un fattore di scala così che loghi, testi e margini
-    # crescano/si riducano in proporzione, restando sempre leggibili qualunque sia la dimensione
-    # reale.
+    # Rileva la dimensione esatta della prima pagina del PDF originale (a volte molto più grande
+    # di un normale foglio, es. formati "widescreen" o pagine OneNote esportate a canvas ampio),
+    # e calcola un fattore di scala così che loghi, testi e margini crescano/si riducano in
+    # proporzione, restando sempre leggibili qualunque sia la dimensione reale. Per le IMMAGINI
+    # invece la pagina resta sempre il formato standard: un file caricato in verticale (tipico di
+    # una foto da smartphone) avrebbe reso l'intera copertina stretta e verticale, rompendo il
+    # layout a due colonne di note/link pensato per un formato orizzontale — l'immagine si adatta
+    # sempre allo spazio disponibile in una pagina standard, mantenendo le sue proporzioni, senza
+    # bisogno di cambiare la pagina stessa.
     dimensione_pagina = landscape(A4)
     tipo_file_sessione = _rileva_tipo_file_sessione(sessione.get('pdf_bytes'))
     if tipo_file_sessione == 'pdf' and _PYPDF_DISPONIBILE:
@@ -6358,18 +6422,6 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
             prima_pagina_originale = PdfReader(io.BytesIO(sessione['pdf_bytes'])).pages[0]
             larghezza_punti = float(prima_pagina_originale.mediabox.width)
             altezza_punti = float(prima_pagina_originale.mediabox.height)
-            if larghezza_punti > 0 and altezza_punti > 0:
-                dimensione_pagina = (larghezza_punti, altezza_punti)
-        except Exception:
-            pass
-    elif tipo_file_sessione == 'image':
-        try:
-            img_originale = PILImage.open(io.BytesIO(sessione['pdf_bytes']))
-            larghezza_px, altezza_px = img_originale.size
-            # Converto pixel -> punti assumendo 150 DPI (tipico per uno screenshot/scan ad alta
-            # risoluzione da tablet): 1 punto = 1/72 pollice.
-            larghezza_punti = larghezza_px / 150 * 72
-            altezza_punti = altezza_px / 150 * 72
             if larghezza_punti > 0 and altezza_punti > 0:
                 dimensione_pagina = (larghezza_punti, altezza_punti)
         except Exception:
@@ -6491,8 +6543,8 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
             # leggermente diverso dal semplice calcolo pagina-meno-margini, quindi senza questo
             # margine l'immagine può risultare di una frazione di punto troppo grande e reportlab
             # rifiuta di piazzarla.
-            larghezza_disponibile = (dimensione_pagina[0] - 2 * margine_orizzontale) * 0.97
-            altezza_disponibile = (dimensione_pagina[1] - (1.6 * cm * fattore_scala) - (1.4 * cm * fattore_scala)) * 0.97
+            larghezza_disponibile = (dimensione_pagina[0] - 2 * margine_orizzontale) * 0.92
+            altezza_disponibile = (dimensione_pagina[1] - (1.6 * cm * fattore_scala) - (1.4 * cm * fattore_scala)) * 0.92
             elementi.append(PageBreak())
             elementi.append(RLImage(io.BytesIO(sessione['pdf_bytes']),
                                      width=larghezza_disponibile, height=altezza_disponibile,
@@ -6529,6 +6581,7 @@ else:
 tab1, tab2, tab3, tab4, tab7, tab6, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🌍 Universal Stats', '🎬 Tag & Go Analysis', '🏋️ Training Sessions'])
 
 with tab1:
+    _t_tab1 = time.time()
     st.header('Upload Game Data')
 
     if 'upload_authorized' not in st.session_state:
@@ -7374,7 +7427,9 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
             st.success("All data has been reset. The app is back to its starting point.")
             st.rerun()
 
+st.sidebar.caption(f"   • Upload Match Sheets: {time.time() - _t_tab1:.1f}s")
 with tab2:
+    _t_tab2 = time.time()
     if not st.session_state['db']:
         st.warning('Please upload and save data files first.')
     else:
@@ -8047,7 +8102,9 @@ with tab2:
                             st.error(f"Error generating PDF: {e}")
 
 
+st.sidebar.caption(f"   • Single Game Analysis: {time.time() - _t_tab2:.1f}s")
 with tab3:
+    _t_tab3 = time.time()
     st.header("🏆 Seasonal Report")
 
     if not st.session_state['db']:
@@ -8350,7 +8407,9 @@ with tab3:
                         st.error(f"Error generating PDF: {e}")
 
 
+st.sidebar.caption(f"   • Seasonal Report: {time.time() - _t_tab3:.1f}s")
 with tab4:
+    _t_tab4 = time.time()
     st.header("🎯 Shooting Trend Analysis")
     st.caption("Reserved staff section — shooter shot maps, expected goals, money time and home/away trends.")
 
@@ -9110,7 +9169,9 @@ with tab4:
             classifica_finale_vis = classifica_finale.rename(columns={'Opponent': etichetta_avv[:-1] if etichetta_avv.endswith('s') else etichetta_avv})
             st.dataframe(classifica_finale_vis, use_container_width=True, hide_index=True)
 
+st.sidebar.caption(f"   • Shooting Trend Analysis: {time.time() - _t_tab4:.1f}s")
 with tab5:
+    _t_tab5 = time.time()
     st.header("🏋️ Training Sessions")
     st.caption("Reserved staff section — training session library (PDFs exported from OneNote), "
                "exercise video links, and export as a branded PDF ready to share with a team.")
@@ -9405,7 +9466,7 @@ with tab5:
                     nuovo_nome_sessione = st.text_input("Session name", value=sessione['nome_sessione'], key=f"nome_sess_{chiave_sess}")
                     if nuovo_nome_sessione.strip() and nuovo_nome_sessione.strip() != sessione['nome_sessione']:
                         st.session_state['sessioni_allenamento'][idx_sessione]['nome_sessione'] = nuovo_nome_sessione.strip()
-                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
                         st.rerun()
 
                     opzioni_gruppo_sess = ["(no group)"] + st.session_state['gruppi_sessioni_allenamento']
@@ -9416,7 +9477,7 @@ with tab5:
                     nuovo_gruppo_valore = None if gruppo_scelto == "(no group)" else gruppo_scelto
                     if nuovo_gruppo_valore != sessione.get('gruppo'):
                         st.session_state['sessioni_allenamento'][idx_sessione]['gruppo'] = nuovo_gruppo_valore
-                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
                         st.rerun()
 
                     col_pdf1, col_pdf2 = st.columns(2)
@@ -9466,7 +9527,7 @@ with tab5:
                         col_l2.caption(link['url'])
                         if col_l3.button("🗑️", key=f"del_link_{chiave_sess}_{i_link}"):
                             st.session_state['sessioni_allenamento'][idx_sessione]['link_list'].pop(i_link)
-                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
                             st.rerun()
                     col_nl1, col_nl2, col_nl3 = st.columns([2, 4, 1])
                     nome_link_nuovo = col_nl1.text_input("Label", key=f"nuovo_link_nome_{chiave_sess}", label_visibility="collapsed", placeholder="Exercise 1")
@@ -9475,14 +9536,14 @@ with tab5:
                         if nome_link_nuovo.strip() and url_link_nuovo.strip():
                             st.session_state['sessioni_allenamento'][idx_sessione]['link_list'].append(
                                 {'nome': nome_link_nuovo.strip(), 'url': url_link_nuovo.strip()})
-                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
                             st.rerun()
 
                     nota_generale_nuova = st.text_area("Session notes (max 1000 characters)", value=sessione['note_generali'],
                                                         max_chars=1000, key=f"nota_gen_{chiave_sess}")
                     if nota_generale_nuova != sessione['note_generali']:
                         st.session_state['sessioni_allenamento'][idx_sessione]['note_generali'] = nota_generale_nuova
-                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
 
                     st.markdown("**Assign to a team & date (optional, repeatable)**")
                     for i_ass, assegnazione in enumerate(sessione['assegnazioni']):
@@ -9496,7 +9557,7 @@ with tab5:
                                                 mime="application/pdf", key=f"dl_ass_{chiave_sess}_{i_ass}")
                         if col_a3.button("🗑️", key=f"del_ass_{chiave_sess}_{i_ass}"):
                             st.session_state['sessioni_allenamento'][idx_sessione]['assegnazioni'].pop(i_ass)
-                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
                             st.rerun()
 
                     st.markdown("**Add a new assignment**")
@@ -9510,7 +9571,7 @@ with tab5:
                             'data': str(data_ass) if data_ass else None,
                             'nota': nota_ass,
                         })
-                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
                         for _chiave_da_svuotare in (f"squadra_ass_{chiave_sess}", f"specifica_data_{chiave_sess}",
                                                      f"data_ass_{chiave_sess}", f"nota_ass_{chiave_sess}"):
                             st.session_state.pop(_chiave_da_svuotare, None)
@@ -9530,7 +9591,9 @@ with tab5:
                         st.success(f"Session '{sessione['nome_sessione']}' deleted.")
                         st.rerun()
 
+st.sidebar.caption(f"   • Training Sessions (tab5): {time.time() - _t_tab5:.1f}s")
 with tab6:
+    _t_tab6 = time.time()
     st.header("🎬 Tag & Go Analysis")
     st.caption("A completely separate scratchpad — never counted in any other statistics, never "
                "included in Full Backup, never touched by Reset All Data. Analyze a video of "
@@ -9940,7 +10003,9 @@ with tab6:
                     on_click=_elimina_tag_go_dopo_download
                 )
 
+st.sidebar.caption(f"   • Tag & Go Analysis: {time.time() - _t_tab6:.1f}s")
 with tab7:
+    _t_tab7 = time.time()
     st.header("🌍 Universal Stats")
     st.caption("Shot distribution across the whole software (or a filtered subset), broken down by "
                "macro-sector (LW, RW, 6M, BT, 9M, 7m, FB) — independent of goalkeeper vs shooter role.")
@@ -10195,3 +10260,11 @@ with tab7:
                     file_name=f"Universal_Stats_{modo_filtro_us}".replace(' ', '_') + ".pdf",
                     mime="application/pdf", key="dl_universal_stats"
                 )
+
+# Tempo totale impiegato per eseguire l'INTERO script in questo giro (tutte le sezioni/tab,
+# indipendentemente da quale l'utente sta effettivamente guardando — è così che funziona
+# st.tabs in Streamlit: il codice di ogni tab gira sempre, solo la vista cambia). Mostrato in
+# sidebar per capire se un'operazione "lenta" percepita in una sezione viene in realtà dal
+# lavoro cumulativo di TUTTE le sezioni ad ogni esecuzione.
+st.sidebar.caption(f"   • Universal Stats (tab7): {time.time() - _t_tab7:.1f}s")
+st.sidebar.caption(f"⏱️ Full script run: {time.time() - _t_inizio_esecuzione_script:.1f}s")
