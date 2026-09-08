@@ -3302,6 +3302,35 @@ def _con_retry_sheets(funzione_chiamata, tentativi_massimi=5, attesa_iniziale=1.
             time.sleep(attesa_iniziale * (2 ** tentativo))
     raise ultimo_errore
 
+def _numero_righe_dati_attuali(worksheet):
+    """Legge quante righe di DATI ha attualmente un worksheet (esclusa l'intestazione) — usata
+    dalla protezione anti-svuotamento-accidentale in ogni funzione di salvataggio: se stiamo per
+    scrivere zero elementi ma il foglio ne ha ancora, è quasi sempre un segno che i dati non si
+    sono caricati correttamente in questa sessione, non che l'utente vuole davvero cancellare
+    tutto. In caso di dubbio (lettura fallita) NON blocca — non peggiora il comportamento di
+    prima di questa protezione."""
+    try:
+        valori = worksheet.get_all_values()
+        return max(0, len(valori) - 1)
+    except Exception:
+        return 0
+
+def _blocca_se_svuotamento_sospetto(worksheet, dati_nuovi, permetti_svuotamento, descrizione):
+    """Solleva ValueError se stiamo per scrivere ZERO elementi mentre il worksheet ne ha ancora —
+    quasi sempre segno di un caricamento fallito in questa sessione (session_state mai popolato
+    correttamente), non di un'azione intenzionale dell'utente. permetti_svuotamento=True (solo da
+    un'azione di reset esplicitamente confermata, es. 'Reset All Data') bypassa il controllo.
+    Chiamare SEMPRE prima di worksheet.clear() in ogni funzione di salvataggio dell'app."""
+    if dati_nuovi or permetti_svuotamento:
+        return
+    righe_attuali = _numero_righe_dati_attuali(worksheet)
+    if righe_attuali > 0:
+        raise ValueError(
+            f"Refusing to save: this would clear {righe_attuali} existing {descrizione} with an "
+            f"empty save. This almost always means the data didn't load correctly in this run, "
+            f"not that you meant to delete it all. Reload the page and check again before retrying."
+        )
+
 class _WorksheetConRetry:
     """Avvolge un worksheet gspread applicando automaticamente retry-with-backoff a ogni
     chiamata di metodo — trasparente per chi lo usa, si comporta come il worksheet originale.
@@ -3576,7 +3605,7 @@ def carica_stagione_da_disco():
             return []
     return []
 
-def salva_stagione_su_disco(db):
+def salva_stagione_su_disco(db, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_stagione()
@@ -3592,6 +3621,7 @@ def salva_stagione_su_disco(db):
             colonne_necessarie = max([len(r) for r in righe] + [len(GOOGLE_SHEETS_HEADER)])
             if worksheet.col_count < colonne_necessarie:
                 worksheet.resize(cols=colonne_necessarie)
+            _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "goalkeeper match(es)")
             worksheet.clear()
             worksheet.append_row(GOOGLE_SHEETS_HEADER)
             if righe:
@@ -3599,6 +3629,10 @@ def salva_stagione_su_disco(db):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save season to Google Sheets: {e}")
+            if not db:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(SEASON_FILE, 'wb') as f:
         pickle.dump(db, f)
 
@@ -3725,7 +3759,7 @@ def carica_stagione_tiratori_da_disco():
             return []
     return []
 
-def salva_stagione_tiratori_su_disco(db):
+def salva_stagione_tiratori_su_disco(db, permetti_svuotamento=False):
     intestazione_tiratori = ['nome', 'data', 'squadra', 'squadra_home', 'squadra_away', 'neutro', 'num_chunk']
     if _google_sheets_configurato():
         try:
@@ -3738,6 +3772,7 @@ def salva_stagione_tiratori_su_disco(db):
             colonne_necessarie = max([len(r) for r in righe] + [len(intestazione_tiratori)])
             if worksheet.col_count < colonne_necessarie:
                 worksheet.resize(cols=colonne_necessarie)
+            _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "shooter match(es)")
             worksheet.clear()
             worksheet.append_row(intestazione_tiratori)
             if righe:
@@ -3745,6 +3780,10 @@ def salva_stagione_tiratori_su_disco(db):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save shooter season to Google Sheets: {e}")
+            if not db:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(SHOOTER_SEASON_FILE, 'wb') as f:
         pickle.dump(db, f)
 
@@ -3791,10 +3830,11 @@ def carica_note_da_disco():
             return {}
     return {}
 
-def salva_note_su_disco(note_dict):
+def salva_note_su_disco(note_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_note()
+            _blocca_se_svuotamento_sospetto(worksheet, note_dict, permetti_svuotamento, "note(s)")
             worksheet.clear()
             worksheet.append_row(['giocatore', 'nota'])
             righe = [[g, n] for g, n in note_dict.items()]
@@ -3803,6 +3843,10 @@ def salva_note_su_disco(note_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save notes to Google Sheets: {e}")
+            if not note_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(SHOOTER_NOTES_FILE, 'wb') as f:
         pickle.dump(note_dict, f)
 
@@ -3864,7 +3908,7 @@ def carica_anagrafica_da_disco():
             return {}
     return {}
 
-def salva_anagrafica_su_disco(anagrafica_dict):
+def salva_anagrafica_su_disco(anagrafica_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_anagrafica()
@@ -3876,6 +3920,7 @@ def salva_anagrafica_su_disco(anagrafica_dict):
                 for cella in riga:
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            _blocca_se_svuotamento_sospetto(worksheet, anagrafica_dict, permetti_svuotamento, "player profile(s)")
             worksheet.clear()
             worksheet.append_row(['giocatore', 'dati_json'])
             if righe:
@@ -3883,6 +3928,10 @@ def salva_anagrafica_su_disco(anagrafica_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save player profiles to Google Sheets: {e}")
+            if not anagrafica_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(PLAYER_PROFILE_FILE, 'wb') as f:
         pickle.dump(anagrafica_dict, f)
 
@@ -3942,7 +3991,7 @@ def carica_link_duelli_da_disco():
             return {}
     return {}
 
-def salva_link_duelli_su_disco(link_dict):
+def salva_link_duelli_su_disco(link_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_link_duelli()
@@ -3951,6 +4000,7 @@ def salva_link_duelli_su_disco(link_dict):
                 for cella in riga:
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            _blocca_se_svuotamento_sospetto(worksheet, link_dict, permetti_svuotamento, "duel link(s)")
             worksheet.clear()
             worksheet.append_row(['giocatore_zona', 'link'])
             if righe:
@@ -3958,6 +4008,10 @@ def salva_link_duelli_su_disco(link_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save duel links to Google Sheets: {e}")
+            if not link_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(PLAYER_DUEL_LINKS_FILE, 'wb') as f:
         pickle.dump(link_dict, f)
 
@@ -4018,7 +4072,7 @@ def carica_competizioni_partite_da_disco():
             return {}
     return {}
 
-def salva_competizioni_partite_su_disco(competizioni_dict):
+def salva_competizioni_partite_su_disco(competizioni_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_competizioni_partite()
@@ -4027,6 +4081,7 @@ def salva_competizioni_partite_su_disco(competizioni_dict):
                 for cella in riga:
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            _blocca_se_svuotamento_sospetto(worksheet, competizioni_dict, permetti_svuotamento, "match competition(s)")
             worksheet.clear()
             worksheet.append_row(['partita_data', 'competizione'])
             if righe:
@@ -4034,6 +4089,10 @@ def salva_competizioni_partite_su_disco(competizioni_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save match competitions to Google Sheets: {e}")
+            if not competizioni_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(MATCH_COMPETITIONS_FILE, 'wb') as f:
         pickle.dump(competizioni_dict, f)
 
@@ -4094,7 +4153,7 @@ def carica_matches_analyzed_manuali_da_disco():
             return {}
     return {}
 
-def salva_matches_analyzed_manuali_su_disco(dati_dict):
+def salva_matches_analyzed_manuali_su_disco(dati_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_matches_analyzed_manuali()
@@ -4103,6 +4162,7 @@ def salva_matches_analyzed_manuali_su_disco(dati_dict):
                 for cella in riga:
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            _blocca_se_svuotamento_sospetto(worksheet, dati_dict, permetti_svuotamento, "manually-entered match set(s)")
             worksheet.clear()
             worksheet.append_row(['squadra_selezione', 'righe_json'])
             if righe:
@@ -4110,6 +4170,10 @@ def salva_matches_analyzed_manuali_su_disco(dati_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save manually-entered matches to Google Sheets: {e}")
+            if not dati_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(MATCHES_ANALYZED_MANUALI_FILE, 'wb') as f:
         pickle.dump(dati_dict, f)
 
@@ -4167,7 +4231,7 @@ def carica_link_zone_da_disco():
             return {}
     return {}
 
-def salva_link_zone_su_disco(link_dict):
+def salva_link_zone_su_disco(link_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_link_zone()
@@ -4176,6 +4240,7 @@ def salva_link_zone_su_disco(link_dict):
                 for cella in riga:
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            _blocca_se_svuotamento_sospetto(worksheet, link_dict, permetti_svuotamento, "zone video link set(s)")
             worksheet.clear()
             worksheet.append_row(['squadra', 'link_json'])
             if righe:
@@ -4183,6 +4248,10 @@ def salva_link_zone_su_disco(link_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save zone video links to Google Sheets: {e}")
+            if not link_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(TEAM_ZONE_LINKS_FILE, 'wb') as f:
         pickle.dump(link_dict, f)
 
@@ -4258,10 +4327,11 @@ def carica_foto_da_disco():
             return {}
     return {}
 
-def salva_foto_su_disco(foto_dict):
+def salva_foto_su_disco(foto_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_foto()
+            _blocca_se_svuotamento_sospetto(worksheet, foto_dict, permetti_svuotamento, "player photo(s)")
             worksheet.clear()
             worksheet.append_row(['giocatore', 'foto_base64'])
             righe = [[g, f] for g, f in foto_dict.items()]
@@ -4270,6 +4340,10 @@ def salva_foto_su_disco(foto_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save player photos to Google Sheets: {e}")
+            if not foto_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(PLAYER_PHOTOS_FILE, 'wb') as f:
         pickle.dump(foto_dict, f)
 
@@ -4342,10 +4416,11 @@ def carica_h2h_da_disco():
             return []
     return []
 
-def salva_h2h_su_disco(db):
+def salva_h2h_su_disco(db, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_h2h()
+            _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "head-to-head match(es)")
             worksheet.clear()
             worksheet.append_row(['nome', 'data', 'dati_json'])
             righe = [[m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')] for m in db]
@@ -4354,6 +4429,10 @@ def salva_h2h_su_disco(db):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save head-to-head data to Google Sheets: {e}")
+            if not db:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(H2H_FILE, 'wb') as f:
         pickle.dump(db, f)
 
@@ -4405,10 +4484,11 @@ def carica_tiro_portiere_da_disco():
             return []
     return []
 
-def salva_tiro_portiere_su_disco(db):
+def salva_tiro_portiere_su_disco(db, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_tiro_portiere()
+            _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "goalkeeper own-shot match(es)")
             worksheet.clear()
             worksheet.append_row(['nome', 'data', 'dati_json'])
             righe = [[m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')] for m in db]
@@ -4417,6 +4497,10 @@ def salva_tiro_portiere_su_disco(db):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save goalkeeper own-shots data to Google Sheets: {e}")
+            if not db:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(TIRO_PORTIERE_FILE, 'wb') as f:
         pickle.dump(db, f)
 
@@ -4472,10 +4556,11 @@ def carica_alias_giocatori_da_disco():
             return []
     return []
 
-def salva_alias_giocatori_su_disco(gruppi_alias):
+def salva_alias_giocatori_su_disco(gruppi_alias, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_alias_giocatori()
+            _blocca_se_svuotamento_sospetto(worksheet, gruppi_alias, permetti_svuotamento, "player alias group(s)")
             worksheet.clear()
             worksheet.append_row(['gruppo_json'])
             righe = [[json.dumps(gruppo)] for gruppo in gruppi_alias]
@@ -4484,6 +4569,10 @@ def salva_alias_giocatori_su_disco(gruppi_alias):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save player aliases to Google Sheets: {e}")
+            if not gruppi_alias:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(PLAYER_ALIASES_FILE, 'wb') as f:
         pickle.dump(gruppi_alias, f)
 
@@ -4538,10 +4627,11 @@ def carica_campionati_da_disco():
             return []
     return []
 
-def salva_campionati_su_disco(lista_campionati):
+def salva_campionati_su_disco(lista_campionati, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_campionati()
+            _blocca_se_svuotamento_sospetto(worksheet, lista_campionati, permetti_svuotamento, "championship(s)")
             worksheet.clear()
             worksheet.append_row(['nome', 'squadre_json', 'data_inizio', 'data_fine'])
             righe = [[
@@ -4555,6 +4645,10 @@ def salva_campionati_su_disco(lista_campionati):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save championships to Google Sheets: {e}")
+            if not lista_campionati:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(CHAMPIONSHIPS_FILE, 'wb') as f:
         pickle.dump(lista_campionati, f)
 
@@ -4708,10 +4802,11 @@ def carica_gruppi_sessioni_da_disco():
             return []
     return []
 
-def salva_gruppi_sessioni_su_disco(gruppi):
+def salva_gruppi_sessioni_su_disco(gruppi, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_gruppi_sessioni()
+            _blocca_se_svuotamento_sospetto(worksheet, gruppi, permetti_svuotamento, "training session group(s)")
             worksheet.clear()
             worksheet.append_row(['nome_gruppo'])
             righe = [[g] for g in gruppi]
@@ -4720,6 +4815,10 @@ def salva_gruppi_sessioni_su_disco(gruppi):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save training session groups to Google Sheets: {e}")
+            if not gruppi:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(TRAINING_GROUPS_FILE, 'wb') as f:
         pickle.dump(gruppi, f)
 DIMENSIONE_CHUNK_PDF = 40000  # caratteri base64 per riga: resta sotto il limite di una cella di Google Sheets
@@ -4759,10 +4858,11 @@ def carica_squadre_allenate_da_disco():
             return []
     return []
 
-def salva_squadre_allenate_su_disco(lista_squadre):
+def salva_squadre_allenate_su_disco(lista_squadre, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_training_teams()
+            _blocca_se_svuotamento_sospetto(worksheet, lista_squadre, permetti_svuotamento, "training team(s)")
             worksheet.clear()
             worksheet.append_row(['nome', 'logo_base64'])
             righe = [[s['nome'], s.get('logo_b64') or ''] for s in lista_squadre]
@@ -4771,6 +4871,10 @@ def salva_squadre_allenate_su_disco(lista_squadre):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save training teams to Google Sheets: {e}")
+            if not lista_squadre:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(TRAINING_TEAMS_FILE, 'wb') as f:
         pickle.dump(lista_squadre, f)
 
@@ -4874,7 +4978,7 @@ def carica_sessioni_allenamento_da_disco():
             return []
     return []
 
-def salva_sessioni_allenamento_su_disco(lista_sessioni):
+def salva_sessioni_allenamento_su_disco(lista_sessioni, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             righe_meta = [[
@@ -4900,6 +5004,21 @@ def salva_sessioni_allenamento_su_disco(lista_sessioni):
                         raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking — aborting before touching either sheet.")
 
             worksheet_meta = _ottieni_worksheet_training_meta()
+            # Protezione anti-svuotamento-accidentale: se stiamo per scrivere ZERO sessioni ma il
+            # foglio ne ha ancora, quasi sempre significa che i dati non si sono caricati
+            # correttamente in questa sessione (non che l'utente vuole davvero cancellare tutto)
+            # — è esattamente come si sono persi i metadati delle sessioni la volta scorsa.
+            # permetti_svuotamento=True (solo da un'azione di reset esplicitamente confermata)
+            # bypassa questo controllo.
+            if not lista_sessioni and not permetti_svuotamento:
+                righe_attuali = _numero_righe_dati_attuali(worksheet_meta)
+                if righe_attuali > 0:
+                    raise ValueError(
+                        f"Refusing to save: this would clear {righe_attuali} existing training "
+                        f"session(s) with an empty list. This almost always means the sessions "
+                        f"didn't load correctly in this run, not that you meant to delete them all. "
+                        f"Reload the page and check 'Your sessions' before trying again."
+                    )
             worksheet_meta.clear()
             worksheet_meta.append_row(['id', 'nome_sessione', 'dati_json'])
             _scrivi_righe_a_blocchi(worksheet_meta, righe_meta)
@@ -4915,6 +5034,11 @@ def salva_sessioni_allenamento_su_disco(lista_sessioni):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save training sessions to Google Sheets: {e}")
+            if not lista_sessioni:
+                # Lista vuota e il salvataggio remoto è fallito (per il controllo di sicurezza
+                # sopra, o per qualunque altro motivo): NON tocco nemmeno il backup locale, per
+                # non rischiare di sovrascrivere un backup buono con una lista vuota sospetta.
+                return
     with open(TRAINING_SESSIONS_FILE, 'wb') as f:
         pickle.dump(lista_sessioni, f)
 
@@ -4962,10 +5086,11 @@ def carica_loghi_squadra_da_disco():
             return {}
     return {}
 
-def salva_loghi_squadra_su_disco(loghi_dict):
+def salva_loghi_squadra_su_disco(loghi_dict, permetti_svuotamento=False):
     if _google_sheets_configurato():
         try:
             worksheet = _ottieni_worksheet_loghi_squadra()
+            _blocca_se_svuotamento_sospetto(worksheet, loghi_dict, permetti_svuotamento, "team logo(s)")
             worksheet.clear()
             worksheet.append_row(['squadra', 'logo_base64'])
             righe = [[nome, logo] for nome, logo in loghi_dict.items()]
@@ -4974,6 +5099,10 @@ def salva_loghi_squadra_su_disco(loghi_dict):
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save team logos to Google Sheets: {e}")
+            if not loghi_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
     with open(TEAM_LOGOS_FILE, 'wb') as f:
         pickle.dump(loghi_dict, f)
 
@@ -6391,7 +6520,7 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                 col_al1.caption(' = '.join(gruppo))
                 if col_al2.button("🗑️", key=f"del_alias_{i}", help="Unlink these names (they'll go back to being separate players)"):
                     st.session_state['gruppi_alias'].pop(i)
-                    salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'])
+                    salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'], permetti_svuotamento=True)
                     riapplica_alias_a_tutti_i_dati()
                     st.success("Names unlinked.")
                     st.rerun()
@@ -6483,7 +6612,7 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                             st.rerun()
                     if st.button("🗑️ Delete this championship", key=f"del_camp_{i}"):
                         st.session_state['campionati'].pop(i)
-                        salva_campionati_su_disco(st.session_state['campionati'])
+                        salva_campionati_su_disco(st.session_state['campionati'], permetti_svuotamento=True)
                         st.success(f"Championship '{camp['nome']}' deleted (matches themselves are untouched).")
                         st.rerun()
         else:
@@ -6898,29 +7027,29 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
         conferma_reset = st.checkbox("I confirm I want to delete ALL data in the app — everywhere — (this action is irreversible)")
         if st.button("🔄 Reset All Data", disabled=not conferma_reset):
             st.session_state['db'] = []
-            salva_stagione_su_disco(st.session_state['db'])
+            salva_stagione_su_disco(st.session_state['db'], permetti_svuotamento=True)
             st.session_state['db_tiratori'] = []
-            salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
+            salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'], permetti_svuotamento=True)
             st.session_state['db_tiro_portiere'] = []
-            salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
+            salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'], permetti_svuotamento=True)
             st.session_state['db_h2h'] = []
-            salva_h2h_su_disco(st.session_state['db_h2h'])
+            salva_h2h_su_disco(st.session_state['db_h2h'], permetti_svuotamento=True)
             st.session_state['note_tiratori'] = {}
-            salva_note_su_disco(st.session_state['note_tiratori'])
+            salva_note_su_disco(st.session_state['note_tiratori'], permetti_svuotamento=True)
             st.session_state['foto_giocatori'] = {}
-            salva_foto_su_disco(st.session_state['foto_giocatori'])
+            salva_foto_su_disco(st.session_state['foto_giocatori'], permetti_svuotamento=True)
             st.session_state['campionati'] = []
-            salva_campionati_su_disco(st.session_state['campionati'])
+            salva_campionati_su_disco(st.session_state['campionati'], permetti_svuotamento=True)
             st.session_state['squadre_allenate'] = []
-            salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
+            salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'], permetti_svuotamento=True)
             st.session_state['sessioni_allenamento'] = []
-            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'], permetti_svuotamento=True)
             st.session_state['gruppi_sessioni_allenamento'] = []
-            salva_gruppi_sessioni_su_disco(st.session_state['gruppi_sessioni_allenamento'])
+            salva_gruppi_sessioni_su_disco(st.session_state['gruppi_sessioni_allenamento'], permetti_svuotamento=True)
             st.session_state['loghi_squadre'] = {}
-            salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+            salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'], permetti_svuotamento=True)
             st.session_state['gruppi_alias'] = []
-            salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'])
+            salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'], permetti_svuotamento=True)
             st.session_state['mappa_alias_corrente'] = {}
             # S.P. Value viene sempre mantenuto: azzero solo i profili CALCOLATI dai dati.
             st.session_state['profili_expected_stato'] = {
@@ -8740,7 +8869,7 @@ with tab5:
                                 st.rerun()
                     if st.button("🗑️", key=f"del_squadra_training_{i}", help=f"Remove {squadra['nome']}"):
                         st.session_state['squadre_allenate'].pop(i)
-                        salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'])
+                        salva_squadre_allenate_su_disco(st.session_state['squadre_allenate'], permetti_svuotamento=True)
                         st.rerun()
         else:
             st.caption("No teams added yet.")
@@ -8857,6 +8986,70 @@ with tab5:
                             st.write(riga_diag)
                         st.session_state['sessioni_allenamento'] = carica_sessioni_allenamento_da_disco()
                         st.rerun()
+
+            with st.expander("🚑 Recover PDFs left over from an interrupted save"):
+                st.caption("If the diagnosis above shows PDF chunk rows but zero session rows, "
+                           "your session names/notes/links were lost, but the PDF files themselves "
+                           "may still be sitting in Google Sheets, just disconnected from any name. "
+                           "This scans them directly and lets you get them back into the app.")
+                if st.button("🔎 Scan for recoverable PDFs", key="scansiona_pdf_orfani"):
+                    with st.spinner("Reading raw PDF chunks from Google Sheets..."):
+                        pdf_recuperati = {}
+                        errore_scansione = None
+                        if _google_sheets_configurato():
+                            try:
+                                ws_pdf_recovery = _ottieni_worksheet_training_pdf()
+                                valori_pdf_recovery = ws_pdf_recovery.get_all_values()
+                                chunk_per_id_recovery = {}
+                                for riga_r in valori_pdf_recovery[1:]:
+                                    if not riga_r or not riga_r[0]:
+                                        continue
+                                    chunk_per_id_recovery.setdefault(riga_r[0], []).append((int(riga_r[1]), riga_r[2]))
+                                for id_r, chunk_r in chunk_per_id_recovery.items():
+                                    chunk_ordinati_r = sorted(chunk_r, key=lambda c: c[0])
+                                    b64_completo_r = ''.join(c[1] for c in chunk_ordinati_r)
+                                    try:
+                                        pdf_recuperati[id_r] = base64.b64decode(b64_completo_r)
+                                    except Exception:
+                                        pass
+                            except Exception as e_recovery:
+                                errore_scansione = str(e_recovery)
+                        else:
+                            errore_scansione = "Google Sheets is not configured for this app right now."
+                        st.session_state['_pdf_recuperati_scan'] = pdf_recuperati
+                        st.session_state['_pdf_recuperati_errore'] = errore_scansione
+
+                pdf_trovati = st.session_state.get('_pdf_recuperati_scan')
+                if pdf_trovati is not None:
+                    if st.session_state.get('_pdf_recuperati_errore'):
+                        st.error(f"⚠️ Could not scan: {st.session_state['_pdf_recuperati_errore']}")
+                    elif not pdf_trovati:
+                        st.info("No orphaned PDF data found — the PDF tab is empty too, so there's nothing left to recover this way.")
+                    else:
+                        st.success(f"Found {len(pdf_trovati)} recoverable PDF(s), {sum(len(b) for b in pdf_trovati.values()) / 1024:.0f} KB total.")
+                        nomi_esistenti_recovery = {s['nome_sessione'] for s in st.session_state['sessioni_allenamento']}
+                        for i_r, (id_r, pdf_bytes_r) in enumerate(pdf_trovati.items()):
+                            col_r1, col_r2, col_r3 = st.columns([3, 1, 1])
+                            with col_r1:
+                                nome_default_r = f"Recovered session {i_r + 1}"
+                                nome_nuovo_r = st.text_input("Give it a name:", value=nome_default_r,
+                                                              key=f"nome_recovery_{id_r}", label_visibility="collapsed")
+                            with col_r2:
+                                st.download_button("⬇️ Download PDF", data=pdf_bytes_r,
+                                                    file_name=f"{nome_nuovo_r}.pdf".replace(' ', '_'),
+                                                    mime="application/pdf", key=f"dl_recovery_{id_r}")
+                            with col_r3:
+                                if st.button("➕ Add to app", key=f"adotta_recovery_{id_r}"):
+                                    if nome_nuovo_r.strip() and nome_nuovo_r.strip() not in nomi_esistenti_recovery:
+                                        st.session_state['sessioni_allenamento'].append({
+                                            'id': id_r, 'nome_sessione': nome_nuovo_r.strip(), 'pdf_bytes': pdf_bytes_r,
+                                            'link_list': [], 'note_generali': '', 'assegnazioni': [], 'gruppo': None,
+                                        })
+                                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                                        st.success(f"'{nome_nuovo_r.strip()}' added back to your sessions.")
+                                        st.rerun()
+                                    else:
+                                        st.error("Pick a name that isn't already used.")
         else:
             filtro_gruppo = st.selectbox(
                 "Filter by group:", ["(All sessions)"] + st.session_state['gruppi_sessioni_allenamento'] + ["(Ungrouped)"],
@@ -8999,7 +9192,7 @@ with tab5:
                     conferma_del_sessione = st.checkbox("I confirm I want to delete this session (irreversible)", key=f"conferma_del_sess_{chiave_sess}")
                     if st.button("🗑️ Delete this session", key=f"del_sess_{chiave_sess}", disabled=not conferma_del_sessione):
                         st.session_state['sessioni_allenamento'].pop(idx_sessione)
-                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                        salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'], permetti_svuotamento=True)
                         st.success(f"Session '{sessione['nome_sessione']}' deleted.")
                         st.rerun()
 
