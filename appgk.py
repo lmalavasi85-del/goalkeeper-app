@@ -5146,6 +5146,59 @@ def carica_sessioni_allenamento_da_disco():
             return []
     return []
 
+def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessioni_completa):
+    """Sostituisce il PDF/immagine di UNA sola sessione, toccando solo le sue righe nel foglio
+    Google Sheets — non l'intero foglio con tutte le altre sessioni. La versione precedente
+    richiamava sempre il salvataggio completo (cancella-tutto-e-riscrivi-tutto), che con molte
+    sessioni corpose rendeva anche la sostituzione di UN file lenta quanto salvarle tutte
+    daccapo. Fa comunque un fallback sicuro al salvataggio completo se qualcosa nell'aggiornamento
+    mirato non torna, così non lascia mai il foglio in uno stato incoerente."""
+    aggiorna_stato_locale = None
+    for s in lista_sessioni_completa:
+        if s['id'] == id_sessione:
+            aggiorna_stato_locale = s
+            break
+    if aggiorna_stato_locale is not None:
+        aggiorna_stato_locale['pdf_bytes'] = nuovo_file_bytes
+    # Backup locale SEMPRE aggiornato per primo, come in ogni altra funzione di salvataggio.
+    try:
+        with open(TRAINING_SESSIONS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(lista_sessioni_completa, _f_backup_preventivo)
+    except Exception:
+        pass
+
+    if not _google_sheets_configurato():
+        return
+
+    try:
+        worksheet_pdf = _ottieni_worksheet_training_pdf()
+        b64_nuovo = base64.b64encode(nuovo_file_bytes).decode('utf-8') if nuovo_file_bytes else ''
+        righe_nuove = [[id_sessione, indice, b64_nuovo[inizio:inizio + DIMENSIONE_CHUNK_PDF]]
+                       for indice, inizio in enumerate(range(0, len(b64_nuovo), DIMENSIONE_CHUNK_PDF))] if b64_nuovo else []
+        for riga in righe_nuove:
+            for cella in riga:
+                if len(str(cella)) > 49000:
+                    raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking.")
+
+        valori_attuali = worksheet_pdf.get_all_values()
+        # Individuo le righe (1-based, +1 per l'intestazione) che appartengono a questo ID, per
+        # toccare SOLO quelle — tutte le altre sessioni restano completamente intatte.
+        indici_riga_da_sostituire = [i + 2 for i, riga in enumerate(valori_attuali[1:]) if riga and riga[0] == id_sessione]
+
+        if indici_riga_da_sostituire and indici_riga_da_sostituire == list(range(indici_riga_da_sostituire[0], indici_riga_da_sostituire[-1] + 1)):
+            # Le righe esistenti di questa sessione sono contigue (il caso normale, dato che
+            # vengono sempre scritte in blocco per lo stesso ID): cancello solo quel range.
+            worksheet_pdf.delete_rows(indici_riga_da_sostituire[0], indici_riga_da_sostituire[-1])
+        elif indici_riga_da_sostituire:
+            # Caso raro/inatteso (righe non contigue): niente scorciatoie, torno al salvataggio
+            # completo sicuro invece di rischiare di lasciare righe orfane in giro.
+            salva_sessioni_allenamento_su_disco(lista_sessioni_completa)
+            return
+        if righe_nuove:
+            _scrivi_righe_a_blocchi(worksheet_pdf, righe_nuove, dimensione_blocco=40)
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Could not update this session's file on Google Sheets: {e}")
+
 def salva_sessioni_allenamento_su_disco(lista_sessioni, permetti_svuotamento=False):
     # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
     # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
@@ -9354,8 +9407,8 @@ with tab5:
                     with col_pdf2:
                         nuovo_pdf = st.file_uploader("Replace file (PDF, JPG or PNG)", type=['pdf', 'jpg', 'jpeg', 'png'], key=f"replace_pdf_{chiave_sess}")
                         if nuovo_pdf is not None:
-                            st.session_state['sessioni_allenamento'][idx_sessione]['pdf_bytes'] = nuovo_pdf.read()
-                            salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
+                            with st.spinner("Updating just this session's file..."):
+                                sostituisci_file_singola_sessione(sessione['id'], nuovo_pdf.read(), st.session_state['sessioni_allenamento'])
                             st.success("File replaced.")
                             st.rerun()
 
