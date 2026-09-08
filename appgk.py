@@ -8546,16 +8546,16 @@ with tab4:
                 if selezione_match_tir else match_rilevanti_ord
             )
 
-            col_a, col_b, col_c = st.columns(3)
+            solo_money_time = st.checkbox("Money Time only (from 50', score margin ±5)", key="mt_toggle_tir")
+            st.caption("🎯 The two filters below apply to the Hot/Cold and Shot Map sections further down this page.")
+            col_a, col_b = st.columns(2)
             with col_a:
-                solo_money_time = st.checkbox("Money Time only (from 50', score margin ±5)", key="mt_toggle_tir")
-            with col_b:
                 macro_scelto = st.selectbox(
                     "Focus on a macro-zone (optional):",
                     ["(All zones)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
                     key="macro_scelto_tir"
                 )
-            with col_c:
+            with col_b:
                 settore_key = selettore_macro_settore(key_prefix="tir_shared")
             macro_key = None
             if macro_scelto != "(All zones)":
@@ -8744,6 +8744,8 @@ with tab4:
                 # ---- Shot Map: porta e pulsantiera affiancate ----
                 st.markdown("---")
                 st.subheader(f"🥅 Shot Map — {titolo_dashboard}")
+                if macro_key or settore_key:
+                    st.caption("Using the macro-zone/macro-sector filters selected above.")
 
                 _chiavi_match_trend = {(m['nome'], str(m['data'])) for m in match_filtrati}
                 _frammenti_h2h_trend = [m['dati'] for m in st.session_state.get('db_h2h', [])
