@@ -6243,6 +6243,20 @@ def genera_pdf_trend_summary(titolo_report, note_dict):
     buffer.seek(0)
     return buffer.getvalue()
 
+def _rileva_tipo_file_sessione(dati_bytes):
+    """Rileva se il file di una sessione di allenamento (storico ancora chiamato 'pdf_bytes' per
+    non dover rinominare il campo ovunque nell'app) è un vero PDF o un'immagine (JPG/PNG) —
+    guardando i primi byte del file (la sua 'firma'), non l'estensione. Le sessioni caricate come
+    immagine sono molto più leggere da salvare e caricare, quindi meno a rischio di problemi con
+    Google Sheets. Restituisce 'pdf', 'image', o None se non riconosciuto."""
+    if not dati_bytes:
+        return None
+    if dati_bytes[:4] == b'%PDF':
+        return 'pdf'
+    if dati_bytes[:3] == b'\xff\xd8\xff' or dati_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image'
+    return None
+
 def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
     """Genera il PDF finale di una sessione di allenamento: una pagina di copertina (logo
     dell'associazione, eventuale logo/nome squadra, data, nome sessione, note generali + note
@@ -6250,16 +6264,30 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
     seguita dalle pagine del PDF originale caricato (esportato da OneNote), se presente e se
     pypdf è disponibile. Copertina in orizzontale a due colonne, come le tipiche pagine OneNote
     esportate, per un documento finale visivamente coerente e senza spazio bianco sprecato."""
-    # Rileva la dimensione esatta della prima pagina del PDF originale (a volte molto più grande
-    # di un normale foglio, es. formati "widescreen" o pagine OneNote esportate a canvas ampio),
-    # e calcola un fattore di scala così che loghi, testi e margini crescano/si riducano in
-    # proporzione, restando sempre leggibili e ben distribuiti qualunque sia la dimensione reale.
+    # Rileva la dimensione esatta della prima pagina del file originale (PDF o immagine — a
+    # volte molto più grande di un normale foglio, es. formati "widescreen" o pagine OneNote
+    # esportate a canvas ampio), e calcola un fattore di scala così che loghi, testi e margini
+    # crescano/si riducano in proporzione, restando sempre leggibili qualunque sia la dimensione
+    # reale.
     dimensione_pagina = landscape(A4)
-    if sessione.get('pdf_bytes') and _PYPDF_DISPONIBILE:
+    tipo_file_sessione = _rileva_tipo_file_sessione(sessione.get('pdf_bytes'))
+    if tipo_file_sessione == 'pdf' and _PYPDF_DISPONIBILE:
         try:
             prima_pagina_originale = PdfReader(io.BytesIO(sessione['pdf_bytes'])).pages[0]
             larghezza_punti = float(prima_pagina_originale.mediabox.width)
             altezza_punti = float(prima_pagina_originale.mediabox.height)
+            if larghezza_punti > 0 and altezza_punti > 0:
+                dimensione_pagina = (larghezza_punti, altezza_punti)
+        except Exception:
+            pass
+    elif tipo_file_sessione == 'image':
+        try:
+            img_originale = PILImage.open(io.BytesIO(sessione['pdf_bytes']))
+            larghezza_px, altezza_px = img_originale.size
+            # Converto pixel -> punti assumendo 150 DPI (tipico per uno screenshot/scan ad alta
+            # risoluzione da tablet): 1 punto = 1/72 pollice.
+            larghezza_punti = larghezza_px / 150 * 72
+            altezza_punti = altezza_px / 150 * 72
             if larghezza_punti > 0 and altezza_punti > 0:
                 dimensione_pagina = (larghezza_punti, altezza_punti)
         except Exception:
@@ -6372,10 +6400,28 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
         ]))
         elementi.append(tabella_colonne)
 
+    if tipo_file_sessione == 'image':
+        # File immagine (JPG/PNG): niente merge con pypdf necessario — la aggiungo come pagina
+        # in più, direttamente nella stessa build del documento, scalata per riempire la pagina
+        # mantenendo le proporzioni originali.
+        try:
+            # Margine di sicurezza (2%): il frame reale di reportlab ha un padding interno
+            # leggermente diverso dal semplice calcolo pagina-meno-margini, quindi senza questo
+            # margine l'immagine può risultare di una frazione di punto troppo grande e reportlab
+            # rifiuta di piazzarla.
+            larghezza_disponibile = (dimensione_pagina[0] - 2 * margine_orizzontale) * 0.97
+            altezza_disponibile = (dimensione_pagina[1] - (1.6 * cm * fattore_scala) - (1.4 * cm * fattore_scala)) * 0.97
+            elementi.append(PageBreak())
+            elementi.append(RLImage(io.BytesIO(sessione['pdf_bytes']),
+                                     width=larghezza_disponibile, height=altezza_disponibile,
+                                     kind='proportional'))
+        except Exception:
+            pass
+
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     buffer_copertina.seek(0)
 
-    if not sessione.get('pdf_bytes') or not _PYPDF_DISPONIBILE:
+    if tipo_file_sessione != 'pdf' or not _PYPDF_DISPONIBILE:
         return buffer_copertina.getvalue()
 
     try:
@@ -9066,10 +9112,11 @@ with tab5:
                    "Each becomes a reusable session: attach links and notes once, then reuse it for "
                    "as many teams and dates as you want, without retyping anything.")
 
-        fc_sessioni = st.file_uploader("Drag and drop session PDF(s) here", type=['pdf'],
+        fc_sessioni = st.file_uploader("Drag and drop session file(s) here (PDF, JPG or PNG — a photo/scan of a handwritten page works great and is much lighter than a PDF)",
+                                        type=['pdf', 'jpg', 'jpeg', 'png'],
                                         accept_multiple_files=True, key="upload_sessioni_bulk")
         if fc_sessioni:
-            if st.button("➕ Create Session(s) from these PDFs"):
+            if st.button("➕ Create Session(s) from these files"):
                 nomi_esistenti = {s['nome_sessione'] for s in st.session_state['sessioni_allenamento']}
                 aggiunte_sessioni = 0
                 for f in fc_sessioni:
@@ -9292,18 +9339,24 @@ with tab5:
 
                     col_pdf1, col_pdf2 = st.columns(2)
                     with col_pdf1:
-                        if sessione.get('pdf_bytes'):
-                            st.download_button("⬇️ View original PDF", data=sessione['pdf_bytes'],
+                        tipo_file_esistente = _rileva_tipo_file_sessione(sessione.get('pdf_bytes'))
+                        if tipo_file_esistente == 'pdf':
+                            st.download_button("⬇️ View original file", data=sessione['pdf_bytes'],
                                                 file_name=f"{sessione['nome_sessione']}.pdf", mime="application/pdf",
                                                 key=f"dl_orig_{chiave_sess}")
+                        elif tipo_file_esistente == 'image':
+                            estensione_immagine = 'png' if sessione['pdf_bytes'][:8] == b'\x89PNG\r\n\x1a\n' else 'jpg'
+                            st.download_button("⬇️ View original file", data=sessione['pdf_bytes'],
+                                                file_name=f"{sessione['nome_sessione']}.{estensione_immagine}",
+                                                mime=f"image/{estensione_immagine}", key=f"dl_orig_{chiave_sess}")
                         else:
-                            st.caption("No PDF attached.")
+                            st.caption("No file attached.")
                     with col_pdf2:
-                        nuovo_pdf = st.file_uploader("Replace PDF", type=['pdf'], key=f"replace_pdf_{chiave_sess}")
+                        nuovo_pdf = st.file_uploader("Replace file (PDF, JPG or PNG)", type=['pdf', 'jpg', 'jpeg', 'png'], key=f"replace_pdf_{chiave_sess}")
                         if nuovo_pdf is not None:
                             st.session_state['sessioni_allenamento'][idx_sessione]['pdf_bytes'] = nuovo_pdf.read()
                             salva_sessioni_allenamento_su_disco(st.session_state['sessioni_allenamento'])
-                            st.success("PDF replaced.")
+                            st.success("File replaced.")
                             st.rerun()
 
                     st.markdown("**Exercise video links**")
