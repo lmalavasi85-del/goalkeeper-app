@@ -3360,7 +3360,9 @@ def carica_tag_go_da_disco():
             }
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load Tag & Go data from Google Sheets: {e}")
-            return stato_vuoto
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire stato_vuoto vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(TAG_GO_FILE):
         try:
             with open(TAG_GO_FILE, 'rb') as f:
@@ -3550,7 +3552,9 @@ def carica_stagione_da_disco():
             return [_riga_sheet_a_match(riga) for riga in valori[1:] if riga and riga[0]]
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load season from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(SEASON_FILE):
         try:
             with open(SEASON_FILE, 'rb') as f:
@@ -3697,7 +3701,9 @@ def carica_stagione_tiratori_da_disco():
             return [_riga_sheet_a_match_tiratori(riga) for riga in valori[1:] if riga and riga[0]]
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load shooter season from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(SHOOTER_SEASON_FILE):
         try:
             with open(SHOOTER_SEASON_FILE, 'rb') as f:
@@ -3762,7 +3768,10 @@ def carica_note_da_disco():
                 salva_note_su_disco(migrato)
             return migrato
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(SHOOTER_NOTES_FILE):
         try:
             with open(SHOOTER_NOTES_FILE, 'rb') as f:
@@ -3836,7 +3845,10 @@ def carica_anagrafica_da_disco():
                 return {}
             return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(PLAYER_PROFILE_FILE):
         try:
             with open(PLAYER_PROFILE_FILE, 'rb') as f:
@@ -3911,7 +3923,10 @@ def carica_link_duelli_da_disco():
                 return {}
             return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(PLAYER_DUEL_LINKS_FILE):
         try:
             with open(PLAYER_DUEL_LINKS_FILE, 'rb') as f:
@@ -3984,7 +3999,10 @@ def carica_competizioni_partite_da_disco():
                 return {}
             return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(MATCH_COMPETITIONS_FILE):
         try:
             with open(MATCH_COMPETITIONS_FILE, 'rb') as f:
@@ -4057,7 +4075,10 @@ def carica_matches_analyzed_manuali_da_disco():
                 return {}
             return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(MATCHES_ANALYZED_MANUALI_FILE):
         try:
             with open(MATCHES_ANALYZED_MANUALI_FILE, 'rb') as f:
@@ -4127,7 +4148,10 @@ def carica_link_zone_da_disco():
                 return {}
             return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(TEAM_ZONE_LINKS_FILE):
         try:
             with open(TEAM_ZONE_LINKS_FILE, 'rb') as f:
@@ -4211,7 +4235,10 @@ def carica_foto_da_disco():
                 salva_foto_su_disco(migrato)
             return migrato
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(PLAYER_PHOTOS_FILE):
         try:
             with open(PLAYER_PHOTOS_FILE, 'rb') as f:
@@ -4294,7 +4321,9 @@ def carica_h2h_da_disco():
             return partite
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load head-to-head data from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(H2H_FILE):
         try:
             with open(H2H_FILE, 'rb') as f:
@@ -4358,7 +4387,9 @@ def carica_tiro_portiere_da_disco():
             return partite
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load goalkeeper own-shots data from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(TIRO_PORTIERE_FILE):
         try:
             with open(TIRO_PORTIERE_FILE, 'rb') as f:
@@ -4423,7 +4454,9 @@ def carica_alias_giocatori_da_disco():
             return [json.loads(riga[0]) for riga in valori[1:] if riga and riga[0]]
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load player aliases from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(PLAYER_ALIASES_FILE):
         try:
             with open(PLAYER_ALIASES_FILE, 'rb') as f:
@@ -4487,7 +4520,9 @@ def carica_campionati_da_disco():
             return campionati
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load championships from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(CHAMPIONSHIPS_FILE):
         try:
             with open(CHAMPIONSHIPS_FILE, 'rb') as f:
@@ -4592,7 +4627,9 @@ def carica_profili_expected_da_disco():
             return dati
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load Expected Values profiles from Google Sheets: {e}")
-            return default
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire default vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(EXPECTED_PROFILES_FILE):
         try:
             with open(EXPECTED_PROFILES_FILE, 'rb') as f:
@@ -4653,7 +4690,9 @@ def carica_gruppi_sessioni_da_disco():
             return [riga[0] for riga in valori[1:] if riga and riga[0]]
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load training session groups from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(TRAINING_GROUPS_FILE):
         try:
             with open(TRAINING_GROUPS_FILE, 'rb') as f:
@@ -4702,7 +4741,9 @@ def carica_squadre_allenate_da_disco():
             return [{'nome': r[0], 'logo_b64': r[1] if len(r) > 1 and r[1] else None} for r in valori[1:] if r and r[0]]
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load training teams from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(TRAINING_TEAMS_FILE):
         try:
             with open(TRAINING_TEAMS_FILE, 'rb') as f:
@@ -4812,7 +4853,9 @@ def carica_sessioni_allenamento_da_disco():
             return sessioni
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load training sessions from Google Sheets: {e}")
-            return []
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
     if os.path.exists(TRAINING_SESSIONS_FILE):
         try:
             with open(TRAINING_SESSIONS_FILE, 'rb') as f:
@@ -4897,7 +4940,10 @@ def carica_loghi_squadra_da_disco():
             valori = worksheet.get_all_values()
             return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
         except Exception:
-            return {}
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
     if os.path.exists(TEAM_LOGOS_FILE):
         try:
             with open(TEAM_LOGOS_FILE, 'rb') as f:
