@@ -5078,10 +5078,13 @@ def _ottieni_worksheet_training_pdf():
     except Exception:
         worksheet = foglio.add_worksheet(title='TrainingSessionsPDF', rows=20000, cols=3)
         worksheet.append_row(['id', 'indice_chunk', 'chunk_base64'])
-    # Questo è il foglio più a rischio di diventare molto grande (ogni PDF di allenamento è
-    # spezzato in decine/centinaia di righe): un margine di retry più ampio del default riduce
-    # il rischio che una lettura pesante fallisca per timeout prima di riuscire.
-    return _WorksheetConRetry(worksheet, tentativi_massimi=8, attesa_iniziale=2.0)
+    # Un margine di retry leggermente più ampio del default per questo foglio (a rischio di
+    # essere il più grande dell'app), ma SENZA esagerare: con 8 tentativi e base 2s il tempo di
+    # attesa cumulativo poteva superare i 4 minuti per una singola operazione se un problema
+    # temporaneo si ripeteva più volte — troppo per un'azione interattiva dove l'utente aspetta
+    # attivamente. 4 tentativi/base 1.2s assorbono comunque un rate-limit passeggero (pochi
+    # secondi) senza far percepire l'app come bloccata.
+    return _WorksheetConRetry(worksheet, tentativi_massimi=4, attesa_iniziale=1.2)
 
 def carica_sessioni_allenamento_da_disco():
     if _google_sheets_configurato():
@@ -5152,7 +5155,12 @@ def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessi
     richiamava sempre il salvataggio completo (cancella-tutto-e-riscrivi-tutto), che con molte
     sessioni corpose rendeva anche la sostituzione di UN file lenta quanto salvarle tutte
     daccapo. Fa comunque un fallback sicuro al salvataggio completo se qualcosa nell'aggiornamento
-    mirato non torna, così non lascia mai il foglio in uno stato incoerente."""
+    mirato non torna, così non lascia mai il foglio in uno stato incoerente.
+    Restituisce un dict di tempi (in secondi) per ogni fase, utile per capire esattamente dove
+    va il tempo quando l'operazione sembra lenta."""
+    tempi = {}
+    t_inizio_totale = time.time()
+
     aggiorna_stato_locale = None
     for s in lista_sessioni_completa:
         if s['id'] == id_sessione:
@@ -5160,17 +5168,22 @@ def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessi
             break
     if aggiorna_stato_locale is not None:
         aggiorna_stato_locale['pdf_bytes'] = nuovo_file_bytes
+
+    t0 = time.time()
     # Backup locale SEMPRE aggiornato per primo, come in ogni altra funzione di salvataggio.
     try:
         with open(TRAINING_SESSIONS_FILE, 'wb') as _f_backup_preventivo:
             pickle.dump(lista_sessioni_completa, _f_backup_preventivo)
     except Exception:
         pass
+    tempi['backup_locale'] = time.time() - t0
 
     if not _google_sheets_configurato():
-        return
+        tempi['totale'] = time.time() - t_inizio_totale
+        return tempi
 
     try:
+        t0 = time.time()
         worksheet_pdf = _ottieni_worksheet_training_pdf()
         b64_nuovo = base64.b64encode(nuovo_file_bytes).decode('utf-8') if nuovo_file_bytes else ''
         righe_nuove = [[id_sessione, indice, b64_nuovo[inizio:inizio + DIMENSIONE_CHUNK_PDF]]
@@ -5179,17 +5192,21 @@ def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessi
             for cella in riga:
                 if len(str(cella)) > 49000:
                     raise ValueError(f"A cell still exceeds Google Sheets' limit ({len(str(cella))} chars) even after chunking.")
+        tempi['preparazione'] = time.time() - t0
 
         # Leggo SOLO la colonna degli ID (col_values), non l'intero foglio (get_all_values):
         # quest'ultima scaricherebbe anche tutti i chunk pesanti (fino a 40.000 caratteri
         # ciascuno) delle ALTRE sessioni solo per individuare le poche righe che mi servono —
         # è esattamente questo che rendeva l'operazione ancora lenta nonostante toccasse solo
         # una sessione: la lettura iniziale era comunque pesante quanto l'intero foglio.
+        t0 = time.time()
         colonna_id_attuale = worksheet_pdf.col_values(1)
+        tempi['lettura_id'] = time.time() - t0
         # Individuo le righe (1-based, +1 per l'intestazione) che appartengono a questo ID, per
         # toccare SOLO quelle — tutte le altre sessioni restano completamente intatte.
         indici_riga_da_sostituire = [i + 2 for i, id_riga in enumerate(colonna_id_attuale[1:]) if id_riga == id_sessione]
 
+        t0 = time.time()
         if indici_riga_da_sostituire and indici_riga_da_sostituire == list(range(indici_riga_da_sostituire[0], indici_riga_da_sostituire[-1] + 1)):
             # Le righe esistenti di questa sessione sono contigue (il caso normale, dato che
             # vengono sempre scritte in blocco per lo stesso ID): cancello solo quel range.
@@ -5198,11 +5215,18 @@ def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessi
             # Caso raro/inatteso (righe non contigue): niente scorciatoie, torno al salvataggio
             # completo sicuro invece di rischiare di lasciare righe orfane in giro.
             salva_sessioni_allenamento_su_disco(lista_sessioni_completa)
-            return
+            tempi['totale'] = time.time() - t_inizio_totale
+            return tempi
+        tempi['cancellazione_righe'] = time.time() - t0
+
+        t0 = time.time()
         if righe_nuove:
             _scrivi_righe_a_blocchi(worksheet_pdf, righe_nuove, dimensione_blocco=40)
+        tempi['scrittura_nuove_righe'] = time.time() - t0
     except Exception as e:
         st.sidebar.error(f"⚠️ Could not update this session's file on Google Sheets: {e}")
+    tempi['totale'] = time.time() - t_inizio_totale
+    return tempi
 
 def salva_sessioni_allenamento_su_disco(lista_sessioni, permetti_svuotamento=False):
     # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
@@ -9425,10 +9449,15 @@ with tab5:
                             marcatore_pdf = f"{nuovo_pdf.name}-{nuovo_pdf.size}"
                             if st.session_state.get(f"_processato_replace_pdf_{chiave_sess}") != marcatore_pdf:
                                 with st.spinner("Updating just this session's file..."):
-                                    sostituisci_file_singola_sessione(sessione['id'], nuovo_pdf.read(), st.session_state['sessioni_allenamento'])
+                                    tempi_sostituzione = sostituisci_file_singola_sessione(sessione['id'], nuovo_pdf.read(), st.session_state['sessioni_allenamento'])
                                 st.session_state[f"_processato_replace_pdf_{chiave_sess}"] = marcatore_pdf
+                                st.session_state[f"_ultimi_tempi_replace_{chiave_sess}"] = tempi_sostituzione
                                 st.success("File replaced.")
                                 st.rerun()
+                        if st.session_state.get(f"_ultimi_tempi_replace_{chiave_sess}"):
+                            with st.expander("⏱️ Timing of the last update (debug)"):
+                                for nome_fase, secondi in st.session_state[f"_ultimi_tempi_replace_{chiave_sess}"].items():
+                                    st.caption(f"{nome_fase}: {secondi:.1f}s")
 
                     st.markdown("**Exercise video links**")
                     for i_link, link in enumerate(sessione['link_list']):
