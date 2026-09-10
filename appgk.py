@@ -1787,18 +1787,21 @@ def elabora_file_portieri(df_raw):
     df['GPI_Tiro'] = gpi_list
     df['Is_Stress_Test'] = stress_list
 
-    # Gol in porta vuota (rilevati dalla colonna THROW SECTOR, se presente): il portiere non ha
-    # colpe esplicite quando subisce un gol a porta vuota, quindi il suo GPI viene azzerato alla
-    # FONTE (non solo nel disegno del grafico) — così ogni tabella, somma o media in QUALSIASI
-    # parte dell'app (Detailed Statistics, Seasonal Report, Universal Stats...) riflette
-    # automaticamente il valore corretto, senza bisogno di gestire il caso separatamente ovunque.
-    # macro_settore resta comunque quello reale (serve per le tabelle per zona), conta SOLO
-    # quando il tiro è un vero gol (non save/miss).
+    # Gol/miss/parata su porta vuota (rilevati dalla colonna THROW SECTOR, se presente): il
+    # portiere non ha colpe esplicite se subisce gol o se il tiro finisce fuori (0 punti in
+    # entrambi i casi), mentre se il portiere PARA un tiro a porta vuota merita comunque credito
+    # (0.5 punti, che diventa 1 in Money Time — stesso bonus +0.5 degli altri casi). Applicato
+    # alla FONTE (non solo nel disegno del grafico) — così ogni tabella, somma o media in
+    # QUALSIASI parte dell'app riflette automaticamente il valore corretto. macro_settore resta
+    # comunque quello reale (serve per le tabelle per zona).
     if 'EMPTY_GOAL' in df.columns:
-        df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool) & df['RESULT_CLEAN'].isin(['goal', 'g'])
+        df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool)
     else:
         df['Is_Empty_Goal'] = False
-    df.loc[df['Is_Empty_Goal'], 'GPI_Tiro'] = 0.0
+    maschera_eg_zero = df['Is_Empty_Goal'] & df['RESULT_CLEAN'].isin(['goal', 'g', 'miss', 'm'])
+    df.loc[maschera_eg_zero, 'GPI_Tiro'] = 0.0
+    maschera_eg_save = df['Is_Empty_Goal'] & df['RESULT_CLEAN'].isin(['save', 's'])
+    df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5 + df.loc[maschera_eg_save, 'Is_Stress_Test'].astype(float) * 0.5
 
     df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
 
@@ -2050,7 +2053,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         df_h2h['RESULT_CLEAN'] = df_h2h['RESULT'].astype(str).str.lower().str.strip()
         df_h2h['GOAL_SECTOR_CLEAN'] = df_h2h['GOAL SECTOR'].astype(str).str.strip() if 'GOAL SECTOR' in df_h2h.columns else ''
         df_h2h['macro_settore_tir'] = df_h2h['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
-        df_h2h['Is_Empty_Goal'] = (df_h2h['EMPTY_GOAL'].fillna(False).astype(bool) & df_h2h['RESULT_CLEAN'].isin(['goal', 'g'])
+        df_h2h['Is_Empty_Goal'] = (df_h2h['EMPTY_GOAL'].fillna(False).astype(bool)
                                     if 'EMPTY_GOAL' in df_h2h.columns else False)
         minuti_list, scarti_list = [], []
         for val in df_h2h['TIMELINE']:
@@ -2096,9 +2099,10 @@ def arricchisci_gk_per_database_principale(df_gk):
     timeline/minuto/punteggio — usato quando questi dati vengono inseriti nel database
     principale (non nello storage isolato di Tag & Go) per arricchirlo in modo permanente.
     GPI viene comunque calcolato correttamente (in base a macro-settore ed esito), semplicemente
-    non potrà mai risultare Money Time, dato che non esiste un vero minuto di gara. I gol in
-    porta vuota (Is_Empty_Goal, già presente da elabora_file_tag_go) hanno sempre GPI 0: il
-    portiere non ha colpe esplicite in quel caso."""
+    non potrà mai risultare Money Time, dato che non esiste un vero minuto di gara — quindi un
+    save su porta vuota (Is_Empty_Goal, già presente da elabora_file_tag_go) vale sempre 0.5,
+    mai il bonus Money Time a 1: il portiere non ha colpe esplicite su gol/miss a porta vuota
+    (0 punti), ma merita comunque credito se para (0.5 punti)."""
     if df_gk.empty:
         return df_gk
     df = df_gk.copy()
@@ -2106,9 +2110,12 @@ def arricchisci_gk_per_database_principale(df_gk):
     df['Scarto_Punteggio'] = 0
     risultati_gpi = df.apply(lambda r: calcola_gpi_riga(r['macro_settore'], r['RESULT_CLEAN'], 0, 0), axis=1)
     df['GPI_Tiro'] = risultati_gpi.apply(lambda t: t[0])
-    if 'Is_Empty_Goal' in df.columns:
-        df.loc[df['Is_Empty_Goal'], 'GPI_Tiro'] = 0.0
     df['Is_Stress_Test'] = False
+    if 'Is_Empty_Goal' in df.columns:
+        maschera_eg_zero = df['Is_Empty_Goal'] & df['RESULT_CLEAN'].isin(['goal', 'g', 'miss', 'm'])
+        df.loc[maschera_eg_zero, 'GPI_Tiro'] = 0.0
+        maschera_eg_save = df['Is_Empty_Goal'] & df['RESULT_CLEAN'].isin(['save', 's'])
+        df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5
     return df
 
 def arricchisci_tir_per_database_principale(df_tir):
@@ -2203,7 +2210,7 @@ def elabora_file_tag_go(df_raw):
         df_gk['RESULT_CLEAN'] = df_gk['RESULT'].astype(str).str.lower().str.strip()
         df_gk['GOAL_SECTOR_CLEAN'] = df_gk['GOAL SECTOR'].astype(str).str.strip() if 'GOAL SECTOR' in df_gk.columns else ''
         df_gk['macro_settore'] = df_gk['TIRO_CLEAN'].apply(mappa_macro_settore)
-        df_gk['Is_Empty_Goal'] = df_gk['EMPTY_GOAL'].fillna(False).astype(bool) & df_gk['RESULT_CLEAN'].isin(['goal', 'g'])
+        df_gk['Is_Empty_Goal'] = df_gk['EMPTY_GOAL'].fillna(False).astype(bool)
         for chiave, nome_colonna in colonne_avanzate_trovate.items():
             if chiave in DIMENSIONI_TAGGING_PORTIERE and nome_colonna in df_gk.columns:
                 df_gk[f'TAG_{chiave}'] = df_gk[nome_colonna].apply(dividi_tag_multipli)
@@ -3571,14 +3578,21 @@ def _riga_sheet_a_match(riga):
         dati_json = riga[3]
         neutro = False
     df = pd.read_json(io.StringIO(dati_json), orient='split')
-    if 'GPI_Tiro' in df.columns:
-        df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
-        # Corregge anche le partite salvate PRIMA di questa regola: un gol in porta vuota non è
-        # mai colpa del portiere, il suo GPI deve essere sempre 0, qui come ovunque nell'app.
-        if 'Is_Empty_Goal' in df.columns:
-            df.loc[df['Is_Empty_Goal'].fillna(False), 'GPI_Tiro'] = 0.0
     if 'Is_Stress_Test' in df.columns:
         df['Is_Stress_Test'] = df['Is_Stress_Test'].astype(bool)
+    if 'GPI_Tiro' in df.columns:
+        df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
+        # Corregge anche le partite salvate PRIMA di questa regola: un gol o un miss in porta
+        # vuota non è mai colpa del portiere (0 punti), mentre una parata su porta vuota merita
+        # comunque credito (0.5 punti, 1 in Money Time) — applicato qui come ovunque nell'app.
+        if 'Is_Empty_Goal' in df.columns and 'RESULT_CLEAN' in df.columns:
+            maschera_eg_zero = df['Is_Empty_Goal'].fillna(False) & df['RESULT_CLEAN'].isin(['goal', 'g', 'miss', 'm'])
+            df.loc[maschera_eg_zero, 'GPI_Tiro'] = 0.0
+            maschera_eg_save = df['Is_Empty_Goal'].fillna(False) & df['RESULT_CLEAN'].isin(['save', 's'])
+            if 'Is_Stress_Test' in df.columns:
+                df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5 + df.loc[maschera_eg_save, 'Is_Stress_Test'].astype(float) * 0.5
+            else:
+                df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5
     if 'PORTIERE_ID' not in df.columns and 'PORTIERE_CLEAN' in df.columns:
         df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
     try:
@@ -3588,6 +3602,23 @@ def _riga_sheet_a_match(riga):
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
             'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro,
             'campionati_esclusi': campionati_esclusi}
+
+def _correggi_gpi_empty_goal(df):
+    """Corregge IN-PLACE il GPI dei tiri Empty Goal in un dataframe già caricato: gol o miss a
+    porta vuota valgono sempre 0 punti (nessuna colpa esplicita del portiere), una parata su
+    porta vuota vale 0.5 punti (1 in Money Time — stesso bonus +0.5 degli altri casi). Usata sui
+    dati letti da un salvataggio precedente, per non lasciare un vecchio valore scorretto (o un
+    valore corretto sovrascritto per errore) quando li si ricarica. Non fa nulla se le colonne
+    necessarie non sono presenti."""
+    if 'GPI_Tiro' not in df.columns or 'Is_Empty_Goal' not in df.columns or 'RESULT_CLEAN' not in df.columns:
+        return
+    maschera_eg_zero = df['Is_Empty_Goal'].fillna(False) & df['RESULT_CLEAN'].isin(['goal', 'g', 'miss', 'm'])
+    df.loc[maschera_eg_zero, 'GPI_Tiro'] = 0.0
+    maschera_eg_save = df['Is_Empty_Goal'].fillna(False) & df['RESULT_CLEAN'].isin(['save', 's'])
+    if 'Is_Stress_Test' in df.columns:
+        df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5 + df.loc[maschera_eg_save, 'Is_Stress_Test'].fillna(False).astype(float) * 0.5
+    else:
+        df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5
 
 def carica_stagione_da_disco():
     if _google_sheets_configurato():
@@ -3615,8 +3646,7 @@ def carica_stagione_da_disco():
                             for m in db_backup:
                                 if 'PORTIERE_ID' not in m['dati'].columns and 'PORTIERE_CLEAN' in m['dati'].columns:
                                     m['dati']['PORTIERE_ID'] = m['dati']['PORTIERE_CLEAN'].apply(identita_giocatore)
-                                if 'GPI_Tiro' in m['dati'].columns and 'Is_Empty_Goal' in m['dati'].columns:
-                                    m['dati'].loc[m['dati']['Is_Empty_Goal'].fillna(False), 'GPI_Tiro'] = 0.0
+                                _correggi_gpi_empty_goal(m['dati'])
                             return db_backup
                     except Exception:
                         pass
@@ -3634,8 +3664,7 @@ def carica_stagione_da_disco():
             for m in db:
                 if 'PORTIERE_ID' not in m['dati'].columns and 'PORTIERE_CLEAN' in m['dati'].columns:
                     m['dati']['PORTIERE_ID'] = m['dati']['PORTIERE_CLEAN'].apply(identita_giocatore)
-                if 'GPI_Tiro' in m['dati'].columns and 'Is_Empty_Goal' in m['dati'].columns:
-                    m['dati'].loc[m['dati']['Is_Empty_Goal'].fillna(False), 'GPI_Tiro'] = 0.0
+                _correggi_gpi_empty_goal(m['dati'])
             return db
         except Exception:
             return []
@@ -7505,9 +7534,9 @@ with tab2:
         
             for idx, row in df_match.iterrows():
                 gk_attuale = row['PORTIERE_CLEAN']
-                # Nel grafico (solo qui) un gol in porta vuota conta sempre 0, non il GPI reale
-                # della riga — che resta invece intatto per tutte le altre statistiche del match.
-                punti_tiro = 0.0 if row.get('Is_Empty_Goal', False) else row['GPI_Tiro']
+                # GPI_Tiro è già corretto alla fonte per gli empty goal (0 per gol/miss, 0.5/1
+                # per una parata) — non serve più forzarlo qui.
+                punti_tiro = row['GPI_Tiro']
             
                 if gk_attuale not in storico_portieri_gpi:
                     nuovo_valore = punti_tiro
@@ -7600,8 +7629,7 @@ with tab2:
                 'Goalkeeper': df_match['PORTIERE_CLEAN'].values,
                 'Shot Type': df_match.apply(lambda r: 'eg' if r.get('Is_Empty_Goal', False) else r['TIRO_CLEAN'], axis=1).values,
                 'Outcome': df_match['RESULT_CLEAN'].values,
-                'GPI': df_match.apply(lambda r: '0' if r.get('Is_Empty_Goal', False)
-                                       else (f"+{r['GPI_Tiro']:g}" if r['GPI_Tiro'] > 0 else f"{r['GPI_Tiro']:g}"), axis=1).values,
+                'GPI': df_match['GPI_Tiro'].apply(lambda x: f"+{x:g}" if x > 0 else f"{x:g}").values,
                 'Money Time': df_match['Is_Stress_Test'].map({True: 'Yes', False: ''}).values
             })
             st.dataframe(tabella_sequenza, use_container_width=True, hide_index=True, height=450)
