@@ -3580,6 +3580,15 @@ def _riga_sheet_a_match(riga):
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'Is_Stress_Test' in df.columns:
         df['Is_Stress_Test'] = df['Is_Stress_Test'].astype(bool)
+    # Ricalcola SEMPRE Is_Empty_Goal dalla colonna grezza EMPTY_GOAL (se ancora presente nel
+    # dataframe salvato), invece di fidarsi del valore di Is_Empty_Goal già salvato: partite
+    # salvate PRIMA che le casistiche miss/save a porta vuota fossero gestite avevano quella
+    # colonna calcolata SOLO per i casi finiti in gol — quindi per un vecchio salvataggio, un
+    # empty goal finito miss o save risultava già (erroneamente) Is_Empty_Goal=False, e nessuna
+    # correzione successiva basata su quella colonna potrebbe più recuperarlo. Ripartire da
+    # EMPTY_GOAL (il dato grezzo originale, sempre presente) ripristina l'informazione completa.
+    if 'EMPTY_GOAL' in df.columns:
+        df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool)
     if 'GPI_Tiro' in df.columns:
         df['GPI_Tiro'] = df['GPI_Tiro'].astype(float)
         # Corregge anche le partite salvate PRIMA di questa regola: un gol o un miss in porta
@@ -3608,8 +3617,13 @@ def _correggi_gpi_empty_goal(df):
     porta vuota valgono sempre 0 punti (nessuna colpa esplicita del portiere), una parata su
     porta vuota vale 0.5 punti (1 in Money Time — stesso bonus +0.5 degli altri casi). Usata sui
     dati letti da un salvataggio precedente, per non lasciare un vecchio valore scorretto (o un
-    valore corretto sovrascritto per errore) quando li si ricarica. Non fa nulla se le colonne
+    valore corretto sovrascritto per errore) quando li si ricarica. Ricalcola prima Is_Empty_Goal
+    stessa dalla colonna grezza EMPTY_GOAL, se presente: un salvataggio precedente potrebbe
+    averla congelata (True solo sui casi finiti in gol), perdendo l'informazione sui casi finiti
+    miss/save — ripartire dalla colonna grezza la ripristina. Non fa nulla se le colonne
     necessarie non sono presenti."""
+    if 'EMPTY_GOAL' in df.columns:
+        df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool)
     if 'GPI_Tiro' not in df.columns or 'Is_Empty_Goal' not in df.columns or 'RESULT_CLEAN' not in df.columns:
         return
     maschera_eg_zero = df['Is_Empty_Goal'].fillna(False) & df['RESULT_CLEAN'].isin(['goal', 'g', 'miss', 'm'])
