@@ -7883,6 +7883,7 @@ with tab2:
                     dati_pdf_portieri[f"{mappa_colori_testo[gk]} {gk}"] = {
                         'gpi_totale': gpi_totale_gk, 'parate': s_gk, 'gol': g_gk,
                         'pct': pct_gk, 'eff': eff_gk,
+                        'pct_no_eg': info_dettaglio_gk['pct_no_eg'], 'eff_no_eg': info_dettaglio_gk['eff_no_eg'],
                         'tabella_settore': info_dettaglio_gk['tabella_settore'],
                         'tabella_macro': info_dettaglio_gk['tabella_macro'],
                         'money_time_riassunto': money_time_riassunto
