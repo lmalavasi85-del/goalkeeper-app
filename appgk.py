@@ -2744,6 +2744,18 @@ def _tabella_metriche_pdf(voci, stili, larghezza_totale_cm=25.5):
 # sia il numero di colonne.
 LARGHEZZA_MASSIMA_TABELLA_PDF = 26 * cm
 
+def _intestazioni_con_wrap_pdf(nomi_colonne, font_size):
+    """Converte i nomi delle colonne in Paragraph (bianco, bold, centrato) invece di lasciarli
+    come semplice testo: con colonne strette (necessarie per garantire che la tabella non esca
+    mai dalla pagina) un'intestazione lunga come 'Save % (excl. Empty Goals)' come stringa
+    semplice non va mai a capo e finisce per sovrapporsi visivamente alla colonna accanto — un
+    Paragraph invece va a capo automaticamente dentro la cella."""
+    stile_intestazione = ParagraphStyle(
+        'IntestazioneTabellaPdf', fontName='Helvetica-Bold', fontSize=font_size,
+        leading=font_size * 1.15, textColor=colors.white, alignment=TA_CENTER
+    )
+    return [Paragraph(str(nome), stile_intestazione) for nome in nomi_colonne]
+
 def _tabella_giocatori_con_foto(righe, font_size=8, larghezza_foto_cm=1.5):
     """Costruisce una tabella ReportLab con una colonna foto (se caricata) accanto al nome del
     giocatore/portiere, per qualsiasi tabella riassuntiva che ne elenca uno o più (Total
@@ -2755,7 +2767,7 @@ def _tabella_giocatori_con_foto(righe, font_size=8, larghezza_foto_cm=1.5):
         return Paragraph("No data.", getSampleStyleSheet()['Normal'])
     colonne = list(righe[0].keys())
     colonna_nome = colonne[0]
-    dati_righe = [[''] + colonne]
+    dati_righe = [[''] + _intestazioni_con_wrap_pdf(colonne, font_size)]
     dimensione_foto = larghezza_foto_cm - 0.3
     for riga in righe:
         etichetta = str(riga[colonna_nome])
@@ -2793,7 +2805,7 @@ def _df_to_reportlab_table(df_in, col_widths=None, font_size=8, padding_vertical
     # più lungo va a capo dentro la cella (la tabella cresce in altezza, mai in larghezza).
     if col_widths is None:
         col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF / len(df_in.columns)] * len(df_in.columns)
-    dati = [list(df_in.columns)] + df_in.astype(str).values.tolist()
+    dati = [_intestazioni_con_wrap_pdf(df_in.columns, font_size)] + df_in.astype(str).values.tolist()
     t = Table(dati, colWidths=col_widths, repeatRows=1)
     stile = [
         ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
@@ -2831,7 +2843,7 @@ def _tabella_settore_reportlab(df_settore, col_widths=None, font_size=7):
         if colonna in df_formattato.columns:
             df_formattato[colonna] = df_formattato[colonna].apply(formattatore)
 
-    dati = [list(df_formattato.columns)] + df_formattato.astype(str).values.tolist()
+    dati = [_intestazioni_con_wrap_pdf(df_formattato.columns, font_size)] + df_formattato.astype(str).values.tolist()
     if col_widths is None:
         col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF / len(df_formattato.columns)] * len(df_formattato.columns)
     t = Table(dati, colWidths=col_widths, repeatRows=1)
@@ -2867,7 +2879,7 @@ def _tabella_micro_tiratori_reportlab(df_micro, col_widths=None, font_size=7):
     restano bianche/grigie alternate come al solito."""
     if 'Expected Goal %' not in df_micro.columns:
         return _df_to_reportlab_table(df_micro, col_widths=col_widths, font_size=font_size)
-    dati = [list(df_micro.columns)] + df_micro.astype(str).values.tolist()
+    dati = [_intestazioni_con_wrap_pdf(df_micro.columns, font_size)] + df_micro.astype(str).values.tolist()
     if col_widths is None:
         col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF / len(df_micro.columns)] * len(df_micro.columns)
     t = Table(dati, colWidths=col_widths, repeatRows=1)
