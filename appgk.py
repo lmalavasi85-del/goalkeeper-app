@@ -2738,6 +2738,12 @@ def _tabella_metriche_pdf(voci, stili, larghezza_totale_cm=25.5):
     ]))
     return t
 
+# Larghezza massima garantita per QUALSIASI tabella PDF che non specifichi esplicitamente le
+# proprie larghezze di colonna: la pagina di questi PDF è sempre landscape A4 (29.7cm) con
+# margini di circa 1.5-2cm per lato — 26cm resta sempre ben dentro lo spazio utile, qualunque
+# sia il numero di colonne.
+LARGHEZZA_MASSIMA_TABELLA_PDF = 26 * cm
+
 def _tabella_giocatori_con_foto(righe, font_size=8, larghezza_foto_cm=1.5):
     """Costruisce una tabella ReportLab con una colonna foto (se caricata) accanto al nome del
     giocatore/portiere, per qualsiasi tabella riassuntiva che ne elenca uno o più (Total
@@ -2760,7 +2766,11 @@ def _tabella_giocatori_con_foto(righe, font_size=8, larghezza_foto_cm=1.5):
         foto_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(nome_raw))
         cella_foto = RLImage(io.BytesIO(foto_base64_a_bytes(foto_b64)), width=dimensione_foto * cm, height=dimensione_foto * cm) if foto_b64 else ''
         dati_righe.append([cella_foto] + [str(riga[c]) for c in colonne])
-    larghezze = [larghezza_foto_cm * cm] + [None] * len(colonne)
+    # Stesso principio di _df_to_reportlab_table: mai lasciare le colonne di dati senza un
+    # limite massimo di larghezza, o con molte colonne la tabella può uscire dalla pagina.
+    larghezza_colonna_foto = larghezza_foto_cm * cm
+    larghezza_per_colonna_dati = (LARGHEZZA_MASSIMA_TABELLA_PDF - larghezza_colonna_foto) / len(colonne)
+    larghezze = [larghezza_colonna_foto] + [larghezza_per_colonna_dati] * len(colonne)
     t = Table(dati_righe, colWidths=larghezze, repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
@@ -2775,6 +2785,14 @@ def _tabella_giocatori_con_foto(righe, font_size=8, larghezza_foto_cm=1.5):
     return t
 
 def _df_to_reportlab_table(df_in, col_widths=None, font_size=8, padding_verticale=None):
+    # Se il chiamante non specifica larghezze esplicite, ne calcolo io di garantite: con
+    # colWidths=None reportlab dimensiona ogni colonna in base al SUO contenuto, senza alcun
+    # limite massimo — con molte colonne (es. dopo aver aggiunto le due "excl. Empty Goals") la
+    # tabella può facilmente superare la larghezza della pagina e "uscire" dal PDF. Distribuendo
+    # sempre uno spazio massimo garantito tra le colonne, questo non può più succedere: il testo
+    # più lungo va a capo dentro la cella (la tabella cresce in altezza, mai in larghezza).
+    if col_widths is None:
+        col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF / len(df_in.columns)] * len(df_in.columns)
     dati = [list(df_in.columns)] + df_in.astype(str).values.tolist()
     t = Table(dati, colWidths=col_widths, repeatRows=1)
     stile = [
@@ -2814,6 +2832,8 @@ def _tabella_settore_reportlab(df_settore, col_widths=None, font_size=7):
             df_formattato[colonna] = df_formattato[colonna].apply(formattatore)
 
     dati = [list(df_formattato.columns)] + df_formattato.astype(str).values.tolist()
+    if col_widths is None:
+        col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF / len(df_formattato.columns)] * len(df_formattato.columns)
     t = Table(dati, colWidths=col_widths, repeatRows=1)
     comandi_stile = [
         ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
@@ -2848,6 +2868,8 @@ def _tabella_micro_tiratori_reportlab(df_micro, col_widths=None, font_size=7):
     if 'Expected Goal %' not in df_micro.columns:
         return _df_to_reportlab_table(df_micro, col_widths=col_widths, font_size=font_size)
     dati = [list(df_micro.columns)] + df_micro.astype(str).values.tolist()
+    if col_widths is None:
+        col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF / len(df_micro.columns)] * len(df_micro.columns)
     t = Table(dati, colWidths=col_widths, repeatRows=1)
     comandi_stile = [
         ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
@@ -2970,7 +2992,7 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
         elementi.append(KeepTogether([
             Paragraph("Total Match Performance — Team", sezione_stile),
             Spacer(1, 0.2 * cm),
-            _df_to_reportlab_table(pd.DataFrame(riga_gpi_squadra), font_size=12)
+            _df_to_reportlab_table(pd.DataFrame(riga_gpi_squadra), font_size=8)
         ]))
         elementi.append(Spacer(1, 0.4 * cm))
 
@@ -2980,7 +3002,7 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     elementi.append(KeepTogether([
         Paragraph("Total Match Performance per Goalkeeper", sezione_stile),
         Spacer(1, 0.2 * cm),
-        _tabella_giocatori_con_foto(righe_gpi_totale, font_size=12, larghezza_foto_cm=2.5)
+        _tabella_giocatori_con_foto(righe_gpi_totale, font_size=8, larghezza_foto_cm=2.5)
     ]))
     elementi.append(_separatore())
 
