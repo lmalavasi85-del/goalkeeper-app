@@ -7883,8 +7883,8 @@ with tab2:
                     dati_pdf_portieri[f"{mappa_colori_testo[gk]} {gk}"] = {
                         'gpi_totale': gpi_totale_gk, 'parate': s_gk, 'gol': g_gk,
                         'pct': pct_gk, 'eff': eff_gk,
-                        'tabella_settore': pd.DataFrame(righe_settore),
-                        'tabella_macro': pd.DataFrame(righe_macro),
+                        'tabella_settore': info_dettaglio_gk['tabella_settore'],
+                        'tabella_macro': info_dettaglio_gk['tabella_macro'],
                         'money_time_riassunto': money_time_riassunto
                     }
 
