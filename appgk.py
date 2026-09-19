@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v34 - 2026-09-19 - Logo login centrato e molto più grande (650px, era 380px) — nessuna compressione: il file nel codice è identico all'originale, era solo mostrato piccolo"
+APP_VERSION = "v36 - 2026-09-19 - Salvataggio link YouTube ora mirato (1 sola riga aggiornata invece di riscrivere l'intero foglio) — risolve l'errore 'Quota exceeded' salvando più partite in rapida successione"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2647,6 +2647,23 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
         ax.set_title(titolo, fontsize=11, color='#15304f', pad=10)
     fig.tight_layout()
     return fig
+
+@st.cache_data(show_spinner=False)
+def _porta_cacheable(conteggi_totali, conteggi_goal, colore_cornice=None):
+    """Wrapper cacheable attorno a disegna_porta: restituisce i bytes PNG del grafico invece
+    della Figure matplotlib direttamente, così Streamlit può riusare il risultato tra un rerun
+    e l'altro se gli stessi identici dati vengono richiesti di nuovo. Pensato per i punti che
+    generano questo grafico DENTRO un ciclo per ogni giocatore del roster (es. Shooting Trend):
+    senza cache, ogni singola interazione nell'app — anche in una sezione completamente diversa,
+    dato che l'intero script Streamlit riparte da capo ad ogni azione — rigenera da zero un
+    grafico matplotlib (operazione lenta) per OGNI giocatore, anche quando i suoi dati non sono
+    affatto cambiati dal giro precedente."""
+    fig = disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=colore_cornice)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
 
 def _colori_heatmap_frequenza(conteggi):
     """Assegna a ciascun settore uno dei 4 livelli della heat map in base alla frequenza dei tiri
@@ -5289,6 +5306,50 @@ def salva_link_youtube_su_disco(link_dict, permetti_svuotamento=False):
                 return
     with open(MATCH_YOUTUBE_LINKS_FILE, 'wb') as f:
         pickle.dump(link_dict, f)
+
+def aggiorna_singolo_link_youtube(chiave_partita, nuovo_link, link_dict_completo):
+    """Salva il link di UNA sola partita toccando solo la sua riga nel foglio Google — non
+    l'intero foglio con tutti gli altri link. Il salvataggio completo (sopra) fa clear+riscrivi
+    tutto, quindi anche un solo salvataggio costa 3 chiamate di scrittura (clear, intestazione,
+    tutte le righe): con più partite salvate una dopo l'altra in rapida successione questo può
+    superare facilmente il limite di richieste al minuto di Google Sheets. Qui una singola
+    partita costa 1 sola chiamata (o 2 se la riga non esisteva ancora). Aggiorna anche il dict
+    in memoria e il backup locale, esattamente come il salvataggio completo. Fa un fallback al
+    salvataggio completo se qualcosa nell'aggiornamento mirato non torna."""
+    if nuovo_link.strip():
+        link_dict_completo[chiave_partita] = nuovo_link.strip()
+    else:
+        link_dict_completo.pop(chiave_partita, None)
+    # Backup locale SEMPRE aggiornato per primo, come nel salvataggio completo.
+    try:
+        with open(MATCH_YOUTUBE_LINKS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(link_dict_completo, _f_backup_preventivo)
+    except Exception:
+        pass
+
+    if not _google_sheets_configurato():
+        return
+
+    try:
+        worksheet = _ottieni_worksheet_youtube_links()
+        colonna_chiavi = worksheet.col_values(1)
+        # Individuo TUTTE le righe con questa chiave (dovrebbe essere al massimo una, ma se per
+        # qualunque motivo ce ne fossero di più — es. un vecchio salvataggio duplicato — niente
+        # scorciatoie: torno al salvataggio completo sicuro invece di lasciare righe orfane.
+        indici_riga = [i + 1 for i, chiave in enumerate(colonna_chiavi) if chiave == chiave_partita]
+        if len(indici_riga) > 1:
+            salva_link_youtube_su_disco(link_dict_completo)
+            return
+
+        if nuovo_link.strip():
+            if indici_riga:
+                worksheet.update(f"A{indici_riga[0]}:B{indici_riga[0]}", [[chiave_partita, nuovo_link.strip()]])
+            else:
+                worksheet.append_row([chiave_partita, nuovo_link.strip()])
+        elif indici_riga:
+            worksheet.delete_rows(indici_riga[0])
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Could not update this match's YouTube link on Google Sheets: {e}")
 
 # ============================================================
 # COMPETIZIONE DI RIFERIMENTO PER PARTITA (facoltativa, per la pagina "Matches Analyzed" del PDF
@@ -10119,11 +10180,11 @@ with tab4:
                     df_porta_sel = df_selezione_shotmap
                     colore_cornice_sel = None
                 tot_p_sel, goal_p_sel = costruisci_conteggi_porta(df_porta_sel)
-                fig_p_sel = disegna_porta(tot_p_sel, goal_p_sel, colore_cornice=colore_cornice_sel)
+                immagine_porta_sel_bytes = _porta_cacheable(tot_p_sel, goal_p_sel, colore_cornice=colore_cornice_sel)
 
                 col_porta_sel, col_tast_sel = st.columns([1, 2])
                 with col_porta_sel:
-                    st.pyplot(fig_p_sel)
+                    st.image(immagine_porta_sel_bytes)
                     if tasto_scelto:
                         expected_testo_sel = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
                         if t_sel > 0:
@@ -10231,13 +10292,13 @@ with tab4:
                             else:
                                 tot_porta, goal_porta = costruisci_conteggi_porta(df_giocatore_vista)
                                 colore_cornice = None
-                            fig_p = disegna_porta(tot_porta, goal_porta, colore_cornice=colore_cornice)
+                            immagine_porta_bytes = _porta_cacheable(tot_porta, goal_porta, colore_cornice=colore_cornice)
                             tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore_vista)
 
                             chiave_giocatore = _chiave_css_sicura(nome_giocatore)
                             col_porta, col_tast = st.columns([1, 2])
                             with col_porta:
-                                st.pyplot(fig_p)
+                                st.image(immagine_porta_bytes)
                                 if tasto_scelto:
                                     expected_testo = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
                                     if t_sel > 0:
@@ -11106,12 +11167,12 @@ with tab6:
                         colore_cornice_tg = None
 
                     tot_porta_tg, goal_porta_tg = costruisci_conteggi_porta(df_porta_tg)
-                    fig_porta_tg = disegna_porta(tot_porta_tg, goal_porta_tg, colore_cornice=colore_cornice_tg)
+                    immagine_porta_tg_bytes = _porta_cacheable(tot_porta_tg, goal_porta_tg, colore_cornice=colore_cornice_tg)
                     tot_tast_tg, goal_tast_tg = costruisci_conteggi_tastiera(df_tg_filtrato)
 
                     col_p_tg, col_t_tg = st.columns([1, 2])
                     with col_p_tg:
-                        st.pyplot(fig_porta_tg)
+                        st.image(immagine_porta_tg_bytes)
                     with col_t_tg:
                         tasto_cliccato_tg = pulsantiera_settori_campo(tot_tast_tg, goal_tast_tg, tasto_sel_tg,
                                                                        key_prefix=f"tag_go_tir_pulsantiera_{chiave_tg_sicura}")
@@ -11213,12 +11274,12 @@ with tab6:
                         colore_cornice_tg_gk = None
 
                     tot_porta_tg_gk, salvate_porta_tg_gk = costruisci_conteggi_porta(df_porta_tg_gk, esiti_successo=('save', 's'))
-                    fig_porta_tg_gk = disegna_porta(tot_porta_tg_gk, salvate_porta_tg_gk, colore_cornice=colore_cornice_tg_gk)
+                    immagine_porta_tg_gk_bytes = _porta_cacheable(tot_porta_tg_gk, salvate_porta_tg_gk, colore_cornice=colore_cornice_tg_gk)
                     tot_tast_tg_gk, salvate_tast_tg_gk = costruisci_conteggi_tastiera(df_tg_gk_filtrato, esiti_successo=('save', 's'))
 
                     col_p_tg_gk, col_t_tg_gk = st.columns([1, 2])
                     with col_p_tg_gk:
-                        st.pyplot(fig_porta_tg_gk)
+                        st.image(immagine_porta_tg_gk_bytes)
                         if tasto_sel_tg_gk and len(df_porta_tg_gk) > 0:
                             expected_testo_tg_gk = f"{expected_sel_tg_gk:.0f}%" if expected_sel_tg_gk is not None else "n/a"
                             st.caption(f"Expected Save % for {tasto_sel_tg_gk}: **{expected_testo_tg_gk}**  |  "
@@ -11705,11 +11766,7 @@ with tab8:
             link_attuale = st.session_state['link_youtube_partite'].get(chiave_p, '')
             nuovo_link = st.text_input("YouTube link for this match:", value=link_attuale, key=f"yt_link_{_chiave_css_sicura(chiave_p)}")
             if st.button("💾 Save link", key=f"yt_save_{_chiave_css_sicura(chiave_p)}"):
-                if nuovo_link.strip():
-                    st.session_state['link_youtube_partite'][chiave_p] = nuovo_link.strip()
-                else:
-                    st.session_state['link_youtube_partite'].pop(chiave_p, None)
-                salva_link_youtube_su_disco(st.session_state['link_youtube_partite'])
+                aggiorna_singolo_link_youtube(chiave_p, nuovo_link, st.session_state['link_youtube_partite'])
                 st.success("Saved.")
                 st.rerun()
 
