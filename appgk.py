@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v36 - 2026-09-19 - Salvataggio link YouTube ora mirato (1 sola riga aggiornata invece di riscrivere l'intero foglio) — risolve l'errore 'Quota exceeded' salvando più partite in rapida successione"
+APP_VERSION = "v37 - 2026-09-19 - Timeline mostrata al portiere ora senza testo extra (note del coach, 'palo' ecc.); aggiunto strumento diagnostico per il matching dei link video"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -7924,6 +7924,18 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
     st.markdown("---")
     st.subheader("🎬 My Shots on Video")
     link_map = st.session_state.get('link_youtube_partite', {})
+    with st.expander("🔍 Not seeing a video that should be there? Check here"):
+        st.caption("Links currently saved on Google Sheets (what the coach entered):")
+        if link_map:
+            for chiave_salvata, link_salvato in link_map.items():
+                st.write(f"`{chiave_salvata}` → {link_salvato}")
+        else:
+            st.write("(none saved yet)")
+        st.caption("Keys this page is looking for, based on your matches:")
+        for p in lista_partite:
+            chiave_attesa = f"{p['label'].rsplit(' (', 1)[0]}|{p['data']}"
+            trovato = "✅ match found" if chiave_attesa in link_map else "❌ no match"
+            st.write(f"`{chiave_attesa}` — {trovato}")
     partite_con_video = sorted(set(
         p['label'] for p in lista_partite if f"{p['label'].rsplit(' (', 1)[0]}|{p['data']}" in link_map
     ))
@@ -7960,7 +7972,7 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
             url_tag = url_youtube_con_timestamp(link_partita, riga_video.get('VIDEO_START_SECONDS'))
             col_v1, col_v2 = st.columns([4, 1])
             with col_v1:
-                st.write(f"{riga_video['Match_Label']} — {riga_video['TIRO_CLEAN']} — {riga_video['RESULT_CLEAN']} — {riga_video['TIMELINE']}")
+                st.write(f"{riga_video['Match_Label']} — {riga_video['TIRO_CLEAN']} — {riga_video['RESULT_CLEAN']} — {analizza_timeline(riga_video['TIMELINE'])[1]}")
             with col_v2:
                 if url_tag:
                     st.link_button("▶️ Watch", url_tag)
