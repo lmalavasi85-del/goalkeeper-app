@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v31 - 2026-08-21 - Total Season Statistics: aggiunta Efficiency %, riquadro più grande in stile dashboard nel PDF, meno spazio vuoto in prima pagina"
+APP_VERSION = "v32 - 2026-09-19 - Nuovo logo Goalkeeper Method ad alta risoluzione (1024x1024) + A Gold GK stats: login Admin/Goalkeeper, tab YouTube Links, filtro lega"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
