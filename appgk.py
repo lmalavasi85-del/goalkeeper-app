@@ -130,6 +130,13 @@ st.title("🤾‍♂️ Goalkeeper Performance Index Analytics")
 st.markdown("Upload Excel sheets exported from *Videocoach (Sportimization)* to generate tactical charts and reports.")
 
 # ---- Gate unico: nessuna sezione dell'app è visibile finché non si inserisce il codice ----
+# Due tipi di codice sono accettati:
+# - APP_ACCESS_CODE (Admin): sblocca tutta l'app come sempre.
+# - "{NomePortiere}_A_Gold_26-27" (Portiere, progetto "A Gold GK stats"): il nome deve
+#   corrispondere esattamente (case-insensitive) a un PORTIERE_ID già presente nel database
+#   stagione — sblocca SOLO la vista Portiere, mai il resto dell'app.
+SUFFISSO_PASSWORD_PORTIERE = "_A_Gold_26-27"
+
 if 'app_authorized' not in st.session_state:
     st.session_state['app_authorized'] = False
 
@@ -141,6 +148,7 @@ if not st.session_state['app_authorized']:
     if sbloccato_app:
         if codice_app_inserito == APP_ACCESS_CODE:
             st.session_state['app_authorized'] = True
+            st.session_state['ruolo_utente'] = 'admin'
             # Un solo codice sblocca anche i vecchi gate interni delle singole sezioni, così
             # compare un'unica richiesta di password per l'intera app.
             st.session_state['upload_authorized'] = True
@@ -148,6 +156,25 @@ if not st.session_state['app_authorized']:
             st.session_state['training_authorized'] = True
             st.session_state['tag_go_authorized'] = True
             st.rerun()
+        elif codice_app_inserito.endswith(SUFFISSO_PASSWORD_PORTIERE):
+            nome_candidato = codice_app_inserito[:-len(SUFFISSO_PASSWORD_PORTIERE)]
+            # Chiamata di caricamento mirata SOLO per validare il nome — il caricamento normale
+            # (più avanti, in st.session_state['db']) avviene comunque al primo giro utile dopo
+            # lo sblocco, quindi qui non serve salvare nulla in session_state: serve solo sapere
+            # se questo nome esiste davvero tra i portieri già caricati.
+            db_per_validazione = carica_stagione_da_disco()
+            nomi_portiere_esistenti = set()
+            for partita in db_per_validazione:
+                if 'PORTIERE_ID' in partita['dati'].columns:
+                    nomi_portiere_esistenti.update(partita['dati']['PORTIERE_ID'].dropna().unique())
+            nome_trovato = next((n for n in nomi_portiere_esistenti if n.lower() == nome_candidato.lower()), None)
+            if nome_trovato:
+                st.session_state['app_authorized'] = True
+                st.session_state['ruolo_utente'] = 'portiere'
+                st.session_state['nome_portiere_autenticato'] = nome_trovato
+                st.rerun()
+            else:
+                st.error("Incorrect code.")
         else:
             st.error("Incorrect code.")
     st.stop()
@@ -1086,6 +1113,36 @@ def applica_colori_expected(df_settore):
     formattatori_da_usare = {c: f for c, f in formattatori_disponibili.items() if c in df_settore.columns}
     return df_settore.style.apply(_colora_riga, axis=1).format(formattatori_da_usare)
 
+def url_youtube_con_timestamp(link_base, secondi):
+    """Costruisce l'URL che apre link_base già posizionato al secondo indicato (parametro t).
+    Gestisce sia un link 'pulito' (youtube.com/watch?v=ID) sia uno che ha già altri parametri
+    nella query string. Restituisce None se manca il link o il timestamp."""
+    if not link_base or secondi is None:
+        return None
+    link_base = link_base.strip()
+    separatore = '&' if '?' in link_base else '?'
+    return f"{link_base}{separatore}t={int(secondi)}s"
+
+def secondi_da_orario_video(valore):
+    """Converte il valore della colonna 'Start time' di VideoCoach (un datetime.time — ore,
+    minuti, secondi dall'inizio del FILE VIDEO scaricato, non del gioco) in secondi totali,
+    pronti per l'URL di YouTube (&t=Ns). Restituisce None se il valore non è utilizzabile —
+    partite più vecchie, caricate prima che questa colonna venisse letta, semplicemente non
+    avranno il link diretto al tag, senza che questo rompa nient'altro."""
+    if valore is None or (isinstance(valore, float) and pd.isna(valore)):
+        return None
+    if isinstance(valore, str):
+        try:
+            valore = datetime.strptime(valore.strip(), '%H:%M:%S').time()
+        except ValueError:
+            try:
+                valore = datetime.strptime(valore.strip(), '%H:%M:%S.%f').time()
+            except ValueError:
+                return None
+    if hasattr(valore, 'hour'):
+        return valore.hour * 3600 + valore.minute * 60 + valore.second
+    return None
+
 def analizza_timeline(timeline_str):
     """Legge il campo timeline (in Videocoach spesso scritto a mano dentro 'Notes', insieme ad
     altro testo tipo 'fuori'/'traversa') in modo tollerante a errori di battitura (spazi in più
@@ -1957,6 +2014,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
     c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
     c_throwsector = _trova_colonna(['throw sector', 'throw_sector'])
     c_time = _trova_colonna(['timeline', 'tempo', 'minut', 'note'])
+    c_start_time = _trova_colonna(['start time', 'start_time'])
     c_tiro_portiere = trova_colonna_tiro_portiere(df_raw.columns)
     colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
 
@@ -2027,6 +2085,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         goal_sector = r[c_goalsector] if c_goalsector is not None else None
         throw_sector = r[c_throwsector] if c_throwsector is not None else None
         porta_vuota = e_porta_vuota(throw_sector)
+        video_start_secondi = secondi_da_orario_video(r[c_start_time]) if c_start_time is not None else None
         valori_avanzati_gk = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
                                if chiave in DIMENSIONI_TAGGING_PORTIERE}
         valori_avanzati_tir = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
@@ -2034,7 +2093,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
 
         if portiere:
             riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline,
-                       'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota}
+                       'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota, 'VIDEO_START_SECONDS': video_start_secondi}
             riga_gk.update(valori_avanzati_gk)
             (righe_gk_home if squadra_portiere == 'home' else righe_gk_away).append(riga_gk)
 
@@ -4226,6 +4285,94 @@ def salva_link_duelli_su_disco(link_dict, permetti_svuotamento=False):
         pickle.dump(link_dict, f)
 
 # ============================================================
+# LINK YOUTUBE PER PARTITA (progetto "A Gold GK stats"): un solo link video per partita,
+# indicizzato per "nome_partita|data" come le altre associazioni per partita già in questa app.
+# Gestito SOLO da Admin (mai visibile/modificabile dai portieri): la vista Portiere lo usa solo
+# in lettura per costruire i link diretti ai singoli tag.
+# ============================================================
+MATCH_YOUTUBE_LINKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "match_youtube_links.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_youtube_links():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES)
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('MatchYouTubeLinks')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='MatchYouTubeLinks', rows=500, cols=2)
+        worksheet.append_row(['nome_data_partita', 'link'])
+    return _WorksheetConRetry(worksheet)
+
+def carica_link_youtube_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_youtube_links()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                if os.path.exists(MATCH_YOUTUBE_LINKS_FILE):
+                    try:
+                        with open(MATCH_YOUTUBE_LINKS_FILE, 'rb') as f:
+                            backup = pickle.load(f)
+                        if backup:
+                            st.sidebar.error(
+                                "⚠️ Google Sheets YouTube links look EMPTY, but a local backup was found — "
+                                "using the backup instead. Please check Google Sheets' Version History "
+                                "on the 'MatchYouTubeLinks' tab to confirm and restore it there too."
+                            )
+                            return backup
+                    except Exception:
+                        pass
+                return {}
+            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+        except Exception:
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+            pass
+    if os.path.exists(MATCH_YOUTUBE_LINKS_FILE):
+        try:
+            with open(MATCH_YOUTUBE_LINKS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_link_youtube_su_disco(link_dict, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile.
+    try:
+        with open(MATCH_YOUTUBE_LINKS_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(link_dict, _f_backup_preventivo)
+    except Exception:
+        pass
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_youtube_links()
+            righe = [[k, v] for k, v in link_dict.items()]
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            _blocca_se_svuotamento_sospetto(worksheet, link_dict, permetti_svuotamento, "YouTube link(s)")
+            worksheet.clear()
+            worksheet.append_row(['nome_data_partita', 'link'])
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save YouTube links to Google Sheets: {e}")
+            if not link_dict:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
+    with open(MATCH_YOUTUBE_LINKS_FILE, 'wb') as f:
+        pickle.dump(link_dict, f)
+
+# ============================================================
 # COMPETIZIONE DI RIFERIMENTO PER PARTITA (facoltativa, per la pagina "Matches Analyzed" del PDF
 # Shooting Trend): testo libero — friendly match, European Championship, il nome di un torneo
 # specifico, ecc. Indicizzata per "nome_partita|data" cosi che, una volta inserita per una
@@ -5647,6 +5794,8 @@ if 'link_video_zone' not in st.session_state:
     st.session_state['link_video_zone'] = carica_link_zone_da_disco()
 if 'link_duelli' not in st.session_state:
     st.session_state['link_duelli'] = carica_link_duelli_da_disco()
+if 'link_youtube_partite' not in st.session_state:
+    st.session_state['link_youtube_partite'] = carica_link_youtube_da_disco()
 if 'competizioni_partite' not in st.session_state:
     st.session_state['competizioni_partite'] = carica_competizioni_partite_da_disco()
 if 'matches_analyzed_manuali' not in st.session_state:
@@ -6674,6 +6823,165 @@ else:
     st.sidebar.caption("💻 Storage: local file")
     st.sidebar.caption(f"ℹ️ {_diagnosi_google_sheets()}")
 
+def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
+    """Vista completa e isolata per un portiere autenticato con la propria password (progetto
+    'A Gold GK stats'): riusa le stesse funzioni di calcolo/grafico già collaudate per Admin,
+    filtrate sul suo solo nome — mai mostra dati di altri portieri, mai i tab/l'upload di Admin.
+    modalita_anteprima=True quando è Admin a richiamarla per controllare cosa vede un portiere:
+    niente pulsante Logout (che altrimenti disconnetterebbe Admin dall'intera app), e un banner
+    che lo ricorda chiaramente."""
+    if modalita_anteprima:
+        st.info(f"🔍 Admin preview — this is exactly what {nome_portiere} sees after logging in with their own password.")
+        st.title(f"🤾‍♂️ {nome_portiere} — Goalkeeper Stats (preview)")
+    else:
+        col_titolo, col_logout = st.columns([5, 1])
+        with col_titolo:
+            st.title(f"🤾‍♂️ {nome_portiere} — My Goalkeeper Stats")
+        with col_logout:
+            if st.button("🔓 Logout"):
+                for chiave in ['app_authorized', 'ruolo_utente', 'nome_portiere_autenticato']:
+                    st.session_state.pop(chiave, None)
+                st.rerun()
+
+    foto_b64_gk = st.session_state.get('foto_giocatori', {}).get(nome_portiere)
+    if foto_b64_gk:
+        st.image(foto_base64_a_bytes(foto_b64_gk), width=150)
+
+    df_stagione_totale, lista_partite = raccogli_stagione_per_portiere(st.session_state['db'], nome_portiere)
+    if df_stagione_totale.empty:
+        st.info("No matches with your data have been uploaded yet — check back after your next game.")
+        return
+
+    dati_per_portiere = {nome_portiere: lista_partite}
+    s_tot, g_tot, m_tot, pct_tot, eff_tot = calcola_metriche_gruppo(df_stagione_totale)
+    _, _, _, pct_tot_noeg, eff_tot_noeg = calcola_metriche_gruppo_no_eg(df_stagione_totale)
+    gpi_medio_tot = df_stagione_totale['GPI_Tiro'].mean()
+
+    st.markdown("---")
+    st.subheader("📊 Season Totals")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Matches", len(lista_partite))
+    c2.metric("Shots Faced", len(df_stagione_totale))
+    c3.metric("Save %", f"{pct_tot:.1f}%")
+    c4.metric("Efficiency %", f"{eff_tot:.1f}%")
+    c5.metric("Average GPI (per shot)", f"{gpi_medio_tot:+.2f}")
+    if round(pct_tot, 1) != round(pct_tot_noeg, 1):
+        st.caption(f"Excluding Empty Goals — Save %: {pct_tot_noeg:.1f}% · Efficiency %: {eff_tot_noeg:.1f}%")
+
+    info_gk = calcola_dettaglio_portiere(df_stagione_totale, lista_partite=lista_partite)
+    st.markdown("**Statistics by specific micro-zone**")
+    st.dataframe(applica_colori_expected(info_gk['tabella_settore']), use_container_width=True, hide_index=True)
+    st.markdown("**Statistics by macro-zone**")
+    st.dataframe(tabella_macro_zone_universale(df_stagione_totale, ruolo='portiere'), use_container_width=True, hide_index=True)
+    st.markdown("**Statistics by aggregated macro-sector**")
+    st.dataframe(info_gk['tabella_macro'], use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("📈 Season GPI Trend (per match + cumulative average)")
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_gpi_gk:
+        if _disegna_grafico_stagione(dati_per_portiere, 'gpi_totale', 'Total Match GPI', tmp_gpi_gk.name):
+            st.image(tmp_gpi_gk.name, width=1000)
+
+    st.subheader("📈 Season Save % Trend (per match + cumulative average)")
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_pct_gk:
+        if _disegna_grafico_stagione(dati_per_portiere, 'pct', 'Match Save %', tmp_pct_gk.name):
+            st.image(tmp_pct_gk.name, width=1000)
+
+    st.markdown("---")
+    st.subheader("⏱️ Performance by 10-minute Block")
+    df_blocchi_gk, fig_blocchi_gk = costruisci_grafico_blocchi(df_stagione_totale)
+    st.plotly_chart(fig_blocchi_gk, use_container_width=True)
+    st.dataframe(df_blocchi_gk, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("📋 Match History")
+    df_storico_gk = pd.DataFrame([{
+        'Match': p['label'], 'Total GPI': round(p['gpi_totale'], 1),
+        'Save %': round(p['pct'], 1), 'Shots Faced': p['tiri']
+    } for p in lista_partite])
+    st.dataframe(df_storico_gk, use_container_width=True, hide_index=True)
+
+    # ------------------------------------------------------------
+    # GK RANKING filtrato sulla lega Serie A Gold 2026-27 (se esiste tra i campionati creati
+    # da Admin) — permette al portiere di vedere dove si colloca tra i colleghi della sua
+    # stessa lega, senza vedere le classifiche delle altre squadre/leghe che Luigi segue.
+    # ------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("🧤 Goalkeeper Ranking — Serie A Gold 2026-27")
+    campionato_a_gold = next((c for c in st.session_state['campionati'] if c['nome'] == 'Serie A Gold 2026-27'), None)
+    if campionato_a_gold is None:
+        st.info("The 'Serie A Gold 2026-27' championship hasn't been set up yet — check back later.")
+    else:
+        partite_lega_gk = partite_in_campionato(st.session_state['db'], campionato_a_gold)
+        partite_lega_tir = partite_in_campionato(st.session_state.get('db_tiratori', []), campionato_a_gold)
+        chiavi_gk_lega = {(m['nome'], str(m['data'])) for m in partite_lega_gk}
+        extra_tir_lega = [m for m in partite_lega_tir if (m['nome'], str(m['data'])) not in chiavi_gk_lega]
+        frammenti_lega = [m['dati'] for m in partite_lega_gk] + [m['dati'] for m in extra_tir_lega]
+        df_lega = pd.concat(frammenti_lega, ignore_index=True) if frammenti_lega else pd.DataFrame()
+        gen_gk_lega, sotto_gk_lega = classifiche_portieri_universale(df_lega, soglia_tiri_minimi=100)
+        st.caption("Only goalkeepers with at least 100 total shots faced in this league are ranked.")
+        if gen_gk_lega.empty:
+            st.info("No one meets the minimum shots threshold in this league yet.")
+        else:
+            st.dataframe(gen_gk_lega, use_container_width=True, hide_index=True)
+
+    # ------------------------------------------------------------
+    # I MIEI TIRI SU VIDEO: elenco filtrabile dei propri tag, con link diretto al secondo
+    # esatto su YouTube — solo per le partite a cui Admin ha già associato un link. Nessun
+    # link è mai modificabile/visibile in forma di gestione da qui: solo lettura.
+    # ------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("🎬 My Shots on Video")
+    link_map = st.session_state.get('link_youtube_partite', {})
+    partite_con_video = sorted(set(
+        p['label'] for p in lista_partite if f"{p['label'].rsplit(' (', 1)[0]}|{p['data']}" in link_map
+    ))
+    if not partite_con_video:
+        st.info("No video is linked to your matches yet — ask your coach to add the YouTube link for a match.")
+    else:
+        chiave_filtri_video = _chiave_css_sicura(nome_portiere)
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            filtro_match = st.selectbox("Match:", ["(All linked matches)"] + partite_con_video, key=f"gk_video_match_{chiave_filtri_video}")
+        with col_f2:
+            filtro_esito = st.selectbox("Result:", ["(All)", "save", "goal", "miss"], key=f"gk_video_esito_{chiave_filtri_video}")
+        with col_f3:
+            filtro_zona = st.selectbox(
+                "Zone:", ["(All)"] + sorted(df_stagione_totale['TIRO_CLEAN'].dropna().unique()), key=f"gk_video_zona_{chiave_filtri_video}"
+            )
+
+        df_video = df_stagione_totale.copy()
+        if filtro_match != "(All linked matches)":
+            df_video = df_video[df_video['Match_Label'] == filtro_match]
+        else:
+            df_video = df_video[df_video['Match_Label'].isin(partite_con_video)]
+        if filtro_esito != "(All)":
+            df_video = df_video[df_video['RESULT_CLEAN'] == filtro_esito]
+        if filtro_zona != "(All)":
+            df_video = df_video[df_video['TIRO_CLEAN'] == filtro_zona]
+
+        st.caption(f"{len(df_video)} shot(s) match this filter.")
+        for _, riga_video in df_video.head(200).iterrows():
+            nome_match_pulito = riga_video['Match_Label'].rsplit(' (', 1)[0]
+            data_match = riga_video['Match_Label'].rsplit('(', 1)[-1].rstrip(')')
+            chiave_link = f"{nome_match_pulito}|{data_match}"
+            link_partita = link_map.get(chiave_link)
+            url_tag = url_youtube_con_timestamp(link_partita, riga_video.get('VIDEO_START_SECONDS'))
+            col_v1, col_v2 = st.columns([4, 1])
+            with col_v1:
+                st.write(f"{riga_video['Match_Label']} — {riga_video['TIRO_CLEAN']} — {riga_video['RESULT_CLEAN']} — {riga_video['TIMELINE']}")
+            with col_v2:
+                if url_tag:
+                    st.link_button("▶️ Watch", url_tag)
+                else:
+                    st.caption("No timestamp")
+        if len(df_video) > 200:
+            st.caption(f"Showing the first 200 of {len(df_video)} matching shots — narrow the filters above to see others.")
+
+if st.session_state.get('ruolo_utente') == 'portiere':
+    mostra_vista_portiere(st.session_state['nome_portiere_autenticato'])
+    st.stop()
+
 tab1, tab2, tab3, tab4, tab7, tab6, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🌍 Universal Stats', '🎬 Tag & Go Analysis', '🏋️ Training Sessions'])
 
 with tab1:
@@ -7522,6 +7830,54 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     os.remove(_file_da_rimuovere)
             st.success("All data has been reset. The app is back to its starting point.")
             st.rerun()
+
+        # ------------------------------------------------------------
+        # LINK YOUTUBE PER PARTITA (progetto "A Gold GK stats"): solo Admin può inserirli o
+        # modificarli — i portieri li vedono solo in forma di pulsante "Watch" già pronto,
+        # mai come campo modificabile.
+        # ------------------------------------------------------------
+        st.markdown("---")
+        st.subheader("🎬 YouTube Links per Match")
+        st.caption("Paste the YouTube link for each match here — goalkeepers will then see a "
+                   "'Watch' button next to every one of their tagged shots, already positioned "
+                   "at the right second. They never see or edit this list themselves.")
+        tutte_le_partite_admin = sorted(
+            set((m['nome'], str(m['data'])) for m in st.session_state['db'] + st.session_state.get('db_tiratori', [])),
+            key=lambda t: t[1]
+        )
+        if not tutte_le_partite_admin:
+            st.info("No matches uploaded yet.")
+        else:
+            for nome_p, data_p in tutte_le_partite_admin:
+                chiave_p = f"{nome_p}|{data_p}"
+                link_attuale = st.session_state['link_youtube_partite'].get(chiave_p, '')
+                nuovo_link = st.text_input(
+                    f"{nome_p} ({data_p})", value=link_attuale, key=f"yt_link_{_chiave_css_sicura(chiave_p)}"
+                )
+                if nuovo_link != link_attuale:
+                    if nuovo_link.strip():
+                        st.session_state['link_youtube_partite'][chiave_p] = nuovo_link.strip()
+                    else:
+                        st.session_state['link_youtube_partite'].pop(chiave_p, None)
+                    salva_link_youtube_su_disco(st.session_state['link_youtube_partite'])
+                    st.rerun()
+
+        # ------------------------------------------------------------
+        # ANTEPRIMA VISTA PORTIERE (Admin-only): stessa vista che vede il portiere dopo il suo
+        # login — utile per controllare cosa vedrà, senza dover conoscere/usare la sua password.
+        # Dentro un expander perché è una vista pesante (molti grafici/tabelle): resta chiusa
+        # finché Admin non la richiede esplicitamente.
+        # ------------------------------------------------------------
+        st.markdown("---")
+        with st.expander("🧤 Preview a Goalkeeper's View (exactly what they see after logging in)"):
+            nomi_portiere_admin = sorted(set(
+                gk for match in st.session_state['db'] for gk in match['dati']['PORTIERE_ID'].dropna().unique()
+            ))
+            if not nomi_portiere_admin:
+                st.info("No goalkeepers found in the uploaded data yet.")
+            else:
+                portiere_da_vedere = st.selectbox("Goalkeeper:", nomi_portiere_admin, key="admin_preview_gk_scelto")
+                mostra_vista_portiere(portiere_da_vedere, modalita_anteprima=True)
 
 st.sidebar.caption(f"   • Upload Match Sheets: {time.time() - _t_tab1:.1f}s")
 with tab2:
