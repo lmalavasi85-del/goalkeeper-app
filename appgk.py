@@ -129,54 +129,63 @@ st.sidebar.caption("If you don't see this version, the app hasn't been restarted
 st.title("🤾‍♂️ Goalkeeper Performance Index Analytics")
 st.markdown("Upload Excel sheets exported from *Videocoach (Sportimization)* to generate tactical charts and reports.")
 
-# ---- Gate unico: nessuna sezione dell'app è visibile finché non si inserisce il codice ----
-# Due tipi di codice sono accettati:
-# - APP_ACCESS_CODE (Admin): sblocca tutta l'app come sempre.
-# - "{NomePortiere}_A_Gold_26-27" (Portiere, progetto "A Gold GK stats"): il nome deve
-#   corrispondere esattamente (case-insensitive) a un PORTIERE_ID già presente nel database
-#   stagione — sblocca SOLO la vista Portiere, mai il resto dell'app.
+# ---- Gate unico: nessuna sezione dell'app è visibile finché non si effettua l'accesso ----
 SUFFISSO_PASSWORD_PORTIERE = "_A_Gold_26-27"
 
 if 'app_authorized' not in st.session_state:
     st.session_state['app_authorized'] = False
 
 if not st.session_state['app_authorized']:
-    st.info("🔒 This app is password-protected. Enter the access code to continue.")
-    with st.form(key="form_app_access", clear_on_submit=True):
-        codice_app_inserito = st.text_input("Access code", type="password", key="codice_app_input")
-        sbloccato_app = st.form_submit_button("Unlock")
-    if sbloccato_app:
-        if codice_app_inserito == APP_ACCESS_CODE:
-            st.session_state['app_authorized'] = True
-            st.session_state['ruolo_utente'] = 'admin'
-            # Un solo codice sblocca anche i vecchi gate interni delle singole sezioni, così
-            # compare un'unica richiesta di password per l'intera app.
-            st.session_state['upload_authorized'] = True
-            st.session_state['staff_authorized'] = True
-            st.session_state['training_authorized'] = True
-            st.session_state['tag_go_authorized'] = True
-            st.rerun()
-        elif codice_app_inserito.endswith(SUFFISSO_PASSWORD_PORTIERE):
-            nome_candidato = codice_app_inserito[:-len(SUFFISSO_PASSWORD_PORTIERE)]
-            # Chiamata di caricamento mirata SOLO per validare il nome — il caricamento normale
-            # (più avanti, in st.session_state['db']) avviene comunque al primo giro utile dopo
-            # lo sblocco, quindi qui non serve salvare nulla in session_state: serve solo sapere
-            # se questo nome esiste davvero tra i portieri già caricati.
-            db_per_validazione = carica_stagione_da_disco()
-            nomi_portiere_esistenti = set()
-            for partita in db_per_validazione:
-                if 'PORTIERE_ID' in partita['dati'].columns:
-                    nomi_portiere_esistenti.update(partita['dati']['PORTIERE_ID'].dropna().unique())
-            nome_trovato = next((n for n in nomi_portiere_esistenti if n.lower() == nome_candidato.lower()), None)
-            if nome_trovato:
-                st.session_state['app_authorized'] = True
-                st.session_state['ruolo_utente'] = 'portiere'
-                st.session_state['nome_portiere_autenticato'] = nome_trovato
-                st.rerun()
+    col_logo_login, col_form_login = st.columns([1, 2])
+    with col_logo_login:
+        st.image(LOGO_BYTES, width=220)
+    with col_form_login:
+        st.title("Goalkeeper Method")
+        st.info("🔒 This app is password-protected.")
+        scelta_ruolo_login = st.radio("I am logging in as:", ["Admin", "Goalkeeper"], key="scelta_ruolo_login", horizontal=True)
+        with st.form(key="form_app_access", clear_on_submit=True):
+            codice_app_inserito = st.text_input("Access code", type="password", key="codice_app_input")
+            sbloccato_app = st.form_submit_button("Unlock")
+        if sbloccato_app:
+            if scelta_ruolo_login == "Admin":
+                if codice_app_inserito == APP_ACCESS_CODE:
+                    st.session_state['app_authorized'] = True
+                    st.session_state['ruolo_utente'] = 'admin'
+                    # Un solo codice sblocca anche i vecchi gate interni delle singole sezioni,
+                    # così compare un'unica richiesta di password per l'intera app.
+                    st.session_state['upload_authorized'] = True
+                    st.session_state['staff_authorized'] = True
+                    st.session_state['training_authorized'] = True
+                    st.session_state['tag_go_authorized'] = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect code.")
             else:
-                st.error("Incorrect code.")
-        else:
-            st.error("Incorrect code.")
+                # Portiere (progetto "A Gold GK stats"): la password è
+                # "{NomePortiere}_A_Gold_26-27" — il nome deve corrispondere esattamente
+                # (case-insensitive) a un PORTIERE_ID già presente nel database stagione.
+                # Sblocca SOLO la vista Portiere, mai il resto dell'app.
+                if codice_app_inserito.endswith(SUFFISSO_PASSWORD_PORTIERE):
+                    nome_candidato = codice_app_inserito[:-len(SUFFISSO_PASSWORD_PORTIERE)]
+                    # Chiamata di caricamento mirata SOLO per validare il nome — il caricamento
+                    # normale (più avanti, in st.session_state['db']) avviene comunque al primo
+                    # giro utile dopo lo sblocco, quindi qui non serve salvare nulla in
+                    # session_state: serve solo sapere se questo nome esiste davvero.
+                    db_per_validazione = carica_stagione_da_disco()
+                    nomi_portiere_esistenti = set()
+                    for partita in db_per_validazione:
+                        if 'PORTIERE_ID' in partita['dati'].columns:
+                            nomi_portiere_esistenti.update(partita['dati']['PORTIERE_ID'].dropna().unique())
+                    nome_trovato = next((n for n in nomi_portiere_esistenti if n.lower() == nome_candidato.lower()), None)
+                    if nome_trovato:
+                        st.session_state['app_authorized'] = True
+                        st.session_state['ruolo_utente'] = 'portiere'
+                        st.session_state['nome_portiere_autenticato'] = nome_trovato
+                        st.rerun()
+                    else:
+                        st.error("Incorrect code.")
+                else:
+                    st.error("Incorrect code.")
     st.stop()
 
 # 1. PARSING FUNCTIONS & LOGIC
@@ -1116,8 +1125,11 @@ def applica_colori_expected(df_settore):
 def url_youtube_con_timestamp(link_base, secondi):
     """Costruisce l'URL che apre link_base già posizionato al secondo indicato (parametro t).
     Gestisce sia un link 'pulito' (youtube.com/watch?v=ID) sia uno che ha già altri parametri
-    nella query string. Restituisce None se manca il link o il timestamp."""
-    if not link_base or secondi is None:
+    nella query string. Restituisce None se manca il link o il timestamp — 'manca' include sia
+    None sia NaN: una colonna VIDEO_START_SECONDS letta da un dataframe pandas rappresenta un
+    valore mancante come NaN (float), non come None, quando è mescolata con valori numerici
+    validi nelle altre righe (es. i tag di una partita filmata solo in parte)."""
+    if not link_base or secondi is None or (isinstance(secondi, float) and pd.isna(secondi)):
         return None
     link_base = link_base.strip()
     separatore = '&' if '?' in link_base else '?'
@@ -6847,9 +6859,21 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
     if foto_b64_gk:
         st.image(foto_base64_a_bytes(foto_b64_gk), width=150)
 
-    df_stagione_totale, lista_partite = raccogli_stagione_per_portiere(st.session_state['db'], nome_portiere)
+    # Filtro per lega (facoltativo): il portiere sceglie tra le leghe che Admin ha già creato —
+    # non ne crea/gestisce nessuna lui stesso. Pensato anche per il futuro: cambiando stagione,
+    # potrà tornare indietro a vedere lo storico di una lega passata specifica.
+    chiave_filtro_gk = _chiave_css_sicura(nome_portiere)
+    nomi_leghe_gk = [c['nome'] for c in st.session_state['campionati']]
+    db_per_vista = st.session_state['db']
+    if nomi_leghe_gk:
+        lega_scelta_gk = st.selectbox("Filter by league (optional):", ["(All leagues)"] + nomi_leghe_gk, key=f"gk_lega_{chiave_filtro_gk}")
+        if lega_scelta_gk != "(All leagues)":
+            campionato_gk = next(c for c in st.session_state['campionati'] if c['nome'] == lega_scelta_gk)
+            db_per_vista = partite_in_campionato(st.session_state['db'], campionato_gk)
+
+    df_stagione_totale, lista_partite = raccogli_stagione_per_portiere(db_per_vista, nome_portiere)
     if df_stagione_totale.empty:
-        st.info("No matches with your data have been uploaded yet — check back after your next game.")
+        st.info("No matches found for this selection — check back after your next game, or try a different league filter.")
         return
 
     dati_per_portiere = {nome_portiere: lista_partite}
@@ -6974,7 +6998,7 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
                 if url_tag:
                     st.link_button("▶️ Watch", url_tag)
                 else:
-                    st.caption("No timestamp")
+                    st.caption("🚫 Link not available")
         if len(df_video) > 200:
             st.caption(f"Showing the first 200 of {len(df_video)} matching shots — narrow the filters above to see others.")
 
@@ -6982,7 +7006,7 @@ if st.session_state.get('ruolo_utente') == 'portiere':
     mostra_vista_portiere(st.session_state['nome_portiere_autenticato'])
     st.stop()
 
-tab1, tab2, tab3, tab4, tab7, tab6, tab5 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🌍 Universal Stats', '🎬 Tag & Go Analysis', '🏋️ Training Sessions'])
+tab1, tab2, tab3, tab4, tab7, tab6, tab5, tab8 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🌍 Universal Stats', '🎬 Tag & Go Analysis', '🏋️ Training Sessions', '🎬 YouTube Links'])
 
 with tab1:
     _t_tab1 = time.time()
@@ -7830,54 +7854,6 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     os.remove(_file_da_rimuovere)
             st.success("All data has been reset. The app is back to its starting point.")
             st.rerun()
-
-        # ------------------------------------------------------------
-        # LINK YOUTUBE PER PARTITA (progetto "A Gold GK stats"): solo Admin può inserirli o
-        # modificarli — i portieri li vedono solo in forma di pulsante "Watch" già pronto,
-        # mai come campo modificabile.
-        # ------------------------------------------------------------
-        st.markdown("---")
-        st.subheader("🎬 YouTube Links per Match")
-        st.caption("Paste the YouTube link for each match here — goalkeepers will then see a "
-                   "'Watch' button next to every one of their tagged shots, already positioned "
-                   "at the right second. They never see or edit this list themselves.")
-        tutte_le_partite_admin = sorted(
-            set((m['nome'], str(m['data'])) for m in st.session_state['db'] + st.session_state.get('db_tiratori', [])),
-            key=lambda t: t[1]
-        )
-        if not tutte_le_partite_admin:
-            st.info("No matches uploaded yet.")
-        else:
-            for nome_p, data_p in tutte_le_partite_admin:
-                chiave_p = f"{nome_p}|{data_p}"
-                link_attuale = st.session_state['link_youtube_partite'].get(chiave_p, '')
-                nuovo_link = st.text_input(
-                    f"{nome_p} ({data_p})", value=link_attuale, key=f"yt_link_{_chiave_css_sicura(chiave_p)}"
-                )
-                if nuovo_link != link_attuale:
-                    if nuovo_link.strip():
-                        st.session_state['link_youtube_partite'][chiave_p] = nuovo_link.strip()
-                    else:
-                        st.session_state['link_youtube_partite'].pop(chiave_p, None)
-                    salva_link_youtube_su_disco(st.session_state['link_youtube_partite'])
-                    st.rerun()
-
-        # ------------------------------------------------------------
-        # ANTEPRIMA VISTA PORTIERE (Admin-only): stessa vista che vede il portiere dopo il suo
-        # login — utile per controllare cosa vedrà, senza dover conoscere/usare la sua password.
-        # Dentro un expander perché è una vista pesante (molti grafici/tabelle): resta chiusa
-        # finché Admin non la richiede esplicitamente.
-        # ------------------------------------------------------------
-        st.markdown("---")
-        with st.expander("🧤 Preview a Goalkeeper's View (exactly what they see after logging in)"):
-            nomi_portiere_admin = sorted(set(
-                gk for match in st.session_state['db'] for gk in match['dati']['PORTIERE_ID'].dropna().unique()
-            ))
-            if not nomi_portiere_admin:
-                st.info("No goalkeepers found in the uploaded data yet.")
-            else:
-                portiere_da_vedere = st.selectbox("Goalkeeper:", nomi_portiere_admin, key="admin_preview_gk_scelto")
-                mostra_vista_portiere(portiere_da_vedere, modalita_anteprima=True)
 
 st.sidebar.caption(f"   • Upload Match Sheets: {time.time() - _t_tab1:.1f}s")
 with tab2:
@@ -10779,4 +10755,72 @@ with tab7:
 # sidebar per capire se un'operazione "lenta" percepita in una sezione viene in realtà dal
 # lavoro cumulativo di TUTTE le sezioni ad ogni esecuzione.
 st.sidebar.caption(f"   • Universal Stats (tab7): {time.time() - _t_tab7:.1f}s")
+
+with tab8:
+    _t_tab8 = time.time()
+    st.header("🎬 YouTube Links")
+    st.caption("Reserved staff section — one YouTube link per match, used to build a direct "
+               "'Watch' button next to every tagged shot in each goalkeeper's own view.")
+
+    # ------------------------------------------------------------
+    # YOUTUBE LINKS PER MATCH: ricerca (non più un elenco di tutte le partite) — prima si
+    # restringe per lega (facoltativo), poi si sceglie la partita specifica da un menu che
+    # Streamlit rende già ricercabile digitando.
+    # ------------------------------------------------------------
+    st.subheader("🔎 YouTube Links per Match")
+    tutte_le_partite_yt = sorted(
+        set((m['nome'], str(m['data'])) for m in st.session_state['db'] + st.session_state.get('db_tiratori', [])),
+        key=lambda t: t[1]
+    )
+    if not tutte_le_partite_yt:
+        st.info("No matches uploaded yet.")
+    else:
+        nomi_leghe_yt = [c['nome'] for c in st.session_state['campionati']]
+        lega_scelta_yt = st.selectbox("Filter by league (optional):", ["(All leagues)"] + nomi_leghe_yt, key="yt_filtro_lega")
+
+        if lega_scelta_yt == "(All leagues)":
+            partite_disponibili_yt = tutte_le_partite_yt
+        else:
+            campionato_yt = next(c for c in st.session_state['campionati'] if c['nome'] == lega_scelta_yt)
+            partite_gk_yt = partite_in_campionato(st.session_state['db'], campionato_yt)
+            partite_tir_yt = partite_in_campionato(st.session_state.get('db_tiratori', []), campionato_yt)
+            partite_disponibili_yt = sorted(
+                set((m['nome'], str(m['data'])) for m in partite_gk_yt + partite_tir_yt), key=lambda t: t[1]
+            )
+
+        if not partite_disponibili_yt:
+            st.info("No matches found for this league.")
+        else:
+            etichette_partite_yt = [f"{n} ({d})" for n, d in partite_disponibili_yt]
+            scelta_etichetta_yt = st.selectbox("Search and select a match:", etichette_partite_yt, key="yt_match_scelto")
+            idx_scelto_yt = etichette_partite_yt.index(scelta_etichetta_yt)
+            nome_p, data_p = partite_disponibili_yt[idx_scelto_yt]
+            chiave_p = f"{nome_p}|{data_p}"
+            link_attuale = st.session_state['link_youtube_partite'].get(chiave_p, '')
+            nuovo_link = st.text_input("YouTube link for this match:", value=link_attuale, key=f"yt_link_{_chiave_css_sicura(chiave_p)}")
+            if st.button("💾 Save link", key=f"yt_save_{_chiave_css_sicura(chiave_p)}"):
+                if nuovo_link.strip():
+                    st.session_state['link_youtube_partite'][chiave_p] = nuovo_link.strip()
+                else:
+                    st.session_state['link_youtube_partite'].pop(chiave_p, None)
+                salva_link_youtube_su_disco(st.session_state['link_youtube_partite'])
+                st.success("Saved.")
+                st.rerun()
+
+    # ------------------------------------------------------------
+    # ANTEPRIMA VISTA PORTIERE: stessa vista che vede il portiere dopo il suo login — utile per
+    # controllare cosa vedrà, senza dover conoscere/usare la sua password.
+    # ------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("🧤 Preview a Goalkeeper's View (exactly what they see after logging in)"):
+        nomi_portiere_admin = sorted(set(
+            gk for match in st.session_state['db'] for gk in match['dati']['PORTIERE_ID'].dropna().unique()
+        ))
+        if not nomi_portiere_admin:
+            st.info("No goalkeepers found in the uploaded data yet.")
+        else:
+            portiere_da_vedere = st.selectbox("Goalkeeper:", nomi_portiere_admin, key="admin_preview_gk_scelto")
+            mostra_vista_portiere(portiere_da_vedere, modalita_anteprima=True)
+
+st.sidebar.caption(f"   • YouTube Links: {time.time() - _t_tab8:.1f}s")
 st.sidebar.caption(f"⏱️ Full script run: {time.time() - _t_inizio_esecuzione_script:.1f}s")
