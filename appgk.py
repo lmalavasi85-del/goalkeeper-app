@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v38 - 2026-09-19 - Strumento diagnostico esteso: ora verifica anche se il timestamp video è presente per ogni partita, non solo se il link esiste"
+APP_VERSION = "v39 - 2026-09-19 - GK Ranking nella vista Portiere ora include anche il breakdown per macro-sector (come in Universal Stats), non solo la classifica generale"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -7910,11 +7910,26 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
         frammenti_lega = [m['dati'] for m in partite_lega_gk] + [m['dati'] for m in extra_tir_lega]
         df_lega = pd.concat(frammenti_lega, ignore_index=True) if frammenti_lega else pd.DataFrame()
         gen_gk_lega, sotto_gk_lega = classifiche_portieri_universale(df_lega, soglia_tiri_minimi=100)
-        st.caption("Only goalkeepers with at least 100 total shots faced in this league are ranked.")
+        st.caption("Only goalkeepers with at least 100 total shots faced in this league are ranked — "
+                   "sorted by Save %, then Efficiency %, then shots faced. The same 100-shot threshold "
+                   "(on the TOTAL, not per macro-sector) applies to every macro-sector breakdown below too.")
         if gen_gk_lega.empty:
             st.info("No one meets the minimum shots threshold in this league yet.")
         else:
             st.dataframe(gen_gk_lega, use_container_width=True, hide_index=True)
+            if sotto_gk_lega:
+                with st.expander("📂 By macro-sector"):
+                    escludi_pochi_tiri_lega = st.checkbox(
+                        "Exclude goalkeepers with fewer than 5 shots in that macro-sector",
+                        key=f"gk_lega_min5_{chiave_filtro_gk}"
+                    )
+                    for etichetta_macro_lega, df_macro_lega in sotto_gk_lega.items():
+                        df_mostrata_lega = df_macro_lega[df_macro_lega['Shots Faced'] >= 5] if escludi_pochi_tiri_lega else df_macro_lega
+                        st.markdown(f"**{etichetta_macro_lega}**")
+                        if df_mostrata_lega.empty:
+                            st.caption("No one meets this threshold in this macro-sector.")
+                        else:
+                            st.dataframe(df_mostrata_lega, use_container_width=True, hide_index=True)
 
     # ------------------------------------------------------------
     # I MIEI TIRI SU VIDEO: elenco filtrabile dei propri tag, con link diretto al secondo
