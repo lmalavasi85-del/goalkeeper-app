@@ -1029,12 +1029,60 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v39 - 2026-09-19 - GK Ranking nella vista Portiere ora include anche il breakdown per macro-sector (come in Universal Stats), non solo la classifica generale"
+APP_VERSION = "v40 - 2026-09-19 - CORREZIONE BUG: il login Goalkeeper dava NameError (chiamava una funzione definita più avanti nel file) — ora la validazione password è autonoma"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
 st.title("🤾‍♂️ Goalkeeper Performance Index Analytics")
 st.markdown("Upload Excel sheets exported from *Videocoach (Sportimization)* to generate tactical charts and reports.")
+
+def _nomi_portiere_esistenti_per_login():
+    """Legge SOLO i nomi dei portieri già presenti nel database stagione, direttamente da
+    Google Sheets, in modo completamente autonomo — senza dipendere da carica_stagione_da_disco
+    o da nessun'altra funzione dell'app definita più avanti nel file. Necessario perché il gate
+    di login è vicino all'inizio del file: Python esegue il file linearmente dall'alto in basso,
+    quindi in questo punto non può ancora chiamare funzioni che verranno definite solo più
+    tardi. Restituisce un set di nomi (PORTIERE_ID); un set vuoto se Sheets non è raggiungibile
+    o configurato, senza sollevare eccezioni."""
+    nomi = set()
+    try:
+        if 'gcp_service_account' not in st.secrets or 'season_sheet_id' not in st.secrets:
+            return nomi
+        import gspread
+        from google.oauth2.service_account import Credentials
+        credenziali = Credentials.from_service_account_info(
+            dict(st.secrets['gcp_service_account']),
+            scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        )
+        client = gspread.authorize(credenziali)
+        foglio = client.open_by_key(st.secrets['season_sheet_id'])
+        worksheet = foglio.worksheet('SeasonData')
+        valori = worksheet.get_all_values()
+        for riga in valori[1:]:
+            if not riga or len(riga) < 9:
+                continue
+            try:
+                num_chunk = int(riga[7])
+            except (ValueError, IndexError):
+                continue
+            dati_json = ''.join(riga[8:8 + num_chunk])
+            # Il JSON è nel formato orient='split' di pandas: {"columns": [...], "data": [[...]]}
+            # — i nomi delle colonne compaiono UNA SOLA VOLTA in "columns", i valori sono
+            # posizionali in "data", non un {"PORTIERE_ID": "valore"} ripetuto per riga. Serve
+            # una vera deserializzazione per trovare l'indice della colonna, non una regex sul
+            # testo grezzo.
+            try:
+                struttura = json.loads(dati_json)
+                if 'PORTIERE_ID' in struttura.get('columns', []):
+                    idx_colonna = struttura['columns'].index('PORTIERE_ID')
+                    for riga_dati in struttura.get('data', []):
+                        if idx_colonna < len(riga_dati) and riga_dati[idx_colonna]:
+                            nomi.add(riga_dati[idx_colonna])
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
+    except Exception:
+        pass
+    return nomi
 
 # ---- Gate unico: nessuna sezione dell'app è visibile finché non si effettua l'accesso ----
 SUFFISSO_PASSWORD_PORTIERE = "_A_Gold_26-27"
@@ -1073,15 +1121,11 @@ if not st.session_state['app_authorized']:
                 # Sblocca SOLO la vista Portiere, mai il resto dell'app.
                 if codice_app_inserito.endswith(SUFFISSO_PASSWORD_PORTIERE):
                     nome_candidato = codice_app_inserito[:-len(SUFFISSO_PASSWORD_PORTIERE)]
-                    # Chiamata di caricamento mirata SOLO per validare il nome — il caricamento
-                    # normale (più avanti, in st.session_state['db']) avviene comunque al primo
-                    # giro utile dopo lo sblocco, quindi qui non serve salvare nulla in
-                    # session_state: serve solo sapere se questo nome esiste davvero.
-                    db_per_validazione = carica_stagione_da_disco()
-                    nomi_portiere_esistenti = set()
-                    for partita in db_per_validazione:
-                        if 'PORTIERE_ID' in partita['dati'].columns:
-                            nomi_portiere_esistenti.update(partita['dati']['PORTIERE_ID'].dropna().unique())
+                    # Lettura mirata SOLO per validare il nome — il caricamento normale (più
+                    # avanti, in st.session_state['db']) avviene comunque al primo giro utile
+                    # dopo lo sblocco, quindi qui non serve salvare nulla in session_state:
+                    # serve solo sapere se questo nome esiste davvero.
+                    nomi_portiere_esistenti = _nomi_portiere_esistenti_per_login()
                     nome_trovato = next((n for n in nomi_portiere_esistenti if n.lower() == nome_candidato.lower()), None)
                     if nome_trovato:
                         st.session_state['app_authorized'] = True
