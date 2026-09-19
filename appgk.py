@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v33 - 2026-09-19 - Logo login ingrandito (220px -> 380px) per maggiore nitidezza dei dettagli"
+APP_VERSION = "v34 - 2026-09-19 - Logo login centrato e molto più grande (650px, era 380px) — nessuna compressione: il file nel codice è identico all'originale, era solo mostrato piccolo"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1043,16 +1043,15 @@ if 'app_authorized' not in st.session_state:
     st.session_state['app_authorized'] = False
 
 if not st.session_state['app_authorized']:
-    col_logo_login, col_form_login = st.columns([1, 2])
-    with col_logo_login:
-        st.image(LOGO_BYTES, width=380)
-    with col_form_login:
-        st.title("Goalkeeper Method")
-        st.info("🔒 This app is password-protected.")
-        scelta_ruolo_login = st.radio("I am logging in as:", ["Admin", "Goalkeeper"], key="scelta_ruolo_login", horizontal=True)
-        with st.form(key="form_app_access", clear_on_submit=True):
-            codice_app_inserito = st.text_input("Access code", type="password", key="codice_app_input")
-            sbloccato_app = st.form_submit_button("Unlock")
+    col_logo_sx, col_logo_centro, col_logo_dx = st.columns([1, 2, 1])
+    with col_logo_centro:
+        st.image(LOGO_BYTES, width=650)
+    st.title("Goalkeeper Method")
+    st.info("🔒 This app is password-protected.")
+    scelta_ruolo_login = st.radio("I am logging in as:", ["Admin", "Goalkeeper"], key="scelta_ruolo_login", horizontal=True)
+    with st.form(key="form_app_access", clear_on_submit=True):
+        codice_app_inserito = st.text_input("Access code", type="password", key="codice_app_input")
+        sbloccato_app = st.form_submit_button("Unlock")
         if sbloccato_app:
             if scelta_ruolo_login == "Admin":
                 if codice_app_inserito == APP_ACCESS_CODE:
