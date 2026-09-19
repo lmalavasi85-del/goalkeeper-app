@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v37 - 2026-09-19 - Timeline mostrata al portiere ora senza testo extra (note del coach, 'palo' ecc.); aggiunto strumento diagnostico per il matching dei link video"
+APP_VERSION = "v38 - 2026-09-19 - Strumento diagnostico esteso: ora verifica anche se il timestamp video è presente per ogni partita, non solo se il link esiste"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -7936,6 +7936,18 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
             chiave_attesa = f"{p['label'].rsplit(' (', 1)[0]}|{p['data']}"
             trovato = "✅ match found" if chiave_attesa in link_map else "❌ no match"
             st.write(f"`{chiave_attesa}` — {trovato}")
+        st.caption("Video timestamp available per match (a link alone isn't enough — each shot "
+                   "also needs its own timestamp, saved when the match was first uploaded):")
+        if 'VIDEO_START_SECONDS' not in df_stagione_totale.columns:
+            st.write("❌ This entire dataset has no VIDEO_START_SECONDS column at all — every "
+                     "match here was uploaded before this feature existed, so no shot can have "
+                     "a clickable timestamp yet, regardless of the link. Re-uploading the "
+                     "original Excel file for a match will fix it for that match.")
+        else:
+            for p in lista_partite:
+                df_match_p = df_stagione_totale[df_stagione_totale['Match_Label'] == p['label']]
+                con_timestamp = df_match_p['VIDEO_START_SECONDS'].notna().sum()
+                st.write(f"`{p['label']}` — {con_timestamp}/{len(df_match_p)} shots have a timestamp")
     partite_con_video = sorted(set(
         p['label'] for p in lista_partite if f"{p['label'].rsplit(' (', 1)[0]}|{p['data']}" in link_map
     ))
