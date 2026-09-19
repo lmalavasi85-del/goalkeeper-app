@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v32 - 2026-09-19 - Nuovo logo Goalkeeper Method ad alta risoluzione (1024x1024) + A Gold GK stats: login Admin/Goalkeeper, tab YouTube Links, filtro lega"
+APP_VERSION = "v33 - 2026-09-19 - Logo login ingrandito (220px -> 380px) per maggiore nitidezza dei dettagli"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1045,7 +1045,7 @@ if 'app_authorized' not in st.session_state:
 if not st.session_state['app_authorized']:
     col_logo_login, col_form_login = st.columns([1, 2])
     with col_logo_login:
-        st.image(LOGO_BYTES, width=220)
+        st.image(LOGO_BYTES, width=380)
     with col_form_login:
         st.title("Goalkeeper Method")
         st.info("🔒 This app is password-protected.")
