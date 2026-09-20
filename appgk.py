@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v42 - 2026-09-20 - L'avviso 'Partial data' ora compare anche nel PDF di Single Match Analysis, non solo a schermo"
+APP_VERSION = "v44 - 2026-09-20 - CORREZIONE: l'avviso 'Partial data' per la vista Shooters (schermo e PDF) mostrava a volte la squadra sbagliata — ora riflette sempre la squadra/giocatore effettivamente selezionato"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -7407,7 +7407,7 @@ def legenda_expected_goals_pdf():
 
 def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_squadra_riepilogo=None, logo_squadra_b64=None, mappe_extra=None,
                          elenco_partite_analizzate=None, link_video_microzone=None, link_duelli_pdf=None,
-                         anagrafica_giocatori=None, link_personal_clips=None):
+                         anagrafica_giocatori=None, link_personal_clips=None, partita_completa=True):
     """dati_per_giocatore: dict {nome_giocatore: df_filtrato}. Genera un PDF con UNA PAGINA per
     ciascun giocatore (porta, tastiera e tabella macro-zone sulla stessa riga, note sotto).
     Se df_squadra_riepilogo è fornito (dataframe aggregato dell'intera selezione), il PDF apre
@@ -7636,6 +7636,22 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
                                                       dati_anagrafici_g, link_clip_g))
 
     elementi = [blocco_titolo, Spacer(1, 0.5 * cm)]
+    if not partita_completa:
+        stile_testo_avviso_tir = ParagraphStyle('TestoAvvisoTir', parent=stili['Normal'], fontSize=11,
+                                                  textColor=colors.HexColor('#664d03'), leading=14)
+        box_avviso_tir = Table([[Paragraph(
+            "<b>PARTIAL DATA</b> — this match's coverage is incomplete (missing minutes due "
+            "to a camera issue, no broadcast, etc.). Every chart and stat in this report reflects "
+            "only what was actually tagged, not the full match.", stile_testo_avviso_tir
+        )]], colWidths=[LARGHEZZA_MASSIMA_TABELLA_PDF])
+        box_avviso_tir.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fff3cd')),
+            ('BOX', (0, 0), (-1, -1), 0.75, colors.HexColor('#ffc107')),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elementi.append(box_avviso_tir)
+        elementi.append(Spacer(1, 0.4 * cm))
     if blocchi_pagine:
         elementi.extend(blocchi_pagine[0])
         for blocco in blocchi_pagine[1:]:
@@ -8199,6 +8215,19 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                          "Universal Stats, or any other cumulative section — those keep working "
                          "on whatever shots are present, exactly as before."
                 )
+                lato_parziale_u = "Both teams"
+                if partita_incompleta_u:
+                    lato_parziale_u = st.radio(
+                        "Whose shots are incomplete?",
+                        [f"{sq_home_u}'s shots only", f"{sq_away_u}'s shots only", "Both teams"],
+                        key=f"lato_parziale_{idx}", horizontal=True,
+                        help="A team's shots being incomplete also means the OPPOSING goalkeeper "
+                             "faced an incomplete sample (they're the same shots, seen from the two "
+                             "different sides) — the app applies the warning to both automatically. "
+                             "E.g. picking 'Bolzano's shots only' marks Bolzano's shooters data AND "
+                             "Conversano's goalkeeper data as partial, while Conversano's shooters "
+                             "and Bolzano's goalkeeper stay marked as complete."
+                    )
 
                 # Competizioni aperte (Sine Die o non ancora chiuse a questa data) che per squadra
                 # e data includerebbero automaticamente questa partita. Se ce n'è più di una (es.
@@ -8224,22 +8253,27 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                 try:
                     df_raw_u = pd.read_excel(f)
                     df_gk_h, df_gk_a, df_tir_h, df_tir_a, df_h2h_u, df_tiro_portiere_u = elabora_file_unificato(df_raw_u, sq_home_u, sq_away_u)
+                    # I tiri effettuati da una squadra e il portiere avversario che li ha subiti
+                    # sono la STESSA fetta di dati vista da due lati — se i tiri di Home sono
+                    # parziali, lo è anche il portiere di Away che li ha affrontati, e viceversa.
+                    home_shots_parziali_u = partita_incompleta_u and lato_parziale_u in (f"{sq_home_u}'s shots only", "Both teams")
+                    away_shots_parziali_u = partita_incompleta_u and lato_parziale_u in (f"{sq_away_u}'s shots only", "Both teams")
                     if not df_gk_h.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
+                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not away_shots_parziali_u})
                     if not df_gk_a.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
+                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not home_shots_parziali_u})
                     if not df_tir_h.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
                                             'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
+                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not home_shots_parziali_u})
                     if not df_tir_a.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
                                             'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
+                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not away_shots_parziali_u})
                     if not df_h2h_u.empty:
                         pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
                     if not df_tiro_portiere_u.empty:
@@ -8996,13 +9030,16 @@ with tab2:
         # Le sezioni cumulative (Seasonal Report, Universal Stats...) restano invariate: lì
         # l'obiettivo è il rendimento complessivo, non la singola partita, quindi il flag non
         # viene mai controllato — i tiri presenti in questa partita contribuiscono normalmente.
-        partita_completa_sel = st.session_state['db'][idx_match].get('partita_completa', True)
-        if vista_match == "Shooters" and db_tir_match:
-            partita_completa_sel = db_tir_match[0].get('partita_completa', True)
-        if not partita_completa_sel:
-            st.warning("⚠️ **Partial data** — this match's coverage is incomplete (missing minutes "
-                       "due to a camera issue, no broadcast, etc.). Every chart and stat below "
-                       "reflects only what was actually tagged, not the full match.")
+        # Per la vista Shooters il banner viene mostrato più sotto, DOPO che la squadra/il
+        # giocatore sono stati scelti: quella scelta è indipendente da questa (una partita può
+        # avere tiratori Home completi e Away parziali, o viceversa), quindi qui si può calcolare
+        # correttamente solo per Goalkeeper.
+        if vista_match == "Goalkeeper":
+            partita_completa_sel = st.session_state['db'][idx_match].get('partita_completa', True)
+            if not partita_completa_sel:
+                st.warning("⚠️ **Partial data** — this match's coverage is incomplete (missing minutes "
+                           "due to a camera issue, no broadcast, etc.). Every chart and stat below "
+                           "reflects only what was actually tagged, not the full match.")
 
         if vista_match == "Goalkeeper":
             st.subheader("📊 Team Goalkeeping Totals")
@@ -9487,6 +9524,15 @@ with tab2:
                 df_selezione_match_tir = df_squadra_completa_mt[df_squadra_completa_mt['TIRATORE_ID'] == giocatore_match_tir_scelto]
                 titolo_match_tir = giocatore_match_tir_scelto
 
+            # Calcolato QUI, non prima: la squadra di tiratori scelta è indipendente da quella
+            # eventualmente scelta per la vista Goalkeeper — una partita può avere i tiratori di
+            # una squadra completi e quelli dell'altra parziali (o viceversa).
+            partita_completa_match_tir = match_squadra_mt[0].get('partita_completa', True) if match_squadra_mt else True
+            if not partita_completa_match_tir:
+                st.warning("⚠️ **Partial data** — this match's coverage is incomplete (missing minutes "
+                           "due to a camera issue, no broadcast, etc.). Every chart and stat below "
+                           "reflects only what was actually tagged, not the full match.")
+
             if df_selezione_match_tir.empty:
                 st.info("No shots recorded for this selection.")
             else:
@@ -9638,7 +9684,8 @@ with tab2:
                                 note_pdf_mt,
                                 df_squadra_riepilogo=(df_squadra_completa_mt if modalita_match_tir == "Team" else None),
                                 logo_squadra_b64=logo_squadra_mt,
-                                mappe_extra=mappe_match_tir_correnti
+                                mappe_extra=mappe_match_tir_correnti,
+                                partita_completa=partita_completa_match_tir
                             )
                             st.download_button(
                                 label="⬇️ Download PDF", data=pdf_bytes_mt,
