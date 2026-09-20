@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v40 - 2026-09-19 - CORREZIONE BUG: il login Goalkeeper dava NameError (chiamava una funzione definita più avanti nel file) — ora la validazione password è autonoma"
+APP_VERSION = "v41 - 2026-09-19 - Nuovo: segnalazione 'Full match / Partial data' all'upload, con avviso visibile solo in Single Match Analysis; tutte le partite già caricate restano automaticamente 'Full match'"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -4663,6 +4663,7 @@ def _match_a_riga_sheet(match):
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
             str(bool(match.get('neutro', False))), json.dumps(match.get('campionati_esclusi', [])),
+            str(bool(match.get('partita_completa', True))),
             str(len(chunk))] + chunk
 
 def _riga_sheet_a_match(riga):
@@ -4671,19 +4672,31 @@ def _riga_sheet_a_match(riga):
     squadra_home = riga[3] or None if len(riga) > 3 else None
     squadra_away = riga[4] or None if len(riga) > 4 else None
     campionati_esclusi = []
-    # Tre formati possibili, dal più vecchio al più nuovo — un JSON vero non può MAI valere
+    partita_completa = True
+    # Quattro formati possibili, dal più vecchio al più nuovo — un JSON vero non può MAI valere
     # letteralmente 'True'/'False', e la lista campionati_esclusi (sempre '[...]') non può mai
-    # essere confusa con un numero puro (num_chunk): due discriminatori sicuri.
+    # essere confusa con un numero puro (num_chunk): discriminatori sicuri.
     if len(riga) >= 6 and riga[5].strip() in ('True', 'False'):
         neutro = riga[5].strip() == 'True'
         if len(riga) >= 7 and riga[6].strip().startswith('['):
-            # Formato più recente: colonna 6 = campionati_esclusi (JSON), colonna 7 = num_chunk
             try:
                 campionati_esclusi = json.loads(riga[6])
             except Exception:
                 campionati_esclusi = []
-            num_chunk = int(riga[7]) if len(riga) > 7 and riga[7].strip().isdigit() else 0
-            dati_json = ''.join(riga[8:8 + num_chunk])
+            if len(riga) >= 8 and riga[7].strip() in ('True', 'False'):
+                # Formato più recente: colonna 7 = partita_completa, colonna 8 = num_chunk.
+                # Partite caricate prima che questo campo esistesse non arrivano mai qui (la
+                # loro colonna 7 è direttamente un numero), quindi restano correttamente
+                # partita_completa=True di default, impostato sopra — nessuna vecchia partita
+                # va segnalata come parziale per errore.
+                partita_completa = riga[7].strip() == 'True'
+                num_chunk = int(riga[8]) if len(riga) > 8 and riga[8].strip().isdigit() else 0
+                dati_json = ''.join(riga[9:9 + num_chunk])
+            else:
+                # Formato precedente: colonna 6 = campionati_esclusi, colonna 7 = num_chunk,
+                # niente partita_completa salvato — resta True di default, impostato sopra.
+                num_chunk = int(riga[7]) if len(riga) > 7 and riga[7].strip().isdigit() else 0
+                dati_json = ''.join(riga[8:8 + num_chunk])
         else:
             # Formato intermedio: colonna 6 = num_chunk direttamente, niente campionati_esclusi
             num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
@@ -4729,7 +4742,7 @@ def _riga_sheet_a_match(riga):
         data_valore = data_str
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
             'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro,
-            'campionati_esclusi': campionati_esclusi}
+            'campionati_esclusi': campionati_esclusi, 'partita_completa': partita_completa}
 
 def _correggi_gpi_empty_goal(df):
     """Corregge IN-PLACE il GPI dei tiri Empty Goal in un dataframe già caricato: gol o miss a
@@ -4876,6 +4889,7 @@ def _match_a_riga_sheet_tiratori(match):
     return [match['nome'], str(match['data']), match['squadra'],
             match.get('squadra_home') or '', match.get('squadra_away') or '',
             str(bool(match.get('neutro', False))), json.dumps(match.get('campionati_esclusi', [])),
+            str(bool(match.get('partita_completa', True))),
             str(len(chunk))] + chunk
 
 def _riga_sheet_a_match_tiratori(riga):
@@ -4884,9 +4898,10 @@ def _riga_sheet_a_match_tiratori(riga):
     squadra_home = riga[3] if len(riga) > 3 and riga[3] else None
     squadra_away = riga[4] if len(riga) > 4 and riga[4] else None
     campionati_esclusi = []
+    partita_completa = True
     # Stessa logica di _riga_sheet_a_match: un JSON vero non può mai valere letteralmente
     # 'True'/'False', e la lista campionati_esclusi (sempre '[...]') non può mai essere confusa
-    # con un numero puro (num_chunk) — due discriminatori sicuri per i tre formati possibili.
+    # con un numero puro (num_chunk) — discriminatori sicuri per i quattro formati possibili.
     if len(riga) >= 6 and riga[5].strip() in ('True', 'False'):
         neutro = riga[5].strip() == 'True'
         if len(riga) >= 7 and riga[6].strip().startswith('['):
@@ -4894,8 +4909,13 @@ def _riga_sheet_a_match_tiratori(riga):
                 campionati_esclusi = json.loads(riga[6])
             except Exception:
                 campionati_esclusi = []
-            num_chunk = int(riga[7]) if len(riga) > 7 and riga[7].strip().isdigit() else 0
-            dati_json = ''.join(riga[8:8 + num_chunk])
+            if len(riga) >= 8 and riga[7].strip() in ('True', 'False'):
+                partita_completa = riga[7].strip() == 'True'
+                num_chunk = int(riga[8]) if len(riga) > 8 and riga[8].strip().isdigit() else 0
+                dati_json = ''.join(riga[9:9 + num_chunk])
+            else:
+                num_chunk = int(riga[7]) if len(riga) > 7 and riga[7].strip().isdigit() else 0
+                dati_json = ''.join(riga[8:8 + num_chunk])
         else:
             num_chunk = int(riga[6]) if len(riga) > 6 and riga[6].strip().isdigit() else 0
             dati_json = ''.join(riga[7:7 + num_chunk])
@@ -4915,7 +4935,7 @@ def _riga_sheet_a_match_tiratori(riga):
         data_valore = data_str
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
             'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro,
-            'campionati_esclusi': campionati_esclusi}
+            'campionati_esclusi': campionati_esclusi, 'partita_completa': partita_completa}
 
 def carica_stagione_tiratori_da_disco():
     if _google_sheets_configurato():
@@ -8148,6 +8168,17 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                          "home-crowd effect. Nothing else changes: only the Home/Away split stat "
                          "ignores this match — everything else about it is analyzed as normal."
                 )
+                partita_incompleta_u = st.checkbox(
+                    "⚠️ Partial data — some minutes of this match are missing (camera failure, "
+                    "no broadcast, etc.)",
+                    key=f"parziale_{idx}",
+                    help="Use this when the file doesn't cover the full match (e.g. it stops at "
+                         "minute 37, or has a few random gaps) — a clear warning will then show "
+                         "up in Single Game Analysis for this match, so anyone looking at it "
+                         "knows the data is incomplete. Doesn't affect Seasonal Report, "
+                         "Universal Stats, or any other cumulative section — those keep working "
+                         "on whatever shots are present, exactly as before."
+                )
 
                 # Competizioni aperte (Sine Die o non ancora chiuse a questa data) che per squadra
                 # e data includerebbero automaticamente questa partita. Se ce n'è più di una (es.
@@ -8176,19 +8207,19 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     if not df_gk_h.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                           'campionati_esclusi': campionati_esclusi_u})
+                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
                     if not df_gk_a.empty:
                         pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                           'campionati_esclusi': campionati_esclusi_u})
+                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
                     if not df_tir_h.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
                                             'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                            'campionati_esclusi': campionati_esclusi_u})
+                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
                     if not df_tir_a.empty:
                         pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
                                             'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                            'campionati_esclusi': campionati_esclusi_u})
+                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not partita_incompleta_u})
                     if not df_h2h_u.empty:
                         pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
                     if not df_tiro_portiere_u.empty:
@@ -8939,6 +8970,19 @@ with tab2:
             vista_match = st.radio("View:", ["Goalkeeper", "Shooters"], horizontal=True, key="vista_match_tipo")
         else:
             vista_match = "Goalkeeper"
+
+        # Avviso "dati parziali" — solo qui in Single Match Analysis, dove ha senso capire perché
+        # un grafico o una statistica di QUESTA partita specifica si ferma prima del previsto.
+        # Le sezioni cumulative (Seasonal Report, Universal Stats...) restano invariate: lì
+        # l'obiettivo è il rendimento complessivo, non la singola partita, quindi il flag non
+        # viene mai controllato — i tiri presenti in questa partita contribuiscono normalmente.
+        partita_completa_sel = st.session_state['db'][idx_match].get('partita_completa', True)
+        if vista_match == "Shooters" and db_tir_match:
+            partita_completa_sel = db_tir_match[0].get('partita_completa', True)
+        if not partita_completa_sel:
+            st.warning("⚠️ **Partial data** — this match's coverage is incomplete (missing minutes "
+                       "due to a camera issue, no broadcast, etc.). Every chart and stat below "
+                       "reflects only what was actually tagged, not the full match.")
 
         if vista_match == "Goalkeeper":
             st.subheader("📊 Team Goalkeeping Totals")
