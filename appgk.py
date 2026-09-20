@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v41 - 2026-09-19 - Nuovo: segnalazione 'Full match / Partial data' all'upload, con avviso visibile solo in Single Match Analysis; tutte le partite già caricate restano automaticamente 'Full match'"
+APP_VERSION = "v42 - 2026-09-20 - L'avviso 'Partial data' ora compare anche nel PDF di Single Match Analysis, non solo a schermo"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -3986,7 +3986,7 @@ def _separatore():
 
 def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_portieri, df_blocchi, df_match, fig_blocchi,
                         includi_mappa_generale=True, includi_mappe_per_portiere=True, mappe_extra=None,
-                        squadra_home=None, squadra_away=None, riga_gpi_squadra=None):
+                        squadra_home=None, squadra_away=None, riga_gpi_squadra=None, partita_completa=True):
     """Costruisce il PDF completo della pagina Single Game Analysis e lo restituisce come bytes.
     includi_mappa_generale: aggiunge la porta con tutti i tiri del match (tutti i portieri insieme).
     includi_mappe_per_portiere: aggiunge una porta per ciascun portiere che ha subito almeno un tiro.
@@ -4035,6 +4035,26 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     ]))
     elementi.append(blocco_titolo)
     elementi.append(Spacer(1, 0.5*cm))
+
+    # Avviso "dati parziali" — stesso identico significato del banner giallo mostrato a schermo
+    # in Single Game Analysis: compare SOLO quando la partita è segnata come incompleta, non
+    # aggiunge nulla altrimenti.
+    if not partita_completa:
+        stile_testo_avviso = ParagraphStyle('TestoAvviso', parent=stili['Normal'], fontSize=11,
+                                             textColor=colors.HexColor('#664d03'), leading=14)
+        box_avviso = Table([[Paragraph(
+            "<b>PARTIAL DATA</b> — this match's coverage is incomplete (missing minutes due "
+            "to a camera issue, no broadcast, etc.). Every chart and stat in this report reflects "
+            "only what was actually tagged, not the full match.", stile_testo_avviso
+        )]], colWidths=[LARGHEZZA_MASSIMA_TABELLA_PDF])
+        box_avviso.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fff3cd')),
+            ('BOX', (0, 0), (-1, -1), 0.75, colors.HexColor('#ffc107')),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elementi.append(box_avviso)
+        elementi.append(Spacer(1, 0.4*cm))
 
     # Totale di squadra (tutti i portieri di questa partita insieme), prima della tabella per
     # singolo portiere — dà subito il quadro complessivo della gara.
@@ -9422,7 +9442,8 @@ with tab2:
                             includi_mappe_per_portiere=includi_per_gk_pdf,
                             mappe_extra=st.session_state.get('mappe_extra_pdf_match', {}).get(scelta, []),
                             squadra_home=squadra_home_match,
-                            squadra_away=squadra_away_match
+                            squadra_away=squadra_away_match,
+                            partita_completa=partita_completa_sel
                         )
                         nome_file_pdf = f"Report_{scelta}".replace(' ', '_').replace('/', '-') + ".pdf"
                         st.download_button(
