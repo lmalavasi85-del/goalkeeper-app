@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v44 - 2026-09-20 - CORREZIONE: l'avviso 'Partial data' per la vista Shooters (schermo e PDF) mostrava a volte la squadra sbagliata — ora riflette sempre la squadra/giocatore effettivamente selezionato"
+APP_VERSION = "v45 - 2026-09-20 - CORREZIONE URGENTE: il login Goalkeeper non riconosceva i nomi dei portieri delle partite caricate dopo l'aggiunta di 'Partial data' — sistemato"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1061,11 +1061,19 @@ def _nomi_portiere_esistenti_per_login():
         for riga in valori[1:]:
             if not riga or len(riga) < 9:
                 continue
+            # Stesso discriminatore sicuro usato in _riga_sheet_a_match: 'True'/'False' non è
+            # mai un numero di chunk valido, quindi distingue in modo affidabile il formato più
+            # recente (con partita_completa salvato in colonna 7, chunk da colonna 9) da quello
+            # precedente (num_chunk direttamente in colonna 7, chunk da colonna 8).
+            if riga[7].strip() in ('True', 'False'):
+                idx_num_chunk, idx_inizio_chunk = 8, 9
+            else:
+                idx_num_chunk, idx_inizio_chunk = 7, 8
             try:
-                num_chunk = int(riga[7])
+                num_chunk = int(riga[idx_num_chunk])
             except (ValueError, IndexError):
                 continue
-            dati_json = ''.join(riga[8:8 + num_chunk])
+            dati_json = ''.join(riga[idx_inizio_chunk:idx_inizio_chunk + num_chunk])
             # Il JSON è nel formato orient='split' di pandas: {"columns": [...], "data": [[...]]}
             # — i nomi delle colonne compaiono UNA SOLA VOLTA in "columns", i valori sono
             # posizionali in "data", non un {"PORTIERE_ID": "valore"} ripetuto per riga. Serve
