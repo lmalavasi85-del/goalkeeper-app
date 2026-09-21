@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v45 - 2026-09-20 - CORREZIONE URGENTE: il login Goalkeeper non riconosceva i nomi dei portieri delle partite caricate dopo l'aggiunta di 'Partial data' — sistemato"
+APP_VERSION = "v47 - 2026-09-21 - Supporto Money Time manuale (colonna 'MONEY TIME' nel file, tipicamente dal Video Tagger giovani): forza il flag invece di calcolarlo da minuto/punteggio; nel grafico di una categoria alternativa i tiri Money Time vanno in fondo, evidenziati in giallo, con etichette 'Shot N'"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2158,7 +2158,7 @@ def analizza_timeline(timeline_str):
 
     return minuti_totali, timeline_normalizzata, scarto, punteggio_pulito
 
-def calcola_gpi_riga(macro, esito, minuti, scarto):
+def calcola_gpi_riga(macro, esito, minuti, scarto, money_time_manuale=None):
     e = str(esito).lower().strip()
     # Money Time = SOLO dal minuto 50'00'' in avanti (soglia fissa), con lo scarto punteggio
     # ENTRO -5/+5 nel momento in cui il tiro viene effettuato — PRIMA di conoscerne l'esito.
@@ -2167,7 +2167,12 @@ def calcola_gpi_riga(macro, esito, minuti, scarto):
     # punteggio in timeline riflette già la rete appena segnata — quindi va letta una forbice
     # più larga, da -6 a +6, per includere correttamente anche i tiri effettuati esattamente
     # al limite (es. un goal segnato sul -5 diventa -6 nella timeline).
-    if e in ['goal', 'g']:
+    # money_time_manuale: se non None, un coach/ragazzo l'ha segnato lui stesso al momento del
+    # tagging (es. il Video Tagger per i giovani, dove non c'è un vero minuto/punteggio da cui
+    # calcolarlo) — quel valore vince sempre sul calcolo automatico sottostante.
+    if money_time_manuale is not None:
+        is_money_time = money_time_manuale
+    elif e in ['goal', 'g']:
         is_money_time = (minuti >= 50) and (-6 <= scarto <= 6)
     else:
         is_money_time = (minuti >= 50) and (-5 <= scarto <= 5)
@@ -2854,8 +2859,11 @@ def elabora_file_portieri(df_raw):
     df['macro_settore'] = df['TIRO_CLEAN'].apply(mappa_macro_settore)
 
     gpi_list, stress_list = [], []
+    ha_money_time_manuale = 'MONEY_TIME_MANUALE' in df.columns
     for _, row in df.iterrows():
-        gp_val, str_bool = calcola_gpi_riga(row['macro_settore'], row['RESULT_CLEAN'], row['Minuti_Gara'], row['Scarto_Punteggio'])
+        mt_manuale = row['MONEY_TIME_MANUALE'] if ha_money_time_manuale else None
+        gp_val, str_bool = calcola_gpi_riga(row['macro_settore'], row['RESULT_CLEAN'], row['Minuti_Gara'],
+                                             row['Scarto_Punteggio'], money_time_manuale=mt_manuale)
         gpi_list.append(gp_val)
         stress_list.append(str_bool)
     df['GPI_Tiro'] = gpi_list
@@ -3001,6 +3009,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
     c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
     c_throwsector = _trova_colonna(['throw sector', 'throw_sector'])
     c_time = _trova_colonna(['timeline', 'tempo', 'minut', 'note'])
+    c_moneytime = _trova_colonna(['money time', 'money_time'])
     c_start_time = _trova_colonna(['start time', 'start_time'])
     c_tiro_portiere = trova_colonna_tiro_portiere(df_raw.columns)
     colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
@@ -3073,6 +3082,14 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         throw_sector = r[c_throwsector] if c_throwsector is not None else None
         porta_vuota = e_porta_vuota(throw_sector)
         video_start_secondi = secondi_da_orario_video(r[c_start_time]) if c_start_time is not None else None
+        # None = nessuna colonna Money Time nel file, quindi GPIA continua a calcolarlo da sé
+        # (minuto/punteggio) come sempre. Se la colonna c'è (tipicamente file del Video Tagger
+        # per i giovani, dove minuto/punteggio non sono tracciati e quel calcolo non avrebbe
+        # senso), il valore inserito manualmente vince sempre sul calcolo automatico.
+        money_time_manuale = None
+        if c_moneytime is not None:
+            valore_mt_grezzo = str(r[c_moneytime]).strip().lower() if pd.notna(r[c_moneytime]) else ''
+            money_time_manuale = valore_mt_grezzo in ('yes', 'true', '1', 'x', 'si', 'sì')
         valori_avanzati_gk = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
                                if chiave in DIMENSIONI_TAGGING_PORTIERE}
         valori_avanzati_tir = {nome_colonna: r[nome_colonna] for chiave, nome_colonna in colonne_avanzate_trovate.items()
@@ -3080,7 +3097,8 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
 
         if portiere:
             riga_gk = {'PORTIERE': portiere, 'TIRO': tiro, 'RESULT': result, 'TIMELINE': timeline,
-                       'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota, 'VIDEO_START_SECONDS': video_start_secondi}
+                       'GOAL SECTOR': goal_sector, 'EMPTY_GOAL': porta_vuota, 'VIDEO_START_SECONDS': video_start_secondi,
+                       'MONEY_TIME_MANUALE': money_time_manuale}
             riga_gk.update(valori_avanzati_gk)
             (righe_gk_home if squadra_portiere == 'home' else righe_gk_away).append(riga_gk)
 
@@ -4771,6 +4789,151 @@ def _riga_sheet_a_match(riga):
     return {'nome': nome, 'data': data_valore, 'squadra': squadra,
             'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro,
             'campionati_esclusi': campionati_esclusi, 'partita_completa': partita_completa}
+
+# ============================================================
+# DATABASE "CATEGORIA ALTERNATIVA" — un secondo compartimento, completamente separato dalla
+# stagione principale, per partite che Luigi sceglie di NON mischiare con quella (es. portieri
+# giovanili che seguono anche come coach, campionati minori, ecc.). Ogni partita porta un'etichetta
+# di categoria a testo libero (es. "Under 16"), scelta da Luigi al momento del caricamento — può
+# essercene più di una. Solo portieri: queste partite non hanno mai un lato tiratori.
+# Visibile SOLO in Single Game Analysis e Seasonal Report; MAI in Universal Stats, GK Ranking,
+# Shooting Trend, Tag & Go — quelle sezioni continuano a leggere solo il database principale.
+# ============================================================
+ALT_CATEGORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alt_category_data.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_categoria_alt():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('AltCategoryData')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='AltCategoryData', rows=1000, cols=50)
+        worksheet.append_row(['categoria', 'nome', 'data', 'squadra', 'squadra_home', 'squadra_away',
+                               'neutro', 'partita_completa', 'num_chunk'])
+    return _WorksheetConRetry(worksheet)
+
+def _match_a_riga_sheet_alt(match):
+    dati_json = match['dati'].to_json(orient='split', date_format='iso')
+    chunk = _dividi_json_in_chunk(dati_json)
+    return [match.get('categoria', ''), match['nome'], str(match['data']), match['squadra'],
+            match.get('squadra_home') or '', match.get('squadra_away') or '',
+            str(bool(match.get('neutro', False))), str(bool(match.get('partita_completa', True))),
+            str(len(chunk))] + chunk
+
+def _riga_sheet_a_match_alt(riga):
+    from datetime import datetime as _dt
+    categoria, nome, data_str, squadra = riga[0], riga[1], riga[2], riga[3]
+    squadra_home = riga[4] or None if len(riga) > 4 else None
+    squadra_away = riga[5] or None if len(riga) > 5 else None
+    neutro = riga[6].strip() == 'True' if len(riga) > 6 else False
+    partita_completa = riga[7].strip() == 'True' if len(riga) > 7 else True
+    try:
+        num_chunk = int(riga[8]) if len(riga) > 8 and riga[8].strip().isdigit() else 0
+    except (ValueError, IndexError):
+        num_chunk = 0
+    dati_json = ''.join(riga[9:9 + num_chunk])
+    df = pd.read_json(io.StringIO(dati_json), orient='split')
+    if 'EMPTY_GOAL' in df.columns:
+        df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool)
+        _correggi_gpi_empty_goal(df)
+    if 'PORTIERE_ID' not in df.columns and 'PORTIERE_CLEAN' in df.columns:
+        df['PORTIERE_ID'] = df['PORTIERE_CLEAN'].apply(identita_giocatore)
+    try:
+        data_valore = _dt.strptime(data_str, '%Y-%m-%d').date()
+    except Exception:
+        data_valore = data_str
+    return {'categoria': categoria, 'nome': nome, 'data': data_valore, 'squadra': squadra,
+            'squadra_home': squadra_home, 'squadra_away': squadra_away, 'dati': df, 'neutro': neutro,
+            'partita_completa': partita_completa}
+
+def carica_categoria_alt_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_categoria_alt()
+            valori = worksheet.get_all_values()
+            if len(valori) <= 1:
+                if os.path.exists(ALT_CATEGORY_FILE):
+                    try:
+                        with open(ALT_CATEGORY_FILE, 'rb') as f:
+                            db_backup = pickle.load(f)
+                        if db_backup:
+                            st.sidebar.error(
+                                f"⚠️ Google Sheets alternate-category data looks EMPTY, but a local "
+                                f"backup with {len(db_backup)} match(es) was found — using the backup "
+                                f"instead. Please check Google Sheets' Version History on the "
+                                f"'AltCategoryData' tab to confirm and restore it there too."
+                            )
+                            return db_backup
+                    except Exception:
+                        pass
+                return []
+            return [_riga_sheet_a_match_alt(riga) for riga in valori[1:] if riga and riga[1]]
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load alternate-category data from Google Sheets: {e}")
+    if os.path.exists(ALT_CATEGORY_FILE):
+        try:
+            with open(ALT_CATEGORY_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_categoria_alt_su_disco(db, permetti_svuotamento=False):
+    try:
+        with open(ALT_CATEGORY_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(db, _f_backup_preventivo)
+    except Exception:
+        pass
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_categoria_alt()
+            righe = [_match_a_riga_sheet_alt(m) for m in db]
+            for riga in righe:
+                for cella in riga:
+                    if len(str(cella)) > 49000:
+                        raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "alternate-category match(es)")
+            worksheet.clear()
+            worksheet.append_row(['categoria', 'nome', 'data', 'squadra', 'squadra_home', 'squadra_away',
+                                   'neutro', 'partita_completa', 'num_chunk'])
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save alternate-category data to Google Sheets: {e}")
+            if not db:
+                return
+    with open(ALT_CATEGORY_FILE, 'wb') as f:
+        pickle.dump(db, f)
+
+def aggiungi_partita_categoria_alt(match):
+    """Aggiunge UNA sola partita al database categoria alternativa toccando solo quella riga
+    (append), non l'intero foglio — stesso principio già applicato ai link YouTube: ogni
+    caricamento costa 1 sola chiamata di scrittura invece di riscrivere tutto ogni volta."""
+    if 'categoria_alt_db' not in st.session_state:
+        st.session_state['categoria_alt_db'] = carica_categoria_alt_da_disco()
+    st.session_state['categoria_alt_db'].append(match)
+    try:
+        with open(ALT_CATEGORY_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(st.session_state['categoria_alt_db'], _f_backup_preventivo)
+    except Exception:
+        pass
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_categoria_alt()
+            riga = _match_a_riga_sheet_alt(match)
+            for cella in riga:
+                if len(str(cella)) > 49000:
+                    raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
+            worksheet.append_row(riga)
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save this match to Google Sheets: {e}")
 
 def _correggi_gpi_empty_goal(df):
     """Corregge IN-PLACE il GPI dei tiri Empty Goal in un dataframe già caricato: gol o miss a
@@ -6852,6 +7015,12 @@ if 'db' not in st.session_state:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
+if 'categoria_alt_db' not in st.session_state:
+    st.session_state['categoria_alt_db'] = carica_categoria_alt_da_disco()
+    for _m in st.session_state['categoria_alt_db']:
+        _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
+        _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
+        _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'db_tiratori' not in st.session_state:
     st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
     for _m in st.session_state['db_tiratori']:
@@ -8187,6 +8356,7 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
 
         if fc_uni:
             pe_gk_uni, pe_tir_uni, pe_h2h_uni, pe_tiro_portiere_uni = [], [], [], []
+            pe_categoria_alt_uni = []
             for idx, f in enumerate(fc_uni):
                 st.markdown(f"**File Configuration: {f.name}**")
                 nome_da_file, data_da_file = estrai_nome_e_data_da_nome_file(f.name)
@@ -8237,6 +8407,35 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                              "and Bolzano's goalkeeper stay marked as complete."
                     )
 
+                database_dest_u = st.radio(
+                    "Where does this match go?",
+                    ["Main season (as always)", "Separate category (own bucket, e.g. youth/other teams)"],
+                    key=f"db_dest_{idx}", horizontal=True,
+                    help="A 'Separate category' match is only ever visible in Single Game Analysis "
+                         "and Seasonal Report, filtered to its own category — it never counts "
+                         "towards Universal Stats, the GK ranking, Shooting Trend or Tag & Go, and "
+                         "never mixes with the main season's goalkeepers. Goalkeeper data only: "
+                         "shooters aren't tracked in this bucket."
+                )
+                categoria_scelta_u = None
+                if database_dest_u.startswith("Separate"):
+                    categorie_esistenti_u = sorted(set(
+                        m.get('categoria', '') for m in st.session_state['categoria_alt_db'] if m.get('categoria')
+                    ))
+                    opzioni_categoria_u = categorie_esistenti_u + ["+ New category…"]
+                    scelta_categoria_u = st.selectbox(
+                        "Category:", opzioni_categoria_u, key=f"cat_scelta_{idx}",
+                        index=len(opzioni_categoria_u) - 1 if not categorie_esistenti_u else 0
+                    )
+                    if scelta_categoria_u == "+ New category…":
+                        categoria_scelta_u = st.text_input(
+                            "New category name (e.g. 'Under 16', 'Serie B2'):", key=f"cat_nuova_{idx}"
+                        ).strip()
+                    else:
+                        categoria_scelta_u = scelta_categoria_u
+                    if not categoria_scelta_u:
+                        st.warning("Enter a category name before uploading this match.")
+
                 # Competizioni aperte (Sine Die o non ancora chiuse a questa data) che per squadra
                 # e data includerebbero automaticamente questa partita. Se ce n'è più di una (es.
                 # Serie A aperta tutta la stagione + Coppa Italia in corso nello stesso periodo),
@@ -8266,26 +8465,46 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     # parziali, lo è anche il portiere di Away che li ha affrontati, e viceversa.
                     home_shots_parziali_u = partita_incompleta_u and lato_parziale_u in (f"{sq_home_u}'s shots only", "Both teams")
                     away_shots_parziali_u = partita_incompleta_u and lato_parziale_u in (f"{sq_away_u}'s shots only", "Both teams")
-                    if not df_gk_h.empty:
-                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not away_shots_parziali_u})
-                    if not df_gk_a.empty:
-                        pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
-                                           'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                           'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not home_shots_parziali_u})
-                    if not df_tir_h.empty:
-                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not home_shots_parziali_u})
-                    if not df_tir_a.empty:
-                        pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
-                                            'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
-                                            'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not away_shots_parziali_u})
-                    if not df_h2h_u.empty:
-                        pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
-                    if not df_tiro_portiere_u.empty:
-                        pe_tiro_portiere_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_tiro_portiere_u})
+
+                    if database_dest_u.startswith("Separate") and categoria_scelta_u:
+                        # Solo portieri in questo compartimento — mai tiratori, H2H o tiro
+                        # portiere: quei dataframe, se presenti in questo file, vengono
+                        # semplicemente ignorati per questa destinazione (con un avviso, dato
+                        # che normalmente questi file non li contengono affatto).
+                        if not df_gk_h.empty:
+                            pe_categoria_alt_uni.append({'categoria': categoria_scelta_u, 'nome': nm_u, 'data': dt_u,
+                                                          'squadra': sq_home_u, 'dati': df_gk_h,
+                                                          'squadra_home': sq_home_u, 'squadra_away': sq_away_u,
+                                                          'neutro': neutro_u, 'partita_completa': not away_shots_parziali_u})
+                        if not df_gk_a.empty:
+                            pe_categoria_alt_uni.append({'categoria': categoria_scelta_u, 'nome': nm_u, 'data': dt_u,
+                                                          'squadra': sq_away_u, 'dati': df_gk_a,
+                                                          'squadra_home': sq_home_u, 'squadra_away': sq_away_u,
+                                                          'neutro': neutro_u, 'partita_completa': not home_shots_parziali_u})
+                        if not df_tir_h.empty or not df_tir_a.empty:
+                            st.warning("This file also has shooter data — ignored: the separate-category "
+                                       "bucket only stores goalkeeper data.")
+                    else:
+                        if not df_gk_h.empty:
+                            pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_gk_h,
+                                               'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                               'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not away_shots_parziali_u})
+                        if not df_gk_a.empty:
+                            pe_gk_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_gk_a,
+                                               'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                               'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not home_shots_parziali_u})
+                        if not df_tir_h.empty:
+                            pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_home_u, 'dati': df_tir_h,
+                                                'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                                'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not home_shots_parziali_u})
+                        if not df_tir_a.empty:
+                            pe_tir_uni.append({'nome': nm_u, 'data': dt_u, 'squadra': sq_away_u, 'dati': df_tir_a,
+                                                'squadra_home': sq_home_u, 'squadra_away': sq_away_u, 'neutro': neutro_u,
+                                                'campionati_esclusi': campionati_esclusi_u, 'partita_completa': not away_shots_parziali_u})
+                        if not df_h2h_u.empty:
+                            pe_h2h_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_h2h_u})
+                        if not df_tiro_portiere_u.empty:
+                            pe_tiro_portiere_uni.append({'nome': nm_u, 'data': dt_u, 'dati': df_tiro_portiere_u})
                     st.caption(f"Parsed: {len(df_gk_h)} GK-home rows, {len(df_gk_a)} GK-away rows, "
                                f"{len(df_tir_h)} shooter-home rows, {len(df_tir_a)} shooter-away rows, "
                                f"{len(df_h2h_u)} head-to-head events, {len(df_tiro_portiere_u)} goalkeeper own-shot events.")
@@ -8322,10 +8541,21 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                         st.session_state['db_tiro_portiere'].append(match)
                         chiavi_tp.add(chiave)
                         agg_tp += 1
+                chiavi_alt = {(p['nome'], str(p['data']), p['squadra'], p.get('categoria', ''))
+                              for p in st.session_state['categoria_alt_db']}
+                agg_alt = 0
+                for match in pe_categoria_alt_uni:
+                    chiave = (match['nome'], str(match['data']), match['squadra'], match.get('categoria', ''))
+                    if chiave not in chiavi_alt:
+                        aggiungi_partita_categoria_alt(match)
+                        chiavi_alt.add(chiave)
+                        agg_alt += 1
                 salva_stagione_su_disco(st.session_state['db'])
                 salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
                 salva_h2h_su_disco(st.session_state['db_h2h'])
                 salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
+                if agg_alt:
+                    st.success(f"Saved: {agg_alt} goalkeeper record(s) in the separate category.")
                 st.success(f"Saved: {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
                            f"{agg_h2h} head-to-head match(es), {agg_tp} goalkeeper own-shot match(es) added.")
 
@@ -9005,17 +9235,32 @@ with tab2:
         st.warning('Please upload and save data files first.')
     else:
         st.header("Single Match Statistical Analysis")
-        opzioni_match = [f"{p['nome']} ({p['data'].strftime('%Y-%m-%d')}) - {p['squadra']}" for p in st.session_state['db']]
+        elenco_partite_smatch = st.session_state['db'] + st.session_state['categoria_alt_db']
+        opzioni_match = [
+            (f"[{p['categoria']}] " if p.get('categoria') else "") +
+            f"{p['nome']} ({p['data'].strftime('%Y-%m-%d')}) - {p['squadra']}"
+            for p in elenco_partite_smatch
+        ]
         scelta = st.selectbox('Select match:', opzioni_match)
         idx_match = opzioni_match.index(scelta)
         
-        df_match = st.session_state['db'][idx_match]['dati'].copy()
+        df_match = elenco_partite_smatch[idx_match]['dati'].copy()
         df_match = df_match.sort_values(by='Minuti_Gara').reset_index(drop=True)
+        # Le partite di una categoria alternativa (es. Video Tagger per i giovani) non hanno un
+        # vero minuto di gara né un vero Money Time calcolato — solo quello che il ragazzo ha
+        # segnato a mano. Qui, e solo qui, i tiri Money Time vengono spostati in fondo al
+        # grafico (well evidenziati in giallo lì), invece di restare mescolati nell'ordine
+        # cronologico come nelle partite normali.
+        e_categoria_alt_sel = bool(elenco_partite_smatch[idx_match].get('categoria'))
+        if e_categoria_alt_sel and 'Is_Stress_Test' in df_match.columns:
+            df_match = df_match.sort_values(
+                by='Is_Stress_Test', kind='stable'
+            ).reset_index(drop=True)
 
-        nome_match_sel = st.session_state['db'][idx_match]['nome']
-        data_match_sel = st.session_state['db'][idx_match]['data']
-        squadra_home_match = st.session_state['db'][idx_match].get('squadra_home')
-        squadra_away_match = st.session_state['db'][idx_match].get('squadra_away')
+        nome_match_sel = elenco_partite_smatch[idx_match]['nome']
+        data_match_sel = elenco_partite_smatch[idx_match]['data']
+        squadra_home_match = elenco_partite_smatch[idx_match].get('squadra_home')
+        squadra_away_match = elenco_partite_smatch[idx_match].get('squadra_away')
         _match_tp = [m['dati'] for m in st.session_state.get('db_tiro_portiere', [])
                      if m['nome'] == nome_match_sel and str(m['data']) == str(data_match_sel)]
         df_tiro_portiere_match = pd.concat(_match_tp, ignore_index=True) if _match_tp else pd.DataFrame(
@@ -9043,7 +9288,7 @@ with tab2:
         # avere tiratori Home completi e Away parziali, o viceversa), quindi qui si può calcolare
         # correttamente solo per Goalkeeper.
         if vista_match == "Goalkeeper":
-            partita_completa_sel = st.session_state['db'][idx_match].get('partita_completa', True)
+            partita_completa_sel = elenco_partite_smatch[idx_match].get('partita_completa', True)
             if not partita_completa_sel:
                 st.warning("⚠️ **Partial data** — this match's coverage is incomplete (missing minutes "
                            "due to a camera issue, no broadcast, etc.). Every chart and stat below "
@@ -9092,7 +9337,10 @@ with tab2:
         
             def _costruisci_etichetta_asse_x(indice, gk, tempo_visuale):
                 prefisso = f"{mappa_colori_testo[gk]} {gk}"
-                if str(tempo_visuale).strip():
+                # In una categoria alternativa 'tempo_visuale' non è un vero minuto di gara (solo
+                # una stima interna usata per l'ordinamento) — mostrarlo confonderebbe, quindi qui
+                # si mostra sempre 'Shot N' come per una partita senza alcuna timeline.
+                if str(tempo_visuale).strip() and not e_categoria_alt_sel:
                     return f"{prefisso} | {tempo_visuale}"
                 return f"{prefisso} | Shot {indice + 1}"
 
@@ -9710,22 +9958,42 @@ with tab3:
     _t_tab3 = time.time()
     st.header("🏆 Seasonal Report")
 
-    if not st.session_state['db']:
+    if not st.session_state['db'] and not st.session_state['categoria_alt_db']:
         st.warning("No matches in memory. Upload and process at least one match in the first tab to see the season report.")
     else:
+        categorie_disponibili_sr = sorted(set(
+            m.get('categoria', '') for m in st.session_state['categoria_alt_db'] if m.get('categoria')
+        ))
+        dataset_scelto_sr = "Main season"
+        if categorie_disponibili_sr:
+            dataset_scelto_sr = st.radio(
+                "Dataset:", ["Main season"] + categorie_disponibili_sr, horizontal=True, key="sr_dataset_scelto",
+                help="Categories other than 'Main season' never mix with it, and never affect "
+                     "Universal Stats, the GK ranking, Shooting Trend or Tag & Go — this cumulative "
+                     "view is the only other place they show up, besides Single Game Analysis."
+            )
+        db_sorgente_sr = (st.session_state['db'] if dataset_scelto_sr == "Main season"
+                           else [m for m in st.session_state['categoria_alt_db'] if m.get('categoria') == dataset_scelto_sr])
+
         modalita = st.radio(
             "View season trends by:",
             ["Goalkeeper", "Team"],
             horizontal=True
         )
 
-        opzioni_campionato_gk = ["All Data & All Time"] + [c['nome'] for c in st.session_state['campionati']]
-        campionato_scelto_gk = st.selectbox("🏆 Championship:", opzioni_campionato_gk, key="campionato_gk")
-        if campionato_scelto_gk != "All Data & All Time":
-            campionato_obj_gk = next(c for c in st.session_state['campionati'] if c['nome'] == campionato_scelto_gk)
-            db_gk_filtrato = partite_in_campionato(st.session_state['db'], campionato_obj_gk)
+        if dataset_scelto_sr == "Main season":
+            opzioni_campionato_gk = ["All Data & All Time"] + [c['nome'] for c in st.session_state['campionati']]
+            campionato_scelto_gk = st.selectbox("🏆 Championship:", opzioni_campionato_gk, key="campionato_gk")
+            if campionato_scelto_gk != "All Data & All Time":
+                campionato_obj_gk = next(c for c in st.session_state['campionati'] if c['nome'] == campionato_scelto_gk)
+                db_gk_filtrato = partite_in_campionato(db_sorgente_sr, campionato_obj_gk)
+            else:
+                db_gk_filtrato = db_sorgente_sr
         else:
-            db_gk_filtrato = st.session_state['db']
+            # Il sistema campionati riguarda solo la stagione principale — una categoria
+            # alternativa è già di per sé un raggruppamento a sé, non serve un ulteriore filtro.
+            campionato_scelto_gk = dataset_scelto_sr
+            db_gk_filtrato = db_sorgente_sr
 
         portieri_stagione = sorted(set(
             gk for match in db_gk_filtrato for gk in match['dati']['PORTIERE_ID'].dropna().unique()
