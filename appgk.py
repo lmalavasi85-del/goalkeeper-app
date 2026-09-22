@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v50 - 2026-09-22 - Fix: i tiri senza timeline taggata non finiscono più erroneamente nel blocco '0-10' minuti. In Single Match Analysis (portieri e tiratori, UI e PDF) la sezione '10-Minute Blocks' sparisce del tutto quando l'intera partita non ha timeline; ovunque altro (Shooting Trend, Season Report, relativi PDF) i singoli tiri senza timeline vengono semplicemente esclusi dal conteggio del grafico e della tabella"
+APP_VERSION = "v51 - 2026-09-22 - Il fix dei blocchi da 10 minuti (v50) non si vedeva sulle partite già caricate PRIMA di quella correzione: i dati salvati avevano ancora il vecchio '0-10' scritto per i tiri senza timeline. Aggiunta una migrazione che ricalcola sempre Blocco_10m al caricamento (Google Sheets e backup locali, sia portieri sia tiratori sia categoria alternativa), così anche le partite già in archivio si correggono automaticamente, senza dover ricaricare nulla"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2801,6 +2801,18 @@ def _calcola_blocco_stringa(m):
     elif m < 40: return '30-40'
     elif m < 50: return '40-50'
     else: return '50-60'
+
+def _ricalcola_blocco_10m(df):
+    """Ricalcola SEMPRE Blocco_10m da Tempo_Visuale/Minuti_Gara invece di fidarsi del valore
+    già salvato nel dataframe — necessario perché le partite caricate prima che i tiri senza
+    timeline diventassero 'nessun blocco' (invece di finire erroneamente in '0-10') hanno
+    ancora il vecchio valore scritto nei dati persistiti; senza questo, quelle partite
+    continuerebbero a mostrare tutti i loro tiri nel primo blocco anche dopo la correzione."""
+    if 'Minuti_Gara' in df.columns and 'Tempo_Visuale' in df.columns:
+        df['Blocco_10m'] = df.apply(
+            lambda r: _calcola_blocco_stringa(r['Minuti_Gara']) if r['Tempo_Visuale'] else None, axis=1
+        )
+    return df
 
 def elabora_file_portieri(df_raw):
     """Prende il DataFrame grezzo (colonne tipo PORTIERE/GK, TIRO, RESULT, TIMELINE) e
@@ -4768,6 +4780,7 @@ def _riga_sheet_a_match(riga):
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'Is_Stress_Test' in df.columns:
         df['Is_Stress_Test'] = df['Is_Stress_Test'].astype(bool)
+    df = _ricalcola_blocco_10m(df)
     # Ricalcola SEMPRE Is_Empty_Goal dalla colonna grezza EMPTY_GOAL (se ancora presente nel
     # dataframe salvato), invece di fidarsi del valore di Is_Empty_Goal già salvato: partite
     # salvate PRIMA che le casistiche miss/save a porta vuota fossero gestite avevano quella
@@ -4849,6 +4862,7 @@ def _riga_sheet_a_match_alt(riga):
         num_chunk = 0
     dati_json = ''.join(riga[9:9 + num_chunk])
     df = pd.read_json(io.StringIO(dati_json), orient='split')
+    df = _ricalcola_blocco_10m(df)
     if 'EMPTY_GOAL' in df.columns:
         df['Is_Empty_Goal'] = df['EMPTY_GOAL'].fillna(False).astype(bool)
         _correggi_gpi_empty_goal(df)
@@ -4879,6 +4893,8 @@ def carica_categoria_alt_da_disco():
                                 f"instead. Please check Google Sheets' Version History on the "
                                 f"'AltCategoryData' tab to confirm and restore it there too."
                             )
+                            for m in db_backup:
+                                m['dati'] = _ricalcola_blocco_10m(m['dati'])
                             return db_backup
                     except Exception:
                         pass
@@ -4889,7 +4905,10 @@ def carica_categoria_alt_da_disco():
     if os.path.exists(ALT_CATEGORY_FILE):
         try:
             with open(ALT_CATEGORY_FILE, 'rb') as f:
-                return pickle.load(f)
+                db = pickle.load(f)
+            for m in db:
+                m['dati'] = _ricalcola_blocco_10m(m['dati'])
+            return db
         except Exception:
             return []
     return []
@@ -4994,6 +5013,7 @@ def carica_stagione_da_disco():
                                 if 'PORTIERE_ID' not in m['dati'].columns and 'PORTIERE_CLEAN' in m['dati'].columns:
                                     m['dati']['PORTIERE_ID'] = m['dati']['PORTIERE_CLEAN'].apply(identita_giocatore)
                                 _correggi_gpi_empty_goal(m['dati'])
+                                m['dati'] = _ricalcola_blocco_10m(m['dati'])
                             return db_backup
                     except Exception:
                         pass
@@ -5012,6 +5032,7 @@ def carica_stagione_da_disco():
                 if 'PORTIERE_ID' not in m['dati'].columns and 'PORTIERE_CLEAN' in m['dati'].columns:
                     m['dati']['PORTIERE_ID'] = m['dati']['PORTIERE_CLEAN'].apply(identita_giocatore)
                 _correggi_gpi_empty_goal(m['dati'])
+                m['dati'] = _ricalcola_blocco_10m(m['dati'])
             return db
         except Exception:
             return []
@@ -5126,6 +5147,7 @@ def _riga_sheet_a_match_tiratori(riga):
     df = pd.read_json(io.StringIO(dati_json), orient='split')
     if 'Is_Money_Time' in df.columns:
         df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
+    df = _ricalcola_blocco_10m(df)
     if 'TIRATORE_ID' not in df.columns and 'TIRATORE_CLEAN' in df.columns:
         df['TIRATORE_ID'] = df['TIRATORE_CLEAN'].apply(identita_giocatore)
     if 'macro_settore_tir' in df.columns and 'TIRO_CLEAN' in df.columns:
@@ -5164,6 +5186,7 @@ def carica_stagione_tiratori_da_disco():
                                     m['dati']['TIRATORE_ID'] = m['dati']['TIRATORE_CLEAN'].apply(identita_giocatore)
                                 if 'macro_settore_tir' in m['dati'].columns and 'TIRO_CLEAN' in m['dati'].columns:
                                     m['dati']['macro_settore_tir'] = m['dati']['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+                                m['dati'] = _ricalcola_blocco_10m(m['dati'])
                             return db_backup
                     except Exception:
                         pass
@@ -5183,6 +5206,7 @@ def carica_stagione_tiratori_da_disco():
                     m['dati']['TIRATORE_ID'] = m['dati']['TIRATORE_CLEAN'].apply(identita_giocatore)
                 if 'macro_settore_tir' in m['dati'].columns and 'TIRO_CLEAN' in m['dati'].columns:
                     m['dati']['macro_settore_tir'] = m['dati']['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
+                m['dati'] = _ricalcola_blocco_10m(m['dati'])
             return db
         except Exception:
             return []
