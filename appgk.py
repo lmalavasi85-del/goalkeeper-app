@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v49 - 2026-09-22 - Nuova sezione 'Separate Same-Name Players' in Identify Players: separa due giocatori diversi che condividono lo stesso nome per squadre diverse (es. due 'Garcia'), assegnando un codice a 3 cifre per squadra — o, nel caso limite di due omonimi nella stessa squadra, partita per partita. Di default un nome resta un'unica identità come sempre; separare tocca statistiche, foto e note ovunque nell'app"
+APP_VERSION = "v50 - 2026-09-22 - Fix: i tiri senza timeline taggata non finiscono più erroneamente nel blocco '0-10' minuti. In Single Match Analysis (portieri e tiratori, UI e PDF) la sezione '10-Minute Blocks' sparisce del tutto quando l'intera partita non ha timeline; ovunque altro (Shooting Trend, Season Report, relativi PDF) i singoli tiri senza timeline vengono semplicemente esclusi dal conteggio del grafico e della tabella"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2885,7 +2885,11 @@ def elabora_file_portieri(df_raw):
     maschera_eg_save = df['Is_Empty_Goal'] & df['RESULT_CLEAN'].isin(['save', 's'])
     df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5 + df.loc[maschera_eg_save, 'Is_Stress_Test'].astype(float) * 0.5
 
-    df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
+    # Blocco 'None' (non '0-10') quando non c'è una timeline valida per questo tiro — altrimenti
+    # ogni tiro senza minuto finirebbe erroneamente nel primo blocco, falsando grafico e tabella.
+    df['Blocco_10m'] = df.apply(
+        lambda r: _calcola_blocco_stringa(r['Minuti_Gara']) if r['Tempo_Visuale'] else None, axis=1
+    )
 
     # Colonne di tagging avanzato (facoltative): ciascuna diventa una colonna con liste di tag
     # (una riga può avere più tag insieme, es. "De Vargas dx" + "Low wall").
@@ -2955,7 +2959,11 @@ def elabora_file_tiratori(df_raw):
 
     df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
     df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio'], r['RESULT_CLEAN']), axis=1)
-    df['Blocco_10m'] = df['Minuti_Gara'].apply(_calcola_blocco_stringa)
+    # Blocco 'None' (non '0-10') quando non c'è una timeline valida per questo tiro — altrimenti
+    # ogni tiro senza minuto finirebbe erroneamente nel primo blocco, falsando grafico e tabella.
+    df['Blocco_10m'] = df.apply(
+        lambda r: _calcola_blocco_stringa(r['Minuti_Gara']) if r['Tempo_Visuale'] else None, axis=1
+    )
 
     # Gol in porta vuota (rilevati dalla colonna THROW SECTOR): contano SOLO se il tiro è un vero
     # gol (non su save/miss). Non tocco RESULT/statistiche di riga: sono un flag informativo che
@@ -4236,17 +4244,19 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
         ))
         elementi.append(_separatore())
 
-    # 10-minute block performance
-    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_blocchi:
-        _disegna_grafico_blocchi_pdf(df_blocchi, tmp_blocchi.name)
-        larghezza_px, altezza_px = PILImage.open(tmp_blocchi.name).size
-        larghezza_blocchi_cm, altezza_blocchi_cm = _dimensioni_adattate(larghezza_px, altezza_px, 16, 9)
-        elementi.append(KeepTogether([
-            Paragraph("Performance by 10-Minute Blocks", sezione_stile),
-            RLImage(tmp_blocchi.name, width=larghezza_blocchi_cm*cm, height=altezza_blocchi_cm*cm)
-        ]))
-    elementi.append(Spacer(1, 0.3*cm))
-    elementi.append(_df_to_reportlab_table(df_blocchi))
+    # 10-minute block performance — skipped entirely when this match has no valid timeline
+    # (every shot would otherwise misleadingly land in the first block).
+    if df_blocchi is not None:
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_blocchi:
+            _disegna_grafico_blocchi_pdf(df_blocchi, tmp_blocchi.name)
+            larghezza_px, altezza_px = PILImage.open(tmp_blocchi.name).size
+            larghezza_blocchi_cm, altezza_blocchi_cm = _dimensioni_adattate(larghezza_px, altezza_px, 16, 9)
+            elementi.append(KeepTogether([
+                Paragraph("Performance by 10-Minute Blocks", sezione_stile),
+                RLImage(tmp_blocchi.name, width=larghezza_blocchi_cm*cm, height=altezza_blocchi_cm*cm)
+            ]))
+        elementi.append(Spacer(1, 0.3*cm))
+        elementi.append(_df_to_reportlab_table(df_blocchi))
 
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     buffer.seek(0)
@@ -9886,68 +9896,74 @@ with tab2:
             # ============================================================
             # SEZIONE: RENDIMENTO PER BLOCCHI DA 10 MINUTI
             # (% parate e GPI totale calcolati in modo indipendente per ogni blocco)
+            # Nascosta del tutto quando questa partita non ha alcuna timeline taggata — altrimenti
+            # ogni tiro finirebbe erroneamente nel primo blocco, rendendo grafico e tabella fuorvianti.
             # ============================================================
-            st.markdown("---")
-            st.subheader("⏱️ Performance by 10-Minute Blocks (full match)")
-            st.caption("Each block is calculated independently of the others: this is not a cumulative value.")
+            if df_match['Blocco_10m'].notna().any():
+                st.markdown("---")
+                st.subheader("⏱️ Performance by 10-Minute Blocks (full match)")
+                st.caption("Each block is calculated independently of the others: this is not a cumulative value.")
 
-            righe_blocchi = []
-            for blocco in ORDINE_BLOCCHI:
-                df_b = df_match[df_match['Blocco_10m'] == blocco]
-                s_b, g_b, m_b, pct_b, eff_b = calcola_metriche_gruppo(df_b)
-                gpi_b = df_b['GPI_Tiro'].sum() if not df_b.empty else 0.0
-                righe_blocchi.append({
-                    'Block': blocco, 'Save %': round(pct_b, 1), 'Total GPI': round(gpi_b, 1),
-                    'Shots': len(df_b)
-                })
-            df_blocchi = pd.DataFrame(righe_blocchi)
+                righe_blocchi = []
+                for blocco in ORDINE_BLOCCHI:
+                    df_b = df_match[df_match['Blocco_10m'] == blocco]
+                    s_b, g_b, m_b, pct_b, eff_b = calcola_metriche_gruppo(df_b)
+                    gpi_b = df_b['GPI_Tiro'].sum() if not df_b.empty else 0.0
+                    righe_blocchi.append({
+                        'Block': blocco, 'Save %': round(pct_b, 1), 'Total GPI': round(gpi_b, 1),
+                        'Shots': len(df_b)
+                    })
+                df_blocchi = pd.DataFrame(righe_blocchi)
 
-            max_gpi_abs = max(df_blocchi['Total GPI'].abs().max(), 1)
-            y_top_gpi = max_gpi_abs * 1.35
-            y_bottom_gpi = -max_gpi_abs * 1.35
-            y_bottom_pct = 6
+                max_gpi_abs = max(df_blocchi['Total GPI'].abs().max(), 1)
+                y_top_gpi = max_gpi_abs * 1.35
+                y_bottom_gpi = -max_gpi_abs * 1.35
+                y_bottom_pct = 6
 
-            fig_blocchi = make_subplots(
-                rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
-                row_heights=[0.5, 0.5],
-                subplot_titles=("Save % per block", "Total GPI per block")
-            )
-            # % line (no text attached to points)
-            fig_blocchi.add_trace(
-                go.Scatter(x=df_blocchi['Block'], y=df_blocchi['Save %'], name='Save %',
-                           mode='lines+markers', line=dict(color='#1f77b4', width=3),
-                           marker=dict(size=10, color='#1f77b4'), showlegend=False),
-                row=1, col=1
-            )
-            # % labels ALWAYS at the bottom, fixed height (never overlapping the line)
-            fig_blocchi.add_trace(
-                go.Scatter(x=df_blocchi['Block'], y=[y_bottom_pct] * len(df_blocchi), mode='text',
-                           text=df_blocchi['Save %'].apply(lambda x: f"{x:.0f}%"),
-                           textfont=dict(color='#1f77b4', size=13), showlegend=False),
-                row=1, col=1
-            )
-            # GPI bars (no text attached)
-            fig_blocchi.add_trace(
-                go.Bar(x=df_blocchi['Block'], y=df_blocchi['Total GPI'], name='Total GPI',
-                       marker_color='#ff7f0e', width=0.5, showlegend=False),
-                row=2, col=1
-            )
-            # GPI labels ALWAYS at the top, fixed height (never overlapping the bars)
-            fig_blocchi.add_trace(
-                go.Scatter(x=df_blocchi['Block'], y=[y_top_gpi] * len(df_blocchi), mode='text',
-                           text=df_blocchi['Total GPI'].apply(lambda x: f"{x:+.1f}"),
-                           textfont=dict(color='#ff7f0e', size=13), showlegend=False),
-                row=2, col=1
-            )
-            fig_blocchi.update_layout(
-                height=520, plot_bgcolor='white', margin=dict(t=50, b=40, l=40, r=40)
-            )
-            fig_blocchi.update_yaxes(title_text="Save %", range=[0, 115], row=1, col=1)
-            fig_blocchi.update_yaxes(title_text="Total GPI", range=[y_bottom_gpi * 1.15, y_top_gpi * 1.15], row=2, col=1)
-            fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
+                fig_blocchi = make_subplots(
+                    rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.12,
+                    row_heights=[0.5, 0.5],
+                    subplot_titles=("Save % per block", "Total GPI per block")
+                )
+                # % line (no text attached to points)
+                fig_blocchi.add_trace(
+                    go.Scatter(x=df_blocchi['Block'], y=df_blocchi['Save %'], name='Save %',
+                               mode='lines+markers', line=dict(color='#1f77b4', width=3),
+                               marker=dict(size=10, color='#1f77b4'), showlegend=False),
+                    row=1, col=1
+                )
+                # % labels ALWAYS at the bottom, fixed height (never overlapping the line)
+                fig_blocchi.add_trace(
+                    go.Scatter(x=df_blocchi['Block'], y=[y_bottom_pct] * len(df_blocchi), mode='text',
+                               text=df_blocchi['Save %'].apply(lambda x: f"{x:.0f}%"),
+                               textfont=dict(color='#1f77b4', size=13), showlegend=False),
+                    row=1, col=1
+                )
+                # GPI bars (no text attached)
+                fig_blocchi.add_trace(
+                    go.Bar(x=df_blocchi['Block'], y=df_blocchi['Total GPI'], name='Total GPI',
+                           marker_color='#ff7f0e', width=0.5, showlegend=False),
+                    row=2, col=1
+                )
+                # GPI labels ALWAYS at the top, fixed height (never overlapping the bars)
+                fig_blocchi.add_trace(
+                    go.Scatter(x=df_blocchi['Block'], y=[y_top_gpi] * len(df_blocchi), mode='text',
+                               text=df_blocchi['Total GPI'].apply(lambda x: f"{x:+.1f}"),
+                               textfont=dict(color='#ff7f0e', size=13), showlegend=False),
+                    row=2, col=1
+                )
+                fig_blocchi.update_layout(
+                    height=520, plot_bgcolor='white', margin=dict(t=50, b=40, l=40, r=40)
+                )
+                fig_blocchi.update_yaxes(title_text="Save %", range=[0, 115], row=1, col=1)
+                fig_blocchi.update_yaxes(title_text="Total GPI", range=[y_bottom_gpi * 1.15, y_top_gpi * 1.15], row=2, col=1)
+                fig_blocchi.update_xaxes(title_text="Game block (minutes)", row=2, col=1)
 
-            st.plotly_chart(fig_blocchi, use_container_width=True, key="fig_blocchi_single_match")
-            st.dataframe(df_blocchi, use_container_width=True, hide_index=True)
+                st.plotly_chart(fig_blocchi, use_container_width=True, key="fig_blocchi_single_match")
+                st.dataframe(df_blocchi, use_container_width=True, hide_index=True)
+            else:
+                df_blocchi = None
+                fig_blocchi = None
 
             # ============================================================
             # ESPORTAZIONE PDF DELL'INTERA PAGINA
@@ -10173,12 +10189,15 @@ with tab2:
                 if nota_giocatore_mt:
                     st.markdown(f"**Notes:** {note_markup_a_html_streamlit(nota_giocatore_mt)}", unsafe_allow_html=True)
 
-                st.markdown("---")
-                st.subheader("⏱️ Shot Distribution by 10-Minute Blocks (team)")
-                st.caption("Always shown at team level — an individual breakdown isn't meaningful over a single match.")
-                df_blocchi_mt, fig_blocchi_mt = costruisci_grafico_blocchi_tiratori(df_squadra_completa_mt)
-                st.plotly_chart(fig_blocchi_mt, use_container_width=True, key="fig_blocchi_match_tir")
-                st.dataframe(df_blocchi_mt, use_container_width=True, hide_index=True)
+                if df_squadra_completa_mt['Blocco_10m'].notna().any():
+                    st.markdown("---")
+                    st.subheader("⏱️ Shot Distribution by 10-Minute Blocks (team)")
+                    st.caption("Always shown at team level — an individual breakdown isn't meaningful over a single match.")
+                    df_blocchi_mt, fig_blocchi_mt = costruisci_grafico_blocchi_tiratori(df_squadra_completa_mt)
+                    st.plotly_chart(fig_blocchi_mt, use_container_width=True, key="fig_blocchi_match_tir")
+                    st.dataframe(df_blocchi_mt, use_container_width=True, hide_index=True)
+                else:
+                    df_blocchi_mt = None
 
                 st.markdown("---")
                 st.subheader("📄 Export to PDF")
