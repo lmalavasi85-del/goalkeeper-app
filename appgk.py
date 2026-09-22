@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v48 - 2026-09-21 - Il PDF 'Trend Summary' (Shooting Trend) ora mostra anche il logo della squadra analizzata, in alto a destra — stesso stile già usato negli altri PDF del report"
+APP_VERSION = "v49 - 2026-09-22 - Nuova sezione 'Separate Same-Name Players' in Identify Players: separa due giocatori diversi che condividono lo stesso nome per squadre diverse (es. due 'Garcia'), assegnando un codice a 3 cifre per squadra — o, nel caso limite di due omonimi nella stessa squadra, partita per partita. Di default un nome resta un'unica identità come sempre; separare tocca statistiche, foto e note ovunque nell'app"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -6238,6 +6238,175 @@ def salva_alias_giocatori_su_disco(gruppi_alias, permetti_svuotamento=False):
         pickle.dump(gruppi_alias, f)
 
 # ============================================================
+# DISAMBIGUATE PLAYERS: l'opposto degli alias — due persone diverse che per caso hanno lo
+# stesso nome (es. due "Garcia" con squadre diverse). Di norma un nome è una sola identità
+# ovunque compaia; qui l'utente può dichiarare esplicitamente "questo nome, per QUESTA squadra,
+# è in realtà una persona diversa da quel nome per un'altra squadra" — assegnando un codice a
+# 3 cifre a ciascun gruppo. Chi non riceve mai un codice resta con l'identità unica di sempre
+# (comportamento invariato, anche se il giocatore cambia squadra nel tempo).
+#
+# Ogni "gruppo" è {"codice": "001", "squadre": [...], "partite": [...]}. "squadre" cattura il
+# caso comune (squadre diverse): ogni partita di quella squadra va a questo codice. "partite"
+# (identificate come "nome|data") serve solo per il caso limite — stesso nome, stessa squadra,
+# davvero due persone — dove la squadra da sola non basta a distinguerle e serve scegliere
+# partita per partita; un match su "partite" vince sempre su un match per sola squadra.
+# L'etichetta mostrata in ogni vista resta il nome semplice (es. "Garcia" per entrambi): il
+# codice esiste solo per tenere separati i dati internamente.
+# ============================================================
+PLAYER_DISAMBIGUATION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "player_disambiguation.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_disambiguazioni():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('PlayerDisambiguation')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='PlayerDisambiguation', rows=200, cols=2)
+        worksheet.append_row(['nome_base', 'gruppi_json'])
+    return _WorksheetConRetry(worksheet)
+
+def carica_disambiguazioni_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_disambiguazioni()
+            valori = worksheet.get_all_values()
+            return {riga[0]: json.loads(riga[1]) for riga in valori[1:] if len(riga) >= 2 and riga[0] and riga[1]}
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load player disambiguation from Google Sheets: {e}")
+    if os.path.exists(PLAYER_DISAMBIGUATION_FILE):
+        try:
+            with open(PLAYER_DISAMBIGUATION_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salva_disambiguazioni_su_disco(disambiguazioni, permetti_svuotamento=False):
+    try:
+        with open(PLAYER_DISAMBIGUATION_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(disambiguazioni, _f_backup_preventivo)
+    except Exception:
+        pass
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_disambiguazioni()
+            _blocca_se_svuotamento_sospetto(worksheet, disambiguazioni, permetti_svuotamento, "player disambiguation entr(y/ies)")
+            worksheet.clear()
+            worksheet.append_row(['nome_base', 'gruppi_json'])
+            righe = [[nome_base, json.dumps(gruppi)] for nome_base, gruppi in disambiguazioni.items()]
+            if righe:
+                worksheet.append_rows(righe)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save player disambiguation to Google Sheets: {e}")
+            if not disambiguazioni:
+                return
+    with open(PLAYER_DISAMBIGUATION_FILE, 'wb') as f:
+        pickle.dump(disambiguazioni, f)
+
+def chiave_partita(nome_partita, data_partita):
+    """Identificatore stabile di una singola partita, per il caso limite (stessa squadra)."""
+    return f"{nome_partita}|{data_partita}"
+
+def calcola_id_disambiguato(nome_base, squadra, chiave_match, disambiguazioni):
+    """Dato un nome già ridotto a identità di base, la squadra del match e la sua chiave_partita
+    (vedi chiave_partita), restituisce l'ID da usare in PORTIERE_ID/TIRATORE_ID: il nome_base
+    semplice se non c'è alcuna disambiguazione applicabile, altrimenti 'nome_base#codice'."""
+    gruppi = disambiguazioni.get(nome_base)
+    if not gruppi:
+        return nome_base
+    for gruppo in gruppi:
+        if chiave_match and chiave_match in gruppo.get('partite', []):
+            return f"{nome_base}#{gruppo['codice']}"
+    for gruppo in gruppi:
+        if not gruppo.get('partite') and squadra and squadra in gruppo.get('squadre', []):
+            return f"{nome_base}#{gruppo['codice']}"
+    return nome_base
+
+def applica_disambiguazioni_a_colonna(df, colonna_id, squadra, chiave_match, disambiguazioni):
+    """Applica la disambiguazione al valore presente in colonna_id (che può già riflettere un
+    alias applicato prima) per (squadra, chiave_match) di questo match. Toglie prima un
+    eventuale '#codice' lasciato da una disambiguazione precedente e poi riapplica quella
+    corrente da zero — così rimuovere o cambiare una separazione si riflette sempre
+    correttamente, invece di restare bloccati sul valore calcolato la volta precedente. Non fa
+    nulla se la colonna non esiste o non ci sono disambiguazioni definite."""
+    if colonna_id not in df.columns:
+        return df
+    df[colonna_id] = df[colonna_id].apply(
+        lambda v: calcola_id_disambiguato(v.split('#')[0], squadra, chiave_match, disambiguazioni) if v else v
+    )
+    return df
+
+def migra_foto_note_per_disambiguazione(nome_base, nuovo_id):
+    """Quando un nome viene disambiguato per la prima volta, la foto/nota esistenti (se
+    presenti) sotto il nome_base semplice vengono copiate anche sotto il nuovo id con
+    codice — così nessuna delle due identità resta improvvisamente senza foto. L'utente
+    corregge poi manualmente quale foto appartiene a quale, se erano diverse persone."""
+    foto_dict = st.session_state.get('foto_giocatori', {})
+    note_dict = st.session_state.get('note_tiratori', {})
+    cambiato = False
+    if nome_base in foto_dict and nuovo_id not in foto_dict:
+        foto_dict[nuovo_id] = foto_dict[nome_base]
+        cambiato = True
+    if nome_base in note_dict and nuovo_id not in note_dict:
+        note_dict[nuovo_id] = note_dict[nome_base]
+        cambiato = True
+    return cambiato
+
+def riapplica_disambiguazioni_a_tutti_i_dati():
+    """Ricalcola PORTIERE_ID/TIRATORE_ID su tutte le partite già in memoria secondo le
+    disambiguazioni correnti, così una nuova separazione ha effetto immediato senza dover
+    ricaricare i file. Va eseguita DOPO riapplica_alias_a_tutti_i_dati (gli alias uniscono,
+    poi le disambiguazioni eventualmente separano di nuovo un sottoinsieme già unito).
+    Salva anche su disco i dati così aggiornati."""
+    disambiguazioni = st.session_state.get('disambiguazioni_giocatori', {})
+    for m in st.session_state.get('db', []):
+        ck = chiave_partita(m.get('nome'), m.get('data'))
+        applica_disambiguazioni_a_colonna(m['dati'], 'PORTIERE_ID', m.get('squadra'), ck, disambiguazioni)
+    for m in st.session_state.get('db_tiratori', []):
+        ck = chiave_partita(m.get('nome'), m.get('data'))
+        applica_disambiguazioni_a_colonna(m['dati'], 'TIRATORE_ID', m.get('squadra'), ck, disambiguazioni)
+    for m in st.session_state.get('db_h2h', []):
+        ck = chiave_partita(m.get('nome'), m.get('data'))
+        applica_disambiguazioni_a_colonna(m['dati'], 'PORTIERE_ID', m.get('squadra'), ck, disambiguazioni)
+        applica_disambiguazioni_a_colonna(m['dati'], 'TIRATORE_ID', m.get('squadra'), ck, disambiguazioni)
+    for m in st.session_state.get('db_tiro_portiere', []):
+        ck = chiave_partita(m.get('nome'), m.get('data'))
+        applica_disambiguazioni_a_colonna(m['dati'], 'PORTIERE_ID', m.get('squadra'), ck, disambiguazioni)
+    for m in st.session_state.get('categoria_alt_db', []):
+        ck = chiave_partita(m.get('nome'), m.get('data'))
+        applica_disambiguazioni_a_colonna(m['dati'], 'PORTIERE_ID', m.get('squadra'), ck, disambiguazioni)
+    for nome_base, gruppi in disambiguazioni.items():
+        for gruppo in gruppi:
+            migra_foto_note_per_disambiguazione(nome_base, f"{nome_base}#{gruppo['codice']}")
+
+def trova_nomi_duplicati_tra_squadre():
+    """Cerca nomi (già puliti da [G] e numero maglia) che compaiono, tra portieri e tiratori
+    insieme, in più squadre diverse — potenziali omonimi da separare. Restituisce
+    {nome_base: {squadra: [(nome_partita, data), ...]}}, ordinato per nome. Un nome che
+    compare in una sola squadra (anche su molte partite) non è ambiguo e non viene incluso."""
+    per_nome = {}
+    sorgenti = [('db', 'PORTIERE_ID'), ('db_tiratori', 'TIRATORE_ID')]
+    for chiave_db, colonna_id in sorgenti:
+        for m in st.session_state.get(chiave_db, []):
+            squadra = m.get('squadra')
+            if not squadra or colonna_id not in m['dati'].columns:
+                continue
+            nomi_presenti = set(m['dati'][colonna_id].dropna().unique())
+            for nome_id in nomi_presenti:
+                nome_base = nome_id.split('#')[0]
+                per_nome.setdefault(nome_base, {}).setdefault(squadra, [])
+                voce = (m.get('nome'), m.get('data'))
+                if voce not in per_nome[nome_base][squadra]:
+                    per_nome[nome_base][squadra].append(voce)
+    return {nome: squadre for nome, squadre in sorted(per_nome.items()) if len(squadre) >= 2}
+
 # CAMPIONATI: raggruppamenti di partite salvati con un nome, filtrabili per squadra e per
 # intervallo di date (con "Sine Die" = senza data di fine, si aggiornano da sole man mano che
 # carichi nuove partite). Disponibili sia nel Seasonal Report (portieri) sia in Shooting Trend
@@ -7054,6 +7223,9 @@ if 'db_tiro_portiere' not in st.session_state:
 if 'gruppi_alias' not in st.session_state:
     st.session_state['gruppi_alias'] = carica_alias_giocatori_da_disco()
     riapplica_alias_a_tutti_i_dati()
+if 'disambiguazioni_giocatori' not in st.session_state:
+    st.session_state['disambiguazioni_giocatori'] = carica_disambiguazioni_da_disco()
+    riapplica_disambiguazioni_a_tutti_i_dati()
 if 'tag_go_df_gk' not in st.session_state:
     _stato_tag_go = carica_tag_go_da_disco()
     st.session_state['tag_go_df_gk'] = (pd.read_json(io.StringIO(_stato_tag_go['df_gk_json']), orient='split')
@@ -8693,6 +8865,106 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     st.rerun()
         else:
             st.caption("No names linked yet.")
+
+        st.markdown("---")
+        st.subheader("🧬 Separate Same-Name Players")
+        st.caption("The opposite of linking above: two DIFFERENT people who happen to share the "
+                   "same name (e.g. two players both called \"Garcia\", one goalkeeper for Trieste, "
+                   "one shooter for Bolzano). By default a name is always one single identity, even "
+                   "across teams — separating here is only needed when it's actually two people. "
+                   "Search below, then give each team its own 3-digit code; leave a team's code "
+                   "blank to keep it merged with the rest as usual. Names you separate still show "
+                   "up under their plain name everywhere (e.g. just \"Garcia\") — use the player "
+                   "photo to tell them apart when needed.")
+
+        if st.button("🔍 Find names shared by multiple teams"):
+            st.session_state['risultati_duplicati_nomi'] = trova_nomi_duplicati_tra_squadre()
+
+        risultati_dup = st.session_state.get('risultati_duplicati_nomi')
+        if risultati_dup is not None:
+            if not risultati_dup:
+                st.caption("No name is currently shared by more than one team.")
+            for nome_dup, squadre_dup in risultati_dup.items():
+                with st.expander(f"{nome_dup} — appears for {len(squadre_dup)} team(s)"):
+                    gruppi_correnti = st.session_state['disambiguazioni_giocatori'].get(nome_dup, [])
+                    codice_per_squadra_esistente = {}
+                    for gruppo in gruppi_correnti:
+                        for sq in gruppo.get('squadre', []):
+                            codice_per_squadra_esistente[sq] = gruppo['codice']
+
+                    codici_inseriti = {}
+                    for squadra_dup, partite_dup in squadre_dup.items():
+                        st.markdown(f"**{squadra_dup}** — {len(partite_dup)} match(es)")
+                        chiave_sicura_sq = _chiave_css_sicura(f"{nome_dup}_{squadra_dup}")
+                        codice = st.text_input(
+                            f"3-digit code for {squadra_dup} (blank = keep merged)",
+                            value=codice_per_squadra_esistente.get(squadra_dup, ''),
+                            max_chars=3, key=f"cod_{chiave_sicura_sq}"
+                        )
+                        codici_inseriti[squadra_dup] = codice.strip()
+
+                        if len(partite_dup) > 1:
+                            with st.expander(f"This same team actually has more than one \"{nome_dup}\"? (rare)"):
+                                st.caption("Team alone can't tell them apart here — pick which matches belong "
+                                           "to a second player and give that subset its own code.")
+                                etichette_partite = [f"{n} ({d})" for n, d in partite_dup]
+                                scelte_partite = st.multiselect(
+                                    "Matches that belong to a DIFFERENT player than the rest of this team:",
+                                    etichette_partite, key=f"partite_{chiave_sicura_sq}"
+                                )
+                                codice_secondario = st.text_input(
+                                    "3-digit code for those specific matches",
+                                    max_chars=3, key=f"cod2_{chiave_sicura_sq}"
+                                )
+                                if scelte_partite and codice_secondario.strip():
+                                    codici_inseriti[f"__partite__{squadra_dup}"] = {
+                                        'partite': [partite_dup[etichette_partite.index(e)] for e in scelte_partite],
+                                        'codice': codice_secondario.strip()
+                                    }
+
+                    if st.button(f"💾 Save separation for {nome_dup}", key=f"save_dis_{_chiave_css_sicura(nome_dup)}"):
+                        nuovi_gruppi = {}
+                        for squadra_dup, codice in codici_inseriti.items():
+                            if squadra_dup.startswith('__partite__'):
+                                continue
+                            if not codice:
+                                continue
+                            nuovi_gruppi.setdefault(codice, {'codice': codice, 'squadre': [], 'partite': []})
+                            nuovi_gruppi[codice]['squadre'].append(squadra_dup)
+                        for chiave_extra, valore_extra in codici_inseriti.items():
+                            if not chiave_extra.startswith('__partite__'):
+                                continue
+                            codice = valore_extra['codice']
+                            nuovi_gruppi.setdefault(codice, {'codice': codice, 'squadre': [], 'partite': []})
+                            nuovi_gruppi[codice]['partite'].extend(
+                                chiave_partita(n, d) for n, d in valore_extra['partite']
+                            )
+                        if nuovi_gruppi:
+                            st.session_state['disambiguazioni_giocatori'][nome_dup] = list(nuovi_gruppi.values())
+                        elif nome_dup in st.session_state['disambiguazioni_giocatori']:
+                            del st.session_state['disambiguazioni_giocatori'][nome_dup]
+                        salva_disambiguazioni_su_disco(st.session_state['disambiguazioni_giocatori'], permetti_svuotamento=True)
+                        riapplica_disambiguazioni_a_tutti_i_dati()
+                        salva_foto_su_disco(st.session_state['foto_giocatori'])
+                        salva_note_su_disco(st.session_state['note_tiratori'])
+                        st.success(f"Separation saved for {nome_dup}.")
+                        st.rerun()
+
+        if st.session_state['disambiguazioni_giocatori']:
+            st.markdown("**Existing separations**")
+            for nome_sep, gruppi_sep in st.session_state['disambiguazioni_giocatori'].items():
+                riepilogo = "; ".join(
+                    (f"code {g['codice']}: " + (", ".join(g['squadre']) if g['squadre'] else f"{len(g['partite'])} specific match(es)"))
+                    for g in gruppi_sep
+                )
+                col_sep1, col_sep2 = st.columns([5, 1])
+                col_sep1.caption(f"{nome_sep} — {riepilogo}")
+                if col_sep2.button("🗑️", key=f"del_sep_{_chiave_css_sicura(nome_sep)}", help="Undo this separation (back to one single identity)"):
+                    del st.session_state['disambiguazioni_giocatori'][nome_sep]
+                    salva_disambiguazioni_su_disco(st.session_state['disambiguazioni_giocatori'], permetti_svuotamento=True)
+                    riapplica_disambiguazioni_a_tutti_i_dati()
+                    st.success("Separation undone.")
+                    st.rerun()
 
         st.markdown("---")
         st.subheader("🏆 Championships")
