@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v47 - 2026-09-21 - Supporto Money Time manuale (colonna 'MONEY TIME' nel file, tipicamente dal Video Tagger giovani): forza il flag invece di calcolarlo da minuto/punteggio; nel grafico di una categoria alternativa i tiri Money Time vanno in fondo, evidenziati in giallo, con etichette 'Shot N'"
+APP_VERSION = "v48 - 2026-09-21 - Il PDF 'Trend Summary' (Shooting Trend) ora mostra anche il logo della squadra analizzata, in alto a destra — stesso stile già usato negli altri PDF del report"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -7839,8 +7839,10 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
     buffer.seek(0)
     return buffer.getvalue()
 
-def genera_pdf_trend_summary(titolo_report, note_dict):
-    """PDF riassuntivo con l'elenco dei giocatori selezionati e, accanto, le note scritte dal coach."""
+def genera_pdf_trend_summary(titolo_report, note_dict, logo_squadra_b64=None):
+    """PDF riassuntivo con l'elenco dei giocatori selezionati e, accanto, le note scritte dal coach.
+    logo_squadra_b64: se fornito, il logo della squadra compare in copertina in alto a destra,
+    accanto al logo GPIA a sinistra — stesso schema già usato negli altri PDF del report."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6 * cm, bottomMargin=1.4 * cm,
                              leftMargin=1.2 * cm, rightMargin=1.2 * cm)
@@ -7853,11 +7855,13 @@ def genera_pdf_trend_summary(titolo_report, note_dict):
     dimensione_logo_copertina = 2.6 * cm
     blocco_titolo = Table(
         [[RLImage(io.BytesIO(LOGO_BYTES), width=dimensione_logo_copertina, height=dimensione_logo_copertina),
-          [Paragraph("TREND SUMMARY", titolo_stile), Paragraph(titolo_report, sottotitolo_stile)]]],
-        colWidths=[dimensione_logo_copertina + 0.4 * cm, None]
+          [Paragraph("TREND SUMMARY", titolo_stile), Paragraph(titolo_report, sottotitolo_stile)],
+          (RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)), width=dimensione_logo_copertina, height=dimensione_logo_copertina)
+           if logo_squadra_b64 else '')]],
+        colWidths=[dimensione_logo_copertina + 0.4 * cm, None, dimensione_logo_copertina + 0.2 * cm]
     )
     blocco_titolo.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('ALIGN', (0, 0), (0, 0), 'CENTER'), ('ALIGN', (2, 0), (2, 0), 'CENTER'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
@@ -11016,7 +11020,8 @@ with tab4:
                         with st.spinner("Generating PDF..."):
                             try:
                                 note_selezione = {g: st.session_state['note_tiratori'].get(g, '') for g in dati_pdf_giocatori}
-                                pdf_bytes_summary = genera_pdf_trend_summary(titolo_dashboard, note_selezione)
+                                logo_squadra_summary = st.session_state['loghi_squadre'].get(titolo_dashboard) if modalita_tir == "Team" else None
+                                pdf_bytes_summary = genera_pdf_trend_summary(titolo_dashboard, note_selezione, logo_squadra_b64=logo_squadra_summary)
                                 st.download_button(
                                     label="⬇️ Download Trend Summary", data=pdf_bytes_summary,
                                     file_name=f"Trend_Summary_{titolo_dashboard}".replace(' ', '_') + ".pdf",
