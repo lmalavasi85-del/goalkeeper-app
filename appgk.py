@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v51 - 2026-09-22 - Il fix dei blocchi da 10 minuti (v50) non si vedeva sulle partite già caricate PRIMA di quella correzione: i dati salvati avevano ancora il vecchio '0-10' scritto per i tiri senza timeline. Aggiunta una migrazione che ricalcola sempre Blocco_10m al caricamento (Google Sheets e backup locali, sia portieri sia tiratori sia categoria alternativa), così anche le partite già in archivio si correggono automaticamente, senza dover ricaricare nulla"
+APP_VERSION = "v52 - 2026-09-24 - Save %/Efficiency % 'excl. EG' tolto dalle tabelle per micro-zona, macro-zona e macro-sector ovunque nell'app (resta solo sui totali: per portiere, squadra, partita, stagione) — un Empty Goal non ha una zona propria, il confronto lì non aveva senso. Nella vista dedicata ai portieri: 'Season Totals' ora è sempre l'intero storico ('All Data & All Time', stesse 7 metriche di Admin nel Seasonal Report), indipendente dal filtro lega; aggiunto anche un filtro per singola partita, oltre a quello per lega già presente"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2315,12 +2315,10 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
     for settore in sorted(df_gk['TIRO_CLEAN'].dropna().unique()):
         df_s = df_gk[df_gk['TIRO_CLEAN'] == settore]
         s2, g2, m2, pct2, eff2 = calcola_metriche_gruppo(df_s)
-        _, _, _, pct2_no_eg, eff2_no_eg = calcola_metriche_gruppo_no_eg(df_s)
         expected = ottieni_expected_pct(settore)
         righe_settore.append({
             'Zone': settore, 'Saves': s2, 'Goals': g2, 'Miss': m2,
             'Save %': round(pct2, 1), 'Efficiency %': round(eff2, 1),
-            'Save % excl. EG': round(pct2_no_eg, 1), 'Efficiency % excl. EG': round(eff2_no_eg, 1),
             'Expected Efficiency %': expected if expected is not None else '',
             'GPI': round(df_s['GPI_Tiro'].sum(), 1)
         })
@@ -2329,11 +2327,9 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
     for macro in sorted(df_gk['macro_settore'].dropna().unique()):
         df_ma = df_gk[df_gk['macro_settore'] == macro]
         s3, g3, m3, pct3, eff3 = calcola_metriche_gruppo(df_ma)
-        _, _, _, pct3_no_eg, eff3_no_eg = calcola_metriche_gruppo_no_eg(df_ma)
         righe_macro.append({
             'Macro-Sector': macro.upper(), 'Saves': s3, 'Goals': g3, 'Miss': m3,
             'Save %': round(pct3, 1), 'Efficiency %': round(eff3, 1),
-            'Save % excl. EG': round(pct3_no_eg, 1), 'Efficiency % excl. EG': round(eff3_no_eg, 1),
             'GPI': round(df_ma['GPI_Tiro'].sum(), 1)
         })
 
@@ -2359,7 +2355,7 @@ def calcola_dettaglio_portiere(df_gk, lista_partite=None):
         'pct_no_eg': pct_no_eg, 'eff_no_eg': eff_no_eg,
         'tabella_settore': pd.DataFrame(righe_settore) if righe_settore else pd.DataFrame({
             'Zone': [], 'Saves': [], 'Goals': [], 'Miss': [],
-            'Save %': [], 'Efficiency %': [], 'Save % excl. EG': [], 'Efficiency % excl. EG': [],
+            'Save %': [], 'Efficiency %': [],
             'Expected Efficiency %': [], 'GPI': []
         }),
         'tabella_macro': pd.DataFrame(righe_macro) if righe_macro else pd.DataFrame({'Macro-Sector': [], 'GPI': []}),
@@ -3674,8 +3670,7 @@ def tabella_macro_zone_universale(df, ruolo='tiratore'):
     mostrino sempre gli stessi dati, solo raggruppati diversamente. Per ruolo='tiratore' resta
     invariata (Goals, Shots, Goal %) — quel caso è gestito a parte da tabella_macro_tiratori."""
     if ruolo == 'portiere':
-        colonne_vuote = ['Macro-Zone', 'Saves', 'Goals', 'Miss', 'Save %', 'Efficiency %',
-                          'Save % excl. EG', 'Efficiency % excl. EG', 'GPI']
+        colonne_vuote = ['Macro-Zone', 'Saves', 'Goals', 'Miss', 'Save %', 'Efficiency %', 'GPI']
         if df.empty or 'TIRO_CLEAN' not in df.columns:
             return pd.DataFrame(columns=colonne_vuote)
         macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
@@ -3685,11 +3680,9 @@ def tabella_macro_zone_universale(df, ruolo='tiratore'):
             if df_m.empty:
                 continue
             s, g, m, pct, eff = calcola_metriche_gruppo(df_m)
-            _, _, _, pct_no_eg, eff_no_eg = calcola_metriche_gruppo_no_eg(df_m)
             righe.append({
                 'Macro-Zone': ETICHETTA_MACRO_TIRATORI[macro], 'Saves': s, 'Goals': g, 'Miss': m,
                 'Save %': round(pct, 1), 'Efficiency %': round(eff, 1),
-                'Save % excl. EG': round(pct_no_eg, 1), 'Efficiency % excl. EG': round(eff_no_eg, 1),
                 'GPI': round(df_m['GPI_Tiro'].sum(), 1)
             })
         return pd.DataFrame(righe) if righe else pd.DataFrame(columns=colonne_vuote)
@@ -8330,21 +8323,44 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
         st.info("No matches found for this selection — check back after your next game, or try a different league filter.")
         return
 
+    # Filtro per singola partita (facoltativo, in aggiunta a quello per lega qui sopra): le
+    # opzioni sono solo le partite in cui questo portiere ha davvero giocato, già ristrette
+    # all'eventuale lega scelta sopra. "Season Totals" più sotto resta sempre sull'intero
+    # storico (non risente di questo filtro), tutto il resto della pagina sì.
+    etichette_partite_gk = [p['label'] for p in lista_partite]
+    partita_scelta_gk = st.selectbox("Filter by match (optional):", ["(All matches)"] + etichette_partite_gk,
+                                      key=f"gk_match_{chiave_filtro_gk}")
+    if partita_scelta_gk != "(All matches)":
+        df_stagione_totale = df_stagione_totale[df_stagione_totale['Match_Label'] == partita_scelta_gk]
+        lista_partite = [p for p in lista_partite if p['label'] == partita_scelta_gk]
+
     dati_per_portiere = {nome_portiere: lista_partite}
-    s_tot, g_tot, m_tot, pct_tot, eff_tot = calcola_metriche_gruppo(df_stagione_totale)
-    _, _, _, pct_tot_noeg, eff_tot_noeg = calcola_metriche_gruppo_no_eg(df_stagione_totale)
-    gpi_medio_tot = df_stagione_totale['GPI_Tiro'].mean()
+
+    # Season Totals: SEMPRE "All Data & All Time" (l'intero storico del portiere, mai filtrato
+    # per lega) — stessi identici valori e stessa formula di "Total Season Statistics" che Admin
+    # vede nel Seasonal Report con "All Data & All Time" selezionato. Il filtro per lega qui
+    # sopra continua a valere per tutto il resto della pagina più sotto (tabelle, grafici,
+    # ranking, storico), solo non per questo riepilogo in cima.
+    df_stagione_tutta, lista_partite_tutta = raccogli_stagione_per_portiere(st.session_state['db'], nome_portiere)
+    s_tot_at, g_tot_at, m_tot_at, pct_tot_at, eff_tot_at = calcola_metriche_gruppo(df_stagione_tutta)
+    _, g_tot_at_noeg, _, pct_tot_at_noeg, eff_tot_at_noeg = calcola_metriche_gruppo_no_eg(df_stagione_tutta)
+    gpi_medio_tot_at = df_stagione_tutta['GPI_Tiro'].mean() if not df_stagione_tutta.empty else 0.0
+    numero_partite_tutte = len(lista_partite_tutta)
+    media_cumulativa_gpi_at = (df_stagione_tutta['GPI_Tiro'].sum() / numero_partite_tutte) if numero_partite_tutte > 0 else 0.0
 
     st.markdown("---")
-    st.subheader("📊 Season Totals")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Matches", len(lista_partite))
-    c2.metric("Shots Faced", len(df_stagione_totale))
-    c3.metric("Save %", f"{pct_tot:.1f}%")
-    c4.metric("Efficiency %", f"{eff_tot:.1f}%")
-    c5.metric("Average GPI (per shot)", f"{gpi_medio_tot:+.2f}")
-    if round(pct_tot, 1) != round(pct_tot_noeg, 1):
-        st.caption(f"Excluding Empty Goals — Save %: {pct_tot_noeg:.1f}% · Efficiency %: {eff_tot_noeg:.1f}%")
+    st.subheader("📊 Season Totals — All Data & All Time")
+    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+    c1.metric("Matches", numero_partite_tutte)
+    c2.metric("Shots Faced", len(df_stagione_tutta))
+    c3.metric("Saves", s_tot_at)
+    c4.metric("Goals Conceded", g_tot_at)
+    c5.metric("Save %", f"{pct_tot_at:.1f}%")
+    c6.metric("Efficiency %", f"{eff_tot_at:.1f}%")
+    c7.metric("Average GPI (per shot)", f"{gpi_medio_tot_at:+.2f}")
+    c8.metric("Cumulative Average GPI (per match)", f"{media_cumulativa_gpi_at:+.2f}")
+    if g_tot_at != g_tot_at_noeg:
+        st.caption(f"Excluding Empty Goals — Goals Conceded: {g_tot_at_noeg} · Save %: {pct_tot_at_noeg:.1f}% · Efficiency %: {eff_tot_at_noeg:.1f}%")
 
     info_gk = calcola_dettaglio_portiere(df_stagione_totale, lista_partite=lista_partite)
     st.markdown("**Statistics by specific micro-zone**")
@@ -9865,7 +9881,6 @@ with tab2:
                     if tasto_sel_gk:
                         df_per_porta_gk = df_gk_filtrato[df_gk_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_gk]
                         s_sel_gk, g_sel_gk, m_sel_gk, pct_sel_gk, eff_sel_gk = calcola_metriche_gruppo(df_per_porta_gk)
-                        _, _, _, pct_sel_gk_noeg, eff_sel_gk_noeg = calcola_metriche_gruppo_no_eg(df_per_porta_gk)
                         expected_sel_gk = ottieni_expected_pct(tasto_sel_gk)
                         colore_cornice_gk = _colore_expected(eff_sel_gk if len(df_per_porta_gk) > 0 else None, expected_sel_gk)
                     else:
@@ -9884,8 +9899,6 @@ with tab2:
                             if len(df_per_porta_gk) > 0:
                                 st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  "
                                            f"Real: **{pct_sel_gk:.1f}%** ({s_sel_gk}/{len(df_per_porta_gk)})")
-                                if round(pct_sel_gk, 1) != round(pct_sel_gk_noeg, 1):
-                                    st.caption(f"Excluding Empty Goals — Save %: **{pct_sel_gk_noeg:.1f}%**  |  Efficiency %: **{eff_sel_gk_noeg:.1f}%**")
                             else:
                                 st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  No shots from this sector.")
                     with col_tast_gk:
@@ -10526,7 +10539,6 @@ with tab3:
                     if tasto_sel_gk_stag:
                         df_per_porta_gk_stag = df_gk_stag_filtrato[df_gk_stag_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_gk_stag]
                         s_sel_stag, _, _, pct_sel_stag, eff_sel_stag = calcola_metriche_gruppo(df_per_porta_gk_stag)
-                        _, _, _, pct_sel_stag_noeg, eff_sel_stag_noeg = calcola_metriche_gruppo_no_eg(df_per_porta_gk_stag)
                         expected_sel_stag = ottieni_expected_pct(tasto_sel_gk_stag)
                         colore_cornice_gk_stag = _colore_expected(eff_sel_stag if len(df_per_porta_gk_stag) > 0 else None, expected_sel_stag)
                     else:
@@ -10545,8 +10557,6 @@ with tab3:
                             if len(df_per_porta_gk_stag) > 0:
                                 st.caption(f"Expected Save % for {tasto_sel_gk_stag}: **{expected_testo_stag}**  |  "
                                            f"Real: **{pct_sel_stag:.1f}%** ({s_sel_stag}/{len(df_per_porta_gk_stag)})")
-                                if round(pct_sel_stag, 1) != round(pct_sel_stag_noeg, 1):
-                                    st.caption(f"Excluding Empty Goals — Save %: **{pct_sel_stag_noeg:.1f}%**  |  Efficiency %: **{eff_sel_stag_noeg:.1f}%**")
                             else:
                                 st.caption(f"Expected Save % for {tasto_sel_gk_stag}: **{expected_testo_stag}**  |  No shots from this sector.")
                     with col_tast_gk_stag:
@@ -12058,7 +12068,6 @@ with tab6:
                         df_porta_tg_gk = df_tg_gk_filtrato[df_tg_gk_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_tg_gk]
                         expected_sel_tg_gk = ottieni_expected_pct(tasto_sel_tg_gk)
                         s_reale, g_reale, m_reale, pct_reale, eff_reale = calcola_metriche_gruppo(df_porta_tg_gk)
-                        _, _, _, pct_reale_noeg, eff_reale_noeg = calcola_metriche_gruppo_no_eg(df_porta_tg_gk)
                         colore_cornice_tg_gk = _colore_expected(eff_reale if len(df_porta_tg_gk) > 0 else None, expected_sel_tg_gk)
                     else:
                         df_porta_tg_gk = df_tg_gk_filtrato
@@ -12075,8 +12084,6 @@ with tab6:
                             expected_testo_tg_gk = f"{expected_sel_tg_gk:.0f}%" if expected_sel_tg_gk is not None else "n/a"
                             st.caption(f"Expected Save % for {tasto_sel_tg_gk}: **{expected_testo_tg_gk}**  |  "
                                        f"Real: **{pct_reale:.1f}%** ({s_reale}/{len(df_porta_tg_gk)})")
-                            if round(pct_reale, 1) != round(pct_reale_noeg, 1):
-                                st.caption(f"Excluding Empty Goals — Save %: **{pct_reale_noeg:.1f}%**  |  Efficiency %: **{eff_reale_noeg:.1f}%**")
                     with col_t_tg_gk:
                         tasto_cliccato_tg_gk = pulsantiera_settori_campo(tot_tast_tg_gk, salvate_tast_tg_gk, tasto_sel_tg_gk,
                                                                           key_prefix=f"tag_go_gk_pulsantiera_{chiave_tg_gk_sicura}")
@@ -12101,20 +12108,16 @@ with tab6:
                     for macro_tg_gk in sorted(df_sel_tg_gk['macro_settore'].dropna().unique()) if 'macro_settore' in df_sel_tg_gk.columns else []:
                         df_ma_tg_gk = df_sel_tg_gk[df_sel_tg_gk['macro_settore'] == macro_tg_gk]
                         s_ma, g_ma, m_ma, pct_ma, eff_ma = calcola_metriche_gruppo(df_ma_tg_gk)
-                        _, _, _, pct_ma_noeg, eff_ma_noeg = calcola_metriche_gruppo_no_eg(df_ma_tg_gk)
                         righe_macsett_tg_gk.append({'Macro-Sector': macro_tg_gk.upper(), 'Saves': s_ma, 'Goals': g_ma, 'Miss': m_ma,
-                                                     'Save %': round(pct_ma, 1), 'Efficiency %': round(eff_ma, 1),
-                                                     'Save % excl. EG': round(pct_ma_noeg, 1), 'Efficiency % excl. EG': round(eff_ma_noeg, 1)})
+                                                     'Save %': round(pct_ma, 1), 'Efficiency %': round(eff_ma, 1)})
                     st.dataframe(pd.DataFrame(righe_macsett_tg_gk), use_container_width=True, hide_index=True)
                     st.markdown(f"**By micro-zone — {titolo_tg_gk}**")
                     righe_micro_tg_gk = []
                     for zona_tg_gk in sorted(df_sel_tg_gk['TIRO_CLEAN'].dropna().unique()):
                         df_z_tg_gk = df_sel_tg_gk[df_sel_tg_gk['TIRO_CLEAN'] == zona_tg_gk]
                         s_z, g_z, m_z, pct_z, eff_z = calcola_metriche_gruppo(df_z_tg_gk)
-                        _, _, _, pct_z_noeg, eff_z_noeg = calcola_metriche_gruppo_no_eg(df_z_tg_gk)
                         righe_micro_tg_gk.append({'Micro-Zone': zona_tg_gk, 'Saves': s_z, 'Goals': g_z, 'Miss': m_z,
-                                                   'Save %': round(pct_z, 1), 'Efficiency %': round(eff_z, 1),
-                                                   'Save % excl. EG': round(pct_z_noeg, 1), 'Efficiency % excl. EG': round(eff_z_noeg, 1)})
+                                                   'Save %': round(pct_z, 1), 'Efficiency %': round(eff_z, 1)})
                     st.dataframe(pd.DataFrame(righe_micro_tg_gk), use_container_width=True, hide_index=True)
 
                     st.markdown("---")
