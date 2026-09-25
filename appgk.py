@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v52 - 2026-09-24 - Save %/Efficiency % 'excl. EG' tolto dalle tabelle per micro-zona, macro-zona e macro-sector ovunque nell'app (resta solo sui totali: per portiere, squadra, partita, stagione) — un Empty Goal non ha una zona propria, il confronto lì non aveva senso. Nella vista dedicata ai portieri: 'Season Totals' ora è sempre l'intero storico ('All Data & All Time', stesse 7 metriche di Admin nel Seasonal Report), indipendente dal filtro lega; aggiunto anche un filtro per singola partita, oltre a quello per lega già presente"
+APP_VERSION = "v53 - 2026-09-24 - La colonna TIMELINE non è più obbligatoria nei file caricati (elabora_file_portieri/tiratori/unificato): serviva a chi tagga a mano, ma i ragazzi delle giovanili usano un tool che non la genera più, e i loro file venivano rifiutati con 'Missing required column(s): TIMELINE'. Ora, se manca, l'app procede semplicemente senza — stesso comportamento di quando la colonna c'è ma è vuota riga per riga"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2833,7 +2833,7 @@ def elabora_file_portieri(df_raw):
     c_goalsector = _trova_colonna(['goal sector', 'goal_sector', 'settore porta', 'net sector'])
 
     mancanti = [nome for nome, val in [('PORTIERE/GK', c_gk), ('TIRO', c_tiro),
-                ('RESULT', c_res), ('TIMELINE', c_time)] if val is None]
+                ('RESULT', c_res)] if val is None]
     if mancanti:
         raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
 
@@ -2853,7 +2853,8 @@ def elabora_file_portieri(df_raw):
         df['GOAL_SECTOR_CLEAN'] = ''
 
     minuti_list, tempo_list, scarti_list, punteggi_list = [], [], [], []
-    for val in df[c_time]:
+    valori_timeline = df[c_time] if c_time is not None else [None] * len(df)
+    for val in valori_timeline:
         m_tot, t_s, sc, pt = analizza_timeline(val)
         minuti_list.append(m_tot)
         tempo_list.append(t_s)
@@ -2941,7 +2942,7 @@ def elabora_file_tiratori(df_raw):
     c_time = _trova_colonna(['timeline', 'tempo', 'minut', 'note'])
 
     mancanti = [nome for nome, val in [('TIRATORE', c_tiratore), ('TIRO', c_tiro),
-                ('GOAL SECTOR', c_goalsector), ('RESULT', c_result), ('TIMELINE', c_time)] if val is None]
+                ('GOAL SECTOR', c_goalsector), ('RESULT', c_result)] if val is None]
     if mancanti:
         raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
 
@@ -2957,7 +2958,8 @@ def elabora_file_tiratori(df_raw):
     df['RESULT_CLEAN'] = df[c_result].astype(str).str.lower().str.strip()
 
     minuti_list, tempo_list, scarti_list, punteggi_list = [], [], [], []
-    for val in df[c_time]:
+    valori_timeline = df[c_time] if c_time is not None else [None] * len(df)
+    for val in valori_timeline:
         m_tot, t_s, sc, pt = analizza_timeline(val)
         minuti_list.append(m_tot); tempo_list.append(t_s); scarti_list.append(sc); punteggi_list.append(pt)
     df['Minuti_Gara'] = minuti_list
@@ -3031,7 +3033,7 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
     colonne_avanzate_trovate = trova_colonne_tagging_avanzato(df_raw.columns)
 
     mancanti = [nome for nome, val in [('HOME', c_home), ('AWAY', c_away), ('TIRO', c_tiro),
-                ('RESULT', c_result), ('TIMELINE', c_time)] if val is None]
+                ('RESULT', c_result)] if val is None]
     if mancanti:
         raise ValueError(f"Missing required column(s): {', '.join(mancanti)}")
 
@@ -3080,13 +3082,13 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
         if esito_tp is not None and portiere:
             righe_tiro_portiere.append({
                 'PORTIERE': portiere, 'Squadra_Portiere': squadra_portiere,
-                'ESITO': esito_tp, 'TIMELINE': r[c_time],
+                'ESITO': esito_tp, 'TIMELINE': (r[c_time] if c_time is not None else None),
             })
             continue
 
         tiro = r[c_tiro]
         result = r[c_result]
-        timeline = r[c_time]
+        timeline = r[c_time] if c_time is not None else None
 
         # Una riga senza un vero esito (save/goal/miss) non è un tiro — spesso è solo
         # un'annotazione libera lasciata nella stessa colonna per la videoanalisi — e va
