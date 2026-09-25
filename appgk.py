@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v53 - 2026-09-24 - La colonna TIMELINE non è più obbligatoria nei file caricati (elabora_file_portieri/tiratori/unificato): serviva a chi tagga a mano, ma i ragazzi delle giovanili usano un tool che non la genera più, e i loro file venivano rifiutati con 'Missing required column(s): TIMELINE'. Ora, se manca, l'app procede semplicemente senza — stesso comportamento di quando la colonna c'è ma è vuota riga per riga"
+APP_VERSION = "v55 - 2026-09-25 - 'Delete Matches' ora vede anche le partite in categoria separata (es. giovanili/altre squadre): prima l'elenco e la cancellazione toccavano solo i quattro database principali, lasciando fuori categoria_alt_db — quelle partite non compaiono mai qui per errore né vengono toccate quando non richiesto, semplicemente ora sono incluse come tutte le altre"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -8544,6 +8544,20 @@ with tab1:
         st.subheader("📥 Upload Match (unified format — recommended)")
         st.caption("A single Excel file for the whole match — see the file format rules below.")
 
+        if st.session_state['categoria_alt_db']:
+            categorie_riepilogo = {}
+            for m in st.session_state['categoria_alt_db']:
+                nome_cat = m.get('categoria', '')
+                if not nome_cat:
+                    continue
+                categorie_riepilogo.setdefault(nome_cat, set()).add((m['nome'], str(m['data'])))
+            if categorie_riepilogo:
+                righe_riepilogo = " · ".join(
+                    f"**{nome}**: {len(partite)} match(es)"
+                    for nome, partite in sorted(categorie_riepilogo.items())
+                )
+                st.caption(f"📁 Existing separate categories — {righe_riepilogo}")
+
         with st.expander("📋 File format rules (read this if you're tagging matches for the team)"):
             st.markdown("""
 **File name**
@@ -8783,9 +8797,12 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                 salva_h2h_su_disco(st.session_state['db_h2h'])
                 salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
                 if agg_alt:
-                    st.success(f"Saved: {agg_alt} goalkeeper record(s) in the separate category.")
-                st.success(f"Saved: {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
-                           f"{agg_h2h} head-to-head match(es), {agg_tp} goalkeeper own-shot match(es) added.")
+                    categorie_coinvolte = sorted(set(m['categoria'] for m in pe_categoria_alt_uni))
+                    etichetta_categorie = " / ".join(f"**{c}**" for c in categorie_coinvolte)
+                    st.success(f"Saved: {agg_alt} goalkeeper record(s) in the separate category {etichetta_categorie}.")
+                if agg_gk or agg_tir or agg_h2h or agg_tp:
+                    st.success(f"Saved: {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
+                               f"{agg_h2h} head-to-head match(es), {agg_tp} goalkeeper own-shot match(es) added.")
 
         st.markdown("---")
         st.subheader("📂 Bulk Zone-Only Import (no timeline)")
@@ -9427,21 +9444,23 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
         st.markdown("---")
         st.subheader("🗑️ Delete Matches")
         st.caption("Remove one match, a selection of matches, or every match — goalkeeper data, "
-                   "shooter data, head-to-head data and goalkeeper own-shot data all at once for "
-                   "each match removed, since a single unified file feeds all of them. Nothing "
-                   "else is touched: photos, notes, championships, training, teams, logos and "
-                   "player links all stay exactly as they are. Handy if you need to re-upload a "
-                   "match (or several) after a fix, without resorting to Reset All Data.")
+                   "shooter data, head-to-head data, goalkeeper own-shot data and separate-category "
+                   "data (youth/other teams) all at once for each match removed, since a single "
+                   "unified file feeds all of them. Nothing else is touched: photos, notes, "
+                   "championships, training, teams, logos and player links all stay exactly as "
+                   "they are. Handy if you need to re-upload a match (or several) after a fix, "
+                   "without resorting to Reset All Data.")
         chiavi_match = sorted(set(
             [(p['nome'], str(p['data'])) for p in st.session_state['db']] +
             [(p['nome'], str(p['data'])) for p in st.session_state['db_tiratori']] +
             [(p['nome'], str(p['data'])) for p in st.session_state.get('db_h2h', [])] +
-            [(p['nome'], str(p['data'])) for p in st.session_state.get('db_tiro_portiere', [])]
+            [(p['nome'], str(p['data'])) for p in st.session_state.get('db_tiro_portiere', [])] +
+            [(p['nome'], str(p['data'])) for p in st.session_state.get('categoria_alt_db', [])]
         ), key=lambda k: k[1])
 
         def _elimina_partite(chiavi_da_eliminare):
             """chiavi_da_eliminare: set di (nome, data_str). Rimuove queste partite da tutti e
-            quattro i database e salva. Non tocca nient'altro."""
+            cinque i database e salva. Non tocca nient'altro."""
             st.session_state['db'] = [p for p in st.session_state['db']
                                        if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
             st.session_state['db_tiratori'] = [p for p in st.session_state['db_tiratori']
@@ -9450,10 +9469,13 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                                            if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
             st.session_state['db_tiro_portiere'] = [p for p in st.session_state.get('db_tiro_portiere', [])
                                                      if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
+            st.session_state['categoria_alt_db'] = [p for p in st.session_state.get('categoria_alt_db', [])
+                                                     if (p['nome'], str(p['data'])) not in chiavi_da_eliminare]
             salva_stagione_su_disco(st.session_state['db'])
             salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
             salva_h2h_su_disco(st.session_state['db_h2h'])
             salva_tiro_portiere_su_disco(st.session_state['db_tiro_portiere'])
+            salva_categoria_alt_su_disco(st.session_state['categoria_alt_db'])
 
         if chiavi_match:
             etichette_match_elimina = [f"{nome} ({data})" for nome, data in chiavi_match]
@@ -9488,8 +9510,10 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                 n_tir = sum(1 for p in st.session_state['db_tiratori'] if (p['nome'], str(p['data'])) in chiavi_scelte)
                 n_h2h = sum(1 for p in st.session_state.get('db_h2h', []) if (p['nome'], str(p['data'])) in chiavi_scelte)
                 n_tp = sum(1 for p in st.session_state.get('db_tiro_portiere', []) if (p['nome'], str(p['data'])) in chiavi_scelte)
+                n_alt = sum(1 for p in st.session_state.get('categoria_alt_db', []) if (p['nome'], str(p['data'])) in chiavi_scelte)
                 st.caption(f"Will remove: {n_gk} goalkeeper record(s), {n_tir} shooter record(s), "
-                           f"{n_h2h} head-to-head match(es), {n_tp} goalkeeper own-shot match(es).")
+                           f"{n_h2h} head-to-head match(es), {n_tp} goalkeeper own-shot match(es), "
+                           f"{n_alt} separate-category record(s).")
                 conferma_elimina = st.checkbox(
                     f"I confirm I want to delete {etichetta_riepilogo} (this action is irreversible)",
                     key="conferma_elimina_partite"
@@ -9499,7 +9523,8 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     st.success(f"Deleted {etichetta_riepilogo}. "
                                f"Remaining: {len(st.session_state['db'])} goalkeeper record(s), "
                                f"{len(st.session_state['db_tiratori'])} shooter record(s), "
-                               f"{len(st.session_state['db_h2h'])} head-to-head match(es).")
+                               f"{len(st.session_state['db_h2h'])} head-to-head match(es), "
+                               f"{len(st.session_state.get('categoria_alt_db', []))} separate-category record(s).")
                     st.rerun()
         else:
             st.caption("No matches to delete yet.")
