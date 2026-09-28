@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v55 - 2026-09-25 - 'Delete Matches' ora vede anche le partite in categoria separata (es. giovanili/altre squadre): prima l'elenco e la cancellazione toccavano solo i quattro database principali, lasciando fuori categoria_alt_db — quelle partite non compaiono mai qui per errore né vengono toccate quando non richiesto, semplicemente ora sono incluse come tutte le altre"
+APP_VERSION = "v56 - 2026-09-27 - Ogni PDF che puo' contenere le note del coach (report tiratori in Single Game e Seasonal, PDF del singolo giocatore, Tag & Go, sessioni di allenamento) ha ora un checkbox \"Include coach's notes in the PDF\", acceso di default: spegnendolo le note e le tendenze non compaiono nel PDF, cosi' il report si puo' mandare all'allenatore di una squadra senza i propri commenti. Il Trend Summary resta a parte perche' e' fatto solo di note"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -10275,6 +10275,10 @@ with tab2:
                             mappe_match_tir_correnti.pop(i)
                             st.rerun()
 
+                includi_note_match_tir = st.checkbox(
+                    "Include coach's notes in the PDF", value=True, key="inc_note_pdf_match_tir",
+                    help="Untick it before sending the report to a coach or team if you don't want your "
+                         "notes and trend comments to appear in the PDF.")
                 if st.button("📄 Generate PDF for this match (shooters)"):
                     with st.spinner("Generating PDF..."):
                         try:
@@ -10296,7 +10300,7 @@ with tab2:
                             pdf_bytes_mt = genera_pdf_tiratori(
                                 titolo_pdf_mt,
                                 dati_pdf_giocatori_mt,
-                                note_pdf_mt,
+                                note_pdf_mt if includi_note_match_tir else {},
                                 df_squadra_riepilogo=(df_squadra_completa_mt if modalita_match_tir == "Team" else None),
                                 logo_squadra_b64=logo_squadra_mt,
                                 mappe_extra=mappe_match_tir_correnti,
@@ -11209,6 +11213,9 @@ with tab4:
                                 salva_anagrafica_su_disco(st.session_state['anagrafica_giocatori'])
 
                         # ---- Single-player PDF ----
+                        includi_note_g = st.checkbox(
+                            "Include coach's notes in the PDF", value=True, key=f"inc_note_pdf_{nome_giocatore}",
+                            help="Untick it if the PDF goes to a coach or team and your notes should stay private.")
                         if st.button(f"📄 Generate PDF — {nome_giocatore}", key=f"pdf_{nome_giocatore}"):
                             with st.spinner("Generating PDF..."):
                                 try:
@@ -11217,7 +11224,7 @@ with tab4:
                                     pdf_bytes_g = genera_pdf_tiratori(
                                         f"{titolo_dashboard} — {nome_giocatore}",
                                         {nome_giocatore: df_giocatore_vista},
-                                        {nome_giocatore: nota_nuova},
+                                        {nome_giocatore: nota_nuova} if includi_note_g else {},
                                         anagrafica_giocatori={nome_giocatore: profilo_g_pdf} if profilo_g_pdf else None,
                                         link_personal_clips={nome_giocatore: link_clip_g_pdf} if link_clip_g_pdf else None
                                     )
@@ -11316,6 +11323,11 @@ with tab4:
                         st.session_state['link_video_zone'][titolo_dashboard] = nuovi_link_zona
                         salva_link_zone_su_disco(st.session_state['link_video_zone'])
 
+                includi_note_sel = st.checkbox(
+                    "Include coach's notes in the PDF", value=True, key="inc_note_pdf_selection",
+                    help="Untick it before sending the report to a coach or team if your notes and trend "
+                         "comments should not appear. The Trend Summary PDF is made of notes only, so this "
+                         "option does not apply to it.")
                 col_pdf1, col_pdf2 = st.columns(2)
                 with col_pdf1:
                     if st.button("📄 Generate PDF for this selection"):
@@ -11350,7 +11362,8 @@ with tab4:
                                                        for g in dati_pdf_giocatori if g in st.session_state['anagrafica_giocatori']}
                                 link_clip_pdf_sel = {g: p['link_clip'] for g, p in anagrafica_pdf_sel.items() if p.get('link_clip')}
                                 pdf_bytes_sel = genera_pdf_tiratori(
-                                    titolo_dashboard, dati_pdf_giocatori, note_selezione,
+                                    titolo_dashboard, dati_pdf_giocatori,
+                                    note_selezione if includi_note_sel else {},
                                     df_squadra_riepilogo=(df_selezione if modalita_tir == "Team" else None),
                                     logo_squadra_b64=logo_squadra_tir,
                                     mappe_extra=mappe_trend_correnti,
@@ -11805,13 +11818,22 @@ with tab5:
                         st.session_state['sessioni_allenamento'][idx_sessione]['note_generali'] = nota_generale_nuova
                         aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
 
+                    includi_note_sess = st.checkbox(
+                        "Include coach's notes in the exported PDFs of this session", value=True,
+                        key=f"inc_note_sess_{chiave_sess}",
+                        help="Covers both the session notes and the notes for each team/date. Untick it "
+                             "before sending the PDF to a team if the notes should stay private.")
+
                     st.markdown("**Assign to a team & date (optional, repeatable)**")
                     for i_ass, assegnazione in enumerate(sessione['assegnazioni']):
                         col_a1, col_a2, col_a3 = st.columns([3, 1, 1])
                         etichetta_ass = f"{assegnazione.get('squadra') or '(no team)'} — {assegnazione.get('data') or '(no date)'}"
                         col_a1.caption(etichetta_ass)
                         if col_a2.button("📄 Export", key=f"export_ass_{chiave_sess}_{i_ass}"):
-                            pdf_finale = genera_pdf_sessione_allenamento(sessione, assegnazione, st.session_state['squadre_allenate'])
+                            pdf_finale = genera_pdf_sessione_allenamento(
+                                sessione if includi_note_sess else {**sessione, 'note_generali': ''},
+                                assegnazione if includi_note_sess else {**assegnazione, 'nota': ''},
+                                st.session_state['squadre_allenate'])
                             st.download_button("⬇️ Download", data=pdf_finale,
                                                 file_name=f"{sessione['nome_sessione']}_{assegnazione.get('squadra') or 'session'}.pdf",
                                                 mime="application/pdf", key=f"dl_ass_{chiave_sess}_{i_ass}")
@@ -11839,7 +11861,9 @@ with tab5:
 
                     st.markdown("---")
                     if st.button("📄 Export session (no team/date)", key=f"export_plain_{chiave_sess}"):
-                        pdf_semplice = genera_pdf_sessione_allenamento(sessione, None, st.session_state['squadre_allenate'])
+                        pdf_semplice = genera_pdf_sessione_allenamento(
+                            sessione if includi_note_sess else {**sessione, 'note_generali': ''},
+                            None, st.session_state['squadre_allenate'])
                         st.download_button("⬇️ Download", data=pdf_semplice,
                                             file_name=f"{sessione['nome_sessione']}.pdf", mime="application/pdf",
                                             key=f"dl_plain_{chiave_sess}")
@@ -12174,12 +12198,21 @@ with tab6:
             mappe_gk_pdf = [m for m in st.session_state['tag_go_mappe_salvate'] if m['ruolo'] == 'portiere']
             mappe_tir_pdf = [m for m in st.session_state['tag_go_mappe_salvate'] if m['ruolo'] == 'tiratore']
 
+            includi_note_tag_go = st.checkbox(
+                "Include coach's notes in the PDF", value=True, key="inc_note_pdf_tag_go",
+                help="Applies to both 'Watch Preview' and 'Export and Delete'. Untick it before sending the "
+                     "report to a coach or team if your notes should stay private.")
+            if not includi_note_tag_go:
+                st.caption("Notes will be left out of the PDF. Careful with 'Export and Delete': it still "
+                            "wipes the notes afterwards — use 'Export Notes Only' first if you want to keep them.")
+
             def _costruisci_pdf_tag_go():
                 pdf_pezzi = []
                 if not df_tir_tg.empty:
                     giocatori_pdf_tg = sorted(df_tir_tg['TIRATORE_ID'].dropna().unique())
                     dati_pdf_tir_tg = {g: df_tir_tg[df_tir_tg['TIRATORE_ID'] == g] for g in giocatori_pdf_tg}
-                    note_pdf_tir_tg = {g: st.session_state['tag_go_note_giocatori'].get(g, '') for g in giocatori_pdf_tg}
+                    note_pdf_tir_tg = ({g: st.session_state['tag_go_note_giocatori'].get(g, '') for g in giocatori_pdf_tg}
+                                       if includi_note_tag_go else {})
                     pdf_tir_bytes = genera_pdf_tiratori(
                         st.session_state['tag_go_nome_analisi'] or "Tag & Go Analysis",
                         dati_pdf_tir_tg, note_pdf_tir_tg,
@@ -12189,7 +12222,8 @@ with tab6:
                 if not df_gk_tg.empty:
                     portieri_pdf_tg = sorted(df_gk_tg['PORTIERE_ID'].dropna().unique())
                     dati_pdf_gk_tg = {g: df_gk_tg[df_gk_tg['PORTIERE_ID'] == g] for g in portieri_pdf_tg}
-                    note_pdf_gk_tg = {g: st.session_state['tag_go_note_giocatori'].get(g, '') for g in portieri_pdf_tg}
+                    note_pdf_gk_tg = ({g: st.session_state['tag_go_note_giocatori'].get(g, '') for g in portieri_pdf_tg}
+                                      if includi_note_tag_go else {})
                     pdf_gk_bytes = genera_pdf_tag_go_portieri(
                         st.session_state['tag_go_nome_analisi'] or "Tag & Go Analysis",
                         dati_pdf_gk_tg, note_pdf_gk_tg, mappe_extra=mappe_gk_pdf
