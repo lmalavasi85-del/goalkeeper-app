@@ -1029,12 +1029,12 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v62 - 2026-09-29 - GK Method Comparison: nuovo checkbox 'Also show Olympic averages' — "
-               "per ciascun gruppo (GK Method e non) esclude il portiere con Save % più alto e quello con "
-               "Save % più basso (la decisione si basa solo su Save %, applicata poi anche a Efficiency % "
-               "sugli stessi portieri rimasti), poi fa la media semplice dei rimanenti — utile per capire "
-               "se un singolo fenomeno o un singolo caso difficile sta spostando la media di un gruppo. "
-               "Sotto ogni tabella compaiono i nomi esclusi da entrambi i lati")
+APP_VERSION = ("v64 - 2026-09-29 - GK Method Comparison: sistemata la formattazione dei numeri a "
+               "schermo — Save %/Efficiency % ora mostrano sempre esattamente un decimale (mai una "
+               "sfilza di zeri dovuta alla rappresentazione interna dei numeri decimali), e Shots Faced "
+               "è sempre un intero pulito (mai '327.0') — con '—' al posto del numero sulle righe delle "
+               "medie olimpiche, che non hanno un conteggio tiri proprio. Il PDF era già formattato "
+               "correttamente, non serviva toccarlo")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1419,6 +1419,24 @@ def _media_olimpica_gruppo(df_gruppo):
         'escluso_alto': escluso_alto, 'escluso_basso': escluso_basso,
     }
 
+def _classifica_confronto_gk_method(valore, riferimento):
+    """'sopra'/'uguale'/'sotto' confrontando valore con riferimento (tolleranza 0.05 per gli
+    arrotondamenti) — unica funzione usata sia dalla tabella a schermo sia dall'export PDF, così
+    le due non possono mai colorare diversamente la stessa cella."""
+    differenza = valore - riferimento
+    if abs(differenza) < 0.05:
+        return 'uguale'
+    return 'sopra' if differenza > 0 else 'sotto'
+
+def _riferimenti_riga_confronto_gk_method(nome_riga, pct_altri, eff_altri, info_olimpica):
+    """Per una riga della tabella di confronto, restituisce (riferimento_save,
+    riferimento_efficiency) — il riferimento pesato sui tiri per tutte le righe, tranne quella
+    Olympic di GK Method che si confronta contro il riferimento Olympic (pulito anch'esso —
+    confrontare un dato pulito con uno sporco non avrebbe senso)."""
+    if nome_riga == 'GK Method Olympic Average' and info_olimpica:
+        return info_olimpica['non_gk']['save'], info_olimpica['non_gk']['efficiency']
+    return pct_altri, eff_altri
+
 def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method, mostra_olimpica=False):
     """df_idonei_subset: tiri già filtrati ai soli portieri idonei (soglia minima già applicata
     a monte — stessa identica soglia del ranking generale) per un dato livello (il totale
@@ -1457,13 +1475,11 @@ def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method, mostra_olim
     ]
 
     info_olimpica = None
-    pct_olimpica_altri = None
     if mostra_olimpica:
         olimpica_altri = _media_olimpica_gruppo(df_altri)
         olimpica_gk = _media_olimpica_gruppo(df_gk)
         if olimpica_altri and olimpica_gk:
             info_olimpica = {'non_gk': olimpica_altri, 'gk': olimpica_gk}
-            pct_olimpica_altri = olimpica_altri['save']
             righe.append({'Goalkeeper': 'Non-GK Method Olympic Average', 'Save %': round(olimpica_altri['save'], 1),
                            'Efficiency %': round(olimpica_altri['efficiency'], 1), 'Shots Faced': None})
             righe.append({'Goalkeeper': 'GK Method Olympic Average', 'Save %': round(olimpica_gk['save'], 1),
@@ -1481,26 +1497,29 @@ def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method, mostra_olim
     def _colora_riga(row):
         if row['Goalkeeper'] in ('Non-GK Method Average', 'Non-GK Method Olympic Average'):
             return [''] * len(row)
-        # La riga Olympic di GK Method si confronta col riferimento Olympic (pulito anch'esso),
-        # tutte le altre (media pesata + singoli portieri) col riferimento pesato sui tiri.
-        riferimento_save = pct_olimpica_altri if row['Goalkeeper'] == 'GK Method Olympic Average' else pct_altri
-        riferimento_eff = info_olimpica['non_gk']['efficiency'] if row['Goalkeeper'] == 'GK Method Olympic Average' else eff_altri
+        riferimento_save, riferimento_eff = _riferimenti_riga_confronto_gk_method(
+            row['Goalkeeper'], pct_altri, eff_altri, info_olimpica)
         colori = []
         for col in row.index:
             if col not in ('Save %', 'Efficiency %'):
                 colori.append('')
                 continue
             valore_riferimento = riferimento_save if col == 'Save %' else riferimento_eff
-            differenza = row[col] - valore_riferimento
-            if abs(differenza) < 0.05:  # uguale, con una piccola tolleranza per gli arrotondamenti
+            classificazione = _classifica_confronto_gk_method(row[col], valore_riferimento)
+            if classificazione == 'uguale':
                 colori.append('background-color: #ffeb9c')
-            elif differenza > 0:
+            elif classificazione == 'sopra':
                 colori.append('background-color: #c6efce')
             else:
                 colori.append('background-color: #ffc7ce')
         return colori
 
-    return df_finale.style.apply(_colora_riga, axis=1), info_olimpica
+    formattatori_confronto_gk = {
+        'Save %': lambda x: f"{x:.1f}%",
+        'Efficiency %': lambda x: f"{x:.1f}%",
+        'Shots Faced': lambda x: '—' if pd.isna(x) else f"{int(x)}",
+    }
+    return df_finale.style.apply(_colora_riga, axis=1).format(formattatori_confronto_gk), info_olimpica
 
 
 # HOME / AWAY: la prima squadra scritta nel nome del file è sempre "home",
@@ -4107,6 +4126,50 @@ def _tabella_micro_tiratori_reportlab(df_micro, col_widths=None, font_size=7):
         if colore_riga is None:
             colore_riga = colors.white if i % 2 == 1 else colors.HexColor('#f2f2f2')
         comandi_stile.append(('BACKGROUND', (0, i), (-1, i), colore_riga))
+    t.setStyle(TableStyle(comandi_stile))
+    return t
+
+def _tabella_confronto_gk_method_reportlab(styler, info_olimpica, col_widths=None, font_size=9):
+    """Versione PDF della tabella di confronto GK Method (vedi _tabella_confronto_gk_method):
+    stessa identica colorazione delle celle Save %/Efficiency % (usa le stesse funzioni condivise
+    _classifica_confronto_gk_method/_riferimenti_riga_confronto_gk_method, così schermo e PDF non
+    possono mai disallinearsi), solo il formato della tabella cambia (ReportLab invece di uno
+    Styler pandas). styler: il primo elemento restituito da _tabella_confronto_gk_method (il suo
+    .data è il DataFrame con i valori grezzi). info_olimpica: il secondo elemento."""
+    df_dati = styler.data if hasattr(styler, 'data') else styler
+    riga_riferimento = df_dati[df_dati['Goalkeeper'] == 'Non-GK Method Average'].iloc[0]
+    pct_altri, eff_altri = riga_riferimento['Save %'], riga_riferimento['Efficiency %']
+
+    colonne_pdf = ['Goalkeeper', 'Save %', 'Efficiency %', 'Shots Faced']
+    idx_save, idx_eff = colonne_pdf.index('Save %'), colonne_pdf.index('Efficiency %')
+    dati = [_intestazioni_con_wrap_pdf(colonne_pdf, font_size)]
+    for _, row in df_dati.iterrows():
+        dati.append([row['Goalkeeper'], f"{row['Save %']:.1f}%", f"{row['Efficiency %']:.1f}%",
+                     '—' if pd.isna(row['Shots Faced']) else str(int(row['Shots Faced']))])
+
+    if col_widths is None:
+        col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF * f for f in (0.4, 0.2, 0.2, 0.2)]
+    t = Table(dati, colWidths=col_widths, repeatRows=1)
+    comandi_stile = [
+        ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTSIZE', (0, 0), (-1, -1), font_size),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ]
+    colore_per_classificazione = {'sopra': COLORE_EXPECTED_SOPRA, 'uguale': COLORE_EXPECTED_UGUALE, 'sotto': COLORE_EXPECTED_SOTTO}
+    for i, (_, row) in enumerate(df_dati.iterrows(), start=1):
+        if row['Goalkeeper'] in ('Non-GK Method Average', 'Non-GK Method Olympic Average'):
+            comandi_stile.append(('BACKGROUND', (0, i), (-1, i), colors.white if i % 2 == 1 else colors.HexColor('#f2f2f2')))
+            continue
+        riferimento_save, riferimento_eff = _riferimenti_riga_confronto_gk_method(
+            row['Goalkeeper'], pct_altri, eff_altri, info_olimpica)
+        classificazione_save = _classifica_confronto_gk_method(row['Save %'], riferimento_save)
+        classificazione_eff = _classifica_confronto_gk_method(row['Efficiency %'], riferimento_eff)
+        comandi_stile.append(('BACKGROUND', (idx_save, i), (idx_save, i), colore_per_classificazione[classificazione_save]))
+        comandi_stile.append(('BACKGROUND', (idx_eff, i), (idx_eff, i), colore_per_classificazione[classificazione_eff]))
     t.setStyle(TableStyle(comandi_stile))
     return t
 
@@ -7886,10 +7949,13 @@ def _blocco_porta_tastiera_pdf(df, esiti_successo, titolo=None, larghezza_porta_
 
 def genera_pdf_universal_stats(titolo_report, sezioni):
     """Costruisce il PDF per Universal Stats: solo gli elementi scelti dall'utente (checkbox
-    'Includi nel PDF' accanto a ciascuno). sezioni: lista ordinata di dict, ciascuno uno dei due
+    'Includi nel PDF' accanto a ciascuno). sezioni: lista ordinata di dict, ciascuno uno dei tre
     tipi:
       {'tipo': 'torta_tabella', 'titolo': str, 'df': dataframe, 'micro': bool}
       {'tipo': 'ranking', 'titolo': str, 'df_generale': dataframe, 'sotto_tabelle': dict, 'esiti_successo': tuple}
+      {'tipo': 'confronto_gk_method', 'titolo': str, 'tabelle': [{'etichetta': str, 'styler': ...,
+       'info_olimpica': ... o None}, ...]} — styler/info_olimpica sono esattamente i due valori
+      restituiti da _tabella_confronto_gk_method per ciascun livello (Overall/un macro-settore).
     Foto giocatore/portiere incluse dove disponibili (stesso meccanismo usato ovunque nell'app),
     e logo dell'associazione sempre in copertina."""
     stili = getSampleStyleSheet()
@@ -7964,6 +8030,31 @@ def genera_pdf_universal_stats(titolo_report, sezioni):
                         _tabella_giocatori_con_foto(df_macro.to_dict('records'), font_size=9, larghezza_foto_cm=1.5)
                     ]))
                     elementi.append(Spacer(1, 0.25 * cm))
+            elementi.append(_separatore())
+
+        elif sezione['tipo'] == 'confronto_gk_method':
+            for tabella_info in sezione['tabelle']:
+                titolo_tabella = f"{sezione['titolo']} — {tabella_info['etichetta']}"
+                blocco = [Paragraph(titolo_tabella, sezione_stile), Spacer(1, 0.2 * cm),
+                          _tabella_confronto_gk_method_reportlab(tabella_info['styler'], tabella_info['info_olimpica'], font_size=9)]
+                info_olimpica_pdf = tabella_info['info_olimpica']
+                if info_olimpica_pdf:
+                    testo_esclusi = (
+                        f"Excluded from Non-GK Method Olympic Average: "
+                        f"{info_olimpica_pdf['non_gk']['escluso_alto']['nome']} "
+                        f"({info_olimpica_pdf['non_gk']['escluso_alto']['save']:.1f}% — highest), "
+                        f"{info_olimpica_pdf['non_gk']['escluso_basso']['nome']} "
+                        f"({info_olimpica_pdf['non_gk']['escluso_basso']['save']:.1f}% — lowest). "
+                        f"Excluded from GK Method Olympic Average: "
+                        f"{info_olimpica_pdf['gk']['escluso_alto']['nome']} "
+                        f"({info_olimpica_pdf['gk']['escluso_alto']['save']:.1f}% — highest), "
+                        f"{info_olimpica_pdf['gk']['escluso_basso']['nome']} "
+                        f"({info_olimpica_pdf['gk']['escluso_basso']['save']:.1f}% — lowest)."
+                    )
+                    blocco.append(Spacer(1, 0.15 * cm))
+                    blocco.append(Paragraph(testo_esclusi, stili['Normal']))
+                elementi.append(KeepTogether(blocco))
+                elementi.append(Spacer(1, 0.3 * cm))
             elementi.append(_separatore())
 
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
@@ -13103,6 +13194,11 @@ with tab7:
             st.session_state['portieri_gk_method'] = elenco_gk_method_scelto
             salva_gk_method_su_disco(elenco_gk_method_scelto)
 
+        # Inizializzata qui (non solo nel ramo che effettivamente mostra le tabelle) perché
+        # viene letta più sotto, nella costruzione dell'export PDF complessivo di Universal
+        # Stats, indipendentemente da quale dei rami sotto è stato preso.
+        sezioni_pdf_gk_method = []
+
         if not st.session_state['portieri_gk_method']:
             st.info("Select at least one goalkeeper above to see the comparison.")
         elif gen_gk_us.empty:
@@ -13147,11 +13243,18 @@ with tab7:
                     key="us_gk_method_olimpica"
                 )
 
+                # Ogni tabella mostrata (Overall + una per macro-settore) viene anche raccolta
+                # qui con la sua etichetta, styler e info sugli esclusi — serve per offrire la
+                # scelta di quali includere nell'export PDF più sotto, senza dover ricalcolare
+                # nulla due volte.
+                tabelle_gk_method_disponibili = []
+
                 def _mostra_tabella_e_esclusi_gk(df_idonei_livello, titolo_livello):
                     tabella, info_olimpica = _tabella_confronto_gk_method(df_idonei_livello, elenco_gk_method_vista, mostra_olimpica_us)
                     vuota = tabella.data.empty if hasattr(tabella, 'data') else tabella.empty
                     if vuota:
                         return
+                    tabelle_gk_method_disponibili.append({'etichetta': titolo_livello, 'styler': tabella, 'info_olimpica': info_olimpica})
                     st.markdown(f"**{titolo_livello}**")
                     st.dataframe(tabella, use_container_width=True, hide_index=True)
                     if info_olimpica:
@@ -13183,6 +13286,24 @@ with tab7:
                         if df_macro_idonei_gk.empty:
                             continue
                         _mostra_tabella_e_esclusi_gk(df_macro_idonei_gk, ETICHETTA_MACRO_UNIVERSALE[macro])
+
+                # Export PDF: quali di queste tabelle includere — tutte per default, o una
+                # selezione a scelta.
+                if tabelle_gk_method_disponibili:
+                    includi_pdf_gk_method = st.checkbox(
+                        "📄 Include 'GK Method Comparison' in PDF export", key="us_pdf_include_gk_method"
+                    )
+                    if includi_pdf_gk_method:
+                        etichette_disponibili_gk = [t['etichetta'] for t in tabelle_gk_method_disponibili]
+                        etichette_scelte_gk = st.multiselect(
+                            "Which tables to include:", etichette_disponibili_gk,
+                            default=etichette_disponibili_gk, key="us_pdf_gk_method_scelte"
+                        )
+                        tabelle_scelte_gk = [t for t in tabelle_gk_method_disponibili if t['etichetta'] in etichette_scelte_gk]
+                        if tabelle_scelte_gk:
+                            sezioni_pdf_gk_method.append({
+                                'tipo': 'confronto_gk_method', 'titolo': 'GK Method Comparison', 'tabelle': tabelle_scelte_gk
+                            })
 
         gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
         includi_pdf_shooter_rank, sotto_tir_us = _mostra_classifica_con_sottotabelle(
@@ -13216,6 +13337,7 @@ with tab7:
                                     'df': _filtra_money_time(df_squadra_us), 'micro': True})
         if includi_pdf_gk_rank:
             sezioni_pdf_us.append({'tipo': 'ranking', 'titolo': 'Goalkeeper Rankings', 'df_generale': gen_gk_us, 'sotto_tabelle': sotto_gk_us})
+        sezioni_pdf_us.extend(sezioni_pdf_gk_method)
         if includi_pdf_shooter_rank:
             sezioni_pdf_us.append({'tipo': 'ranking', 'titolo': 'Shooter Rankings', 'df_generale': gen_tir_us, 'sotto_tabelle': sotto_tir_us})
 
