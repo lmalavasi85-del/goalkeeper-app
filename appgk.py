@@ -1029,10 +1029,11 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v65 - 2026-09-29 - GK Method Comparison: le righe delle medie olimpiche mostrano ora "
-               "'N goalkeeper(s)' al posto del trattino in Shots Faced — quanti portieri sono rimasti "
-               "nella media dopo aver tolto il migliore e il peggiore, invece di un campo vuoto senza "
-               "spiegazione (quella media non aggrega tiri, quindi un conteggio tiri lì non avrebbe senso)")
+APP_VERSION = ("v66 - 2026-09-29 - GK Method Comparison: la soglia minima di tiri per entrare nel "
+               "confronto è ora sganciata dal fisso 100 del ranking generale sopra — un campo numerico "
+               "dedicato (parte da 100, modificabile) permette di abbassarla o alzarla solo per questa "
+               "sezione, dato che è una media e non una classifica per merito individuale. Il ranking "
+               "Goalkeeper Rankings sopra resta invariato a soglia 100 fissa")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -13176,14 +13177,17 @@ with tab7:
 
         # ============================================================
         # GK METHOD COMPARISON: rendimento dei portieri seguiti personalmente contro tutti gli
-        # altri, con gli STESSI filtri e la STESSA soglia (100 tiri) del ranking sopra.
+        # altri, con gli STESSI filtri del ranking sopra, ma con soglia minima di tiri
+        # indipendente (sganciata dal fisso 100 — è una media, ha senso poterla calcolare anche
+        # su chi ha meno tiri).
         # ============================================================
         st.markdown("---")
         st.subheader("🥇 GK Method Comparison")
         st.caption("Compares the goalkeepers you follow as GK Method against everyone else, using "
-                   "the same 100-shot minimum threshold as the ranking above — and the SAME filter "
-                   f"selected up in '🔍 Filters' too (currently: **{modo_filtro_us}**). To limit this "
-                   "comparison to a single league, change that filter to 'Championship' and pick it there.")
+                   "the SAME filter selected up in '🔍 Filters' too (currently: "
+                   f"**{modo_filtro_us}**) — to limit this comparison to a single league, change that "
+                   "filter to 'Championship' and pick it there. The minimum shots threshold below is "
+                   "set independently from the 100-shot ranking above.")
 
         # L'elenco per scegliere i portieri GK Method include TUTTI quelli mai caricati in
         # tutto il software, non solo quelli nel filtro attuale — così se ne può segnare uno
@@ -13209,109 +13213,116 @@ with tab7:
 
         if not st.session_state['portieri_gk_method']:
             st.info("Select at least one goalkeeper above to see the comparison.")
-        elif gen_gk_us.empty:
-            st.info("No one meets the minimum shots threshold in this selection.")
         else:
-            # Stessa identica soglia del ranking appena mostrato sopra — ricostruita qui perché
-            # classifiche_portieri_universale non restituisce il sottoinsieme già filtrato,
-            # solo le tabelle finali.
+            # Sganciata dal fisso 100 del ranking sopra, solo per questa sezione: essendo una
+            # media (non una classifica per merito individuale), ha senso poter includere anche
+            # portieri con meno tiri, se Luigi lo decide esplicitamente.
+            soglia_gk_method_us = st.number_input(
+                "Minimum shots threshold for THIS comparison (unlocked from the 100-shot ranking "
+                "above — lower it to also include goalkeepers with fewer shots):",
+                min_value=1, max_value=1000, value=100, step=10, key="us_gk_method_soglia"
+            )
             totali_per_gk_us = df_universale.groupby('PORTIERE_ID').size()
-            gk_idonei_us = set(totali_per_gk_us[totali_per_gk_us >= 100].index)
+            gk_idonei_us = set(totali_per_gk_us[totali_per_gk_us >= soglia_gk_method_us].index)
             df_idonei_gk_method_us = df_universale[df_universale['PORTIERE_ID'].isin(gk_idonei_us)]
 
-            # Raffinamento MANUALE per questa vista soltanto: parte già selezionato con i GK
-            # Method idonei nel filtro corrente (sopra), ma Luigi può togliere singoli portieri
-            # (es. non vuole confrontarne uno specifico anche se idoneo) o aggiungerne altri che
-            # non sono nell'elenco persistente, senza toccare quest'ultimo — non viene salvato,
-            # vale solo per questa tabella. La chiave include anche la scelta SPECIFICA del
-            # filtro (non solo il modo Championship/Date Range/...), altrimenti passando da una
-            # competizione all'altra restando su "Championship" la selezione precedente
-            # resterebbe quella della lega di prima invece di aggiornarsi da sola.
-            dettaglio_filtro_us = (
-                (campionato_us['nome'] if campionato_us else '') if modo_filtro_us == "Championship" else
-                f"{data_inizio_us}_{data_fine_us}" if modo_filtro_us == "Date Range" else
-                str(sorted(chiavi_custom_us)) if modo_filtro_us == "Custom Match Selection" and chiavi_custom_us else
-                ""
-            )
-            gk_method_idonei_qui = [g for g in st.session_state['portieri_gk_method'] if g in gk_idonei_us]
-            elenco_gk_method_vista = st.multiselect(
-                "GK Method goalkeepers to include in THIS comparison (defaults to everyone eligible "
-                "above — add or remove individual names just for this view):",
-                tutti_i_portieri_us, default=gk_method_idonei_qui,
-                key=f"us_gk_method_vista_{modo_filtro_us}_{dettaglio_filtro_us}"
-            )
-
-            if not elenco_gk_method_vista:
-                st.info("Select at least one goalkeeper above to see the comparison.")
+            if df_idonei_gk_method_us.empty:
+                st.info("No one meets this shots threshold in this selection.")
             else:
-                mostra_olimpica_us = st.checkbox(
-                    "Also show Olympic averages (drop each group's highest and lowest Save % "
-                    "goalkeeper, then average the rest — isolates whether one standout or one "
-                    "outlier is skewing a group's average)",
-                    key="us_gk_method_olimpica"
+
+                # Raffinamento MANUALE per questa vista soltanto: parte già selezionato con i GK
+                # Method idonei nel filtro corrente (sopra), ma Luigi può togliere singoli portieri
+                # (es. non vuole confrontarne uno specifico anche se idoneo) o aggiungerne altri che
+                # non sono nell'elenco persistente, senza toccare quest'ultimo — non viene salvato,
+                # vale solo per questa tabella. La chiave include anche la scelta SPECIFICA del
+                # filtro (non solo il modo Championship/Date Range/...), altrimenti passando da una
+                # competizione all'altra restando su "Championship" la selezione precedente
+                # resterebbe quella della lega di prima invece di aggiornarsi da sola.
+                dettaglio_filtro_us = (
+                    (campionato_us['nome'] if campionato_us else '') if modo_filtro_us == "Championship" else
+                    f"{data_inizio_us}_{data_fine_us}" if modo_filtro_us == "Date Range" else
+                    str(sorted(chiavi_custom_us)) if modo_filtro_us == "Custom Match Selection" and chiavi_custom_us else
+                    ""
+                )
+                gk_method_idonei_qui = [g for g in st.session_state['portieri_gk_method'] if g in gk_idonei_us]
+                elenco_gk_method_vista = st.multiselect(
+                    "GK Method goalkeepers to include in THIS comparison (defaults to everyone eligible "
+                    "above — add or remove individual names just for this view):",
+                    tutti_i_portieri_us, default=gk_method_idonei_qui,
+                    key=f"us_gk_method_vista_{modo_filtro_us}_{dettaglio_filtro_us}"
                 )
 
-                # Ogni tabella mostrata (Overall + una per macro-settore) viene anche raccolta
-                # qui con la sua etichetta, styler e info sugli esclusi — serve per offrire la
-                # scelta di quali includere nell'export PDF più sotto, senza dover ricalcolare
-                # nulla due volte.
-                tabelle_gk_method_disponibili = []
-
-                def _mostra_tabella_e_esclusi_gk(df_idonei_livello, titolo_livello):
-                    tabella, info_olimpica = _tabella_confronto_gk_method(df_idonei_livello, elenco_gk_method_vista, mostra_olimpica_us)
-                    vuota = tabella.data.empty if hasattr(tabella, 'data') else tabella.empty
-                    if vuota:
-                        return
-                    tabelle_gk_method_disponibili.append({'etichetta': titolo_livello, 'styler': tabella, 'info_olimpica': info_olimpica})
-                    st.markdown(f"**{titolo_livello}**")
-                    st.dataframe(tabella, use_container_width=True, hide_index=True)
-                    if info_olimpica:
-                        st.caption(
-                            f"Excluded from Non-GK Method Olympic Average: "
-                            f"{info_olimpica['non_gk']['escluso_alto']['nome']} "
-                            f"({info_olimpica['non_gk']['escluso_alto']['save']:.1f}% — highest), "
-                            f"{info_olimpica['non_gk']['escluso_basso']['nome']} "
-                            f"({info_olimpica['non_gk']['escluso_basso']['save']:.1f}% — lowest). "
-                            f"Excluded from GK Method Olympic Average: "
-                            f"{info_olimpica['gk']['escluso_alto']['nome']} "
-                            f"({info_olimpica['gk']['escluso_alto']['save']:.1f}% — highest), "
-                            f"{info_olimpica['gk']['escluso_basso']['nome']} "
-                            f"({info_olimpica['gk']['escluso_basso']['save']:.1f}% — lowest)."
-                        )
-                    elif mostra_olimpica_us:
-                        st.caption("Olympic average not available here — at least 3 goalkeepers per side are needed.")
-
-                _tabella_gen_gk, _info_gen_gk = _tabella_confronto_gk_method(df_idonei_gk_method_us, elenco_gk_method_vista, mostra_olimpica_us)
-                _tabella_gen_gk_vuota = _tabella_gen_gk.data.empty if hasattr(_tabella_gen_gk, 'data') else _tabella_gen_gk.empty
-                if _tabella_gen_gk_vuota:
-                    st.info("Not enough eligible goalkeepers on both sides (GK Method and others) for a comparison.")
+                if not elenco_gk_method_vista:
+                    st.info("Select at least one goalkeeper above to see the comparison.")
                 else:
-                    _mostra_tabella_e_esclusi_gk(df_idonei_gk_method_us, "Overall")
-
-                    macro_per_riga_gk_us = df_idonei_gk_method_us['TIRO_CLEAN'].apply(mappa_macro_settore)
-                    for macro in ORDINE_MACRO_UNIVERSALE:
-                        df_macro_idonei_gk = df_idonei_gk_method_us[macro_per_riga_gk_us == macro]
-                        if df_macro_idonei_gk.empty:
-                            continue
-                        _mostra_tabella_e_esclusi_gk(df_macro_idonei_gk, ETICHETTA_MACRO_UNIVERSALE[macro])
-
-                # Export PDF: quali di queste tabelle includere — tutte per default, o una
-                # selezione a scelta.
-                if tabelle_gk_method_disponibili:
-                    includi_pdf_gk_method = st.checkbox(
-                        "📄 Include 'GK Method Comparison' in PDF export", key="us_pdf_include_gk_method"
+                    mostra_olimpica_us = st.checkbox(
+                        "Also show Olympic averages (drop each group's highest and lowest Save % "
+                        "goalkeeper, then average the rest — isolates whether one standout or one "
+                        "outlier is skewing a group's average)",
+                        key="us_gk_method_olimpica"
                     )
-                    if includi_pdf_gk_method:
-                        etichette_disponibili_gk = [t['etichetta'] for t in tabelle_gk_method_disponibili]
-                        etichette_scelte_gk = st.multiselect(
-                            "Which tables to include:", etichette_disponibili_gk,
-                            default=etichette_disponibili_gk, key="us_pdf_gk_method_scelte"
+
+                    # Ogni tabella mostrata (Overall + una per macro-settore) viene anche raccolta
+                    # qui con la sua etichetta, styler e info sugli esclusi — serve per offrire la
+                    # scelta di quali includere nell'export PDF più sotto, senza dover ricalcolare
+                    # nulla due volte.
+                    tabelle_gk_method_disponibili = []
+
+                    def _mostra_tabella_e_esclusi_gk(df_idonei_livello, titolo_livello):
+                        tabella, info_olimpica = _tabella_confronto_gk_method(df_idonei_livello, elenco_gk_method_vista, mostra_olimpica_us)
+                        vuota = tabella.data.empty if hasattr(tabella, 'data') else tabella.empty
+                        if vuota:
+                            return
+                        tabelle_gk_method_disponibili.append({'etichetta': titolo_livello, 'styler': tabella, 'info_olimpica': info_olimpica})
+                        st.markdown(f"**{titolo_livello}**")
+                        st.dataframe(tabella, use_container_width=True, hide_index=True)
+                        if info_olimpica:
+                            st.caption(
+                                f"Excluded from Non-GK Method Olympic Average: "
+                                f"{info_olimpica['non_gk']['escluso_alto']['nome']} "
+                                f"({info_olimpica['non_gk']['escluso_alto']['save']:.1f}% — highest), "
+                                f"{info_olimpica['non_gk']['escluso_basso']['nome']} "
+                                f"({info_olimpica['non_gk']['escluso_basso']['save']:.1f}% — lowest). "
+                                f"Excluded from GK Method Olympic Average: "
+                                f"{info_olimpica['gk']['escluso_alto']['nome']} "
+                                f"({info_olimpica['gk']['escluso_alto']['save']:.1f}% — highest), "
+                                f"{info_olimpica['gk']['escluso_basso']['nome']} "
+                                f"({info_olimpica['gk']['escluso_basso']['save']:.1f}% — lowest)."
+                            )
+                        elif mostra_olimpica_us:
+                            st.caption("Olympic average not available here — at least 3 goalkeepers per side are needed.")
+
+                    _tabella_gen_gk, _info_gen_gk = _tabella_confronto_gk_method(df_idonei_gk_method_us, elenco_gk_method_vista, mostra_olimpica_us)
+                    _tabella_gen_gk_vuota = _tabella_gen_gk.data.empty if hasattr(_tabella_gen_gk, 'data') else _tabella_gen_gk.empty
+                    if _tabella_gen_gk_vuota:
+                        st.info("Not enough eligible goalkeepers on both sides (GK Method and others) for a comparison.")
+                    else:
+                        _mostra_tabella_e_esclusi_gk(df_idonei_gk_method_us, "Overall")
+
+                        macro_per_riga_gk_us = df_idonei_gk_method_us['TIRO_CLEAN'].apply(mappa_macro_settore)
+                        for macro in ORDINE_MACRO_UNIVERSALE:
+                            df_macro_idonei_gk = df_idonei_gk_method_us[macro_per_riga_gk_us == macro]
+                            if df_macro_idonei_gk.empty:
+                                continue
+                            _mostra_tabella_e_esclusi_gk(df_macro_idonei_gk, ETICHETTA_MACRO_UNIVERSALE[macro])
+
+                    # Export PDF: quali di queste tabelle includere — tutte per default, o una
+                    # selezione a scelta.
+                    if tabelle_gk_method_disponibili:
+                        includi_pdf_gk_method = st.checkbox(
+                            "📄 Include 'GK Method Comparison' in PDF export", key="us_pdf_include_gk_method"
                         )
-                        tabelle_scelte_gk = [t for t in tabelle_gk_method_disponibili if t['etichetta'] in etichette_scelte_gk]
-                        if tabelle_scelte_gk:
-                            sezioni_pdf_gk_method.append({
-                                'tipo': 'confronto_gk_method', 'titolo': 'GK Method Comparison', 'tabelle': tabelle_scelte_gk
-                            })
+                        if includi_pdf_gk_method:
+                            etichette_disponibili_gk = [t['etichetta'] for t in tabelle_gk_method_disponibili]
+                            etichette_scelte_gk = st.multiselect(
+                                "Which tables to include:", etichette_disponibili_gk,
+                                default=etichette_disponibili_gk, key="us_pdf_gk_method_scelte"
+                            )
+                            tabelle_scelte_gk = [t for t in tabelle_gk_method_disponibili if t['etichetta'] in etichette_scelte_gk]
+                            if tabelle_scelte_gk:
+                                sezioni_pdf_gk_method.append({
+                                    'tipo': 'confronto_gk_method', 'titolo': 'GK Method Comparison', 'tabelle': tabelle_scelte_gk
+                                })
 
         gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
         includi_pdf_shooter_rank, sotto_tir_us = _mostra_classifica_con_sottotabelle(
