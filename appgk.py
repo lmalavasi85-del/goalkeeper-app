@@ -1029,12 +1029,10 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v64 - 2026-09-29 - GK Method Comparison: sistemata la formattazione dei numeri a "
-               "schermo — Save %/Efficiency % ora mostrano sempre esattamente un decimale (mai una "
-               "sfilza di zeri dovuta alla rappresentazione interna dei numeri decimali), e Shots Faced "
-               "è sempre un intero pulito (mai '327.0') — con '—' al posto del numero sulle righe delle "
-               "medie olimpiche, che non hanno un conteggio tiri proprio. Il PDF era già formattato "
-               "correttamente, non serviva toccarlo")
+APP_VERSION = ("v65 - 2026-09-29 - GK Method Comparison: le righe delle medie olimpiche mostrano ora "
+               "'N goalkeeper(s)' al posto del trattino in Shots Faced — quanti portieri sono rimasti "
+               "nella media dopo aver tolto il migliore e il peggiore, invece di un campo vuoto senza "
+               "spiegazione (quella media non aggrega tiri, quindi un conteggio tiri lì non avrebbe senso)")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1475,15 +1473,24 @@ def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method, mostra_olim
     ]
 
     info_olimpica = None
+    def _etichetta_n_goalkeeper(n):
+        return f"{n} goalkeeper" + ("" if n == 1 else "s")
+
     if mostra_olimpica:
         olimpica_altri = _media_olimpica_gruppo(df_altri)
         olimpica_gk = _media_olimpica_gruppo(df_gk)
         if olimpica_altri and olimpica_gk:
             info_olimpica = {'non_gk': olimpica_altri, 'gk': olimpica_gk}
+            # Shots Faced non ha senso qui — questa media non aggrega tiri, fa la media delle
+            # percentuali dei singoli portieri rimasti dopo l'esclusione — quindi mostra invece
+            # quanti portieri sono entrati nella media (n_inclusi, già calcolato da
+            # _media_olimpica_gruppo), come testo esplicito così non si confonde con un conteggio tiri.
             righe.append({'Goalkeeper': 'Non-GK Method Olympic Average', 'Save %': round(olimpica_altri['save'], 1),
-                           'Efficiency %': round(olimpica_altri['efficiency'], 1), 'Shots Faced': None})
+                           'Efficiency %': round(olimpica_altri['efficiency'], 1),
+                           'Shots Faced': _etichetta_n_goalkeeper(olimpica_altri['n_inclusi'])})
             righe.append({'Goalkeeper': 'GK Method Olympic Average', 'Save %': round(olimpica_gk['save'], 1),
-                           'Efficiency %': round(olimpica_gk['efficiency'], 1), 'Shots Faced': None})
+                           'Efficiency %': round(olimpica_gk['efficiency'], 1),
+                           'Shots Faced': _etichetta_n_goalkeeper(olimpica_gk['n_inclusi'])})
 
     righe_singole = []
     for gk, df_singolo in df_gk.groupby('PORTIERE_ID'):
@@ -1517,7 +1524,7 @@ def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method, mostra_olim
     formattatori_confronto_gk = {
         'Save %': lambda x: f"{x:.1f}%",
         'Efficiency %': lambda x: f"{x:.1f}%",
-        'Shots Faced': lambda x: '—' if pd.isna(x) else f"{int(x)}",
+        'Shots Faced': lambda x: x if isinstance(x, str) else ('—' if pd.isna(x) else f"{int(x)}"),
     }
     return df_finale.style.apply(_colora_riga, axis=1).format(formattatori_confronto_gk), info_olimpica
 
@@ -4144,8 +4151,9 @@ def _tabella_confronto_gk_method_reportlab(styler, info_olimpica, col_widths=Non
     idx_save, idx_eff = colonne_pdf.index('Save %'), colonne_pdf.index('Efficiency %')
     dati = [_intestazioni_con_wrap_pdf(colonne_pdf, font_size)]
     for _, row in df_dati.iterrows():
-        dati.append([row['Goalkeeper'], f"{row['Save %']:.1f}%", f"{row['Efficiency %']:.1f}%",
-                     '—' if pd.isna(row['Shots Faced']) else str(int(row['Shots Faced']))])
+        valore_shots = row['Shots Faced']
+        testo_shots = valore_shots if isinstance(valore_shots, str) else ('—' if pd.isna(valore_shots) else str(int(valore_shots)))
+        dati.append([row['Goalkeeper'], f"{row['Save %']:.1f}%", f"{row['Efficiency %']:.1f}%", testo_shots])
 
     if col_widths is None:
         col_widths = [LARGHEZZA_MASSIMA_TABELLA_PDF * f for f in (0.4, 0.2, 0.2, 0.2)]
