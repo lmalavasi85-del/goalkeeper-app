@@ -1029,14 +1029,11 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v60 - 2026-09-29 - Universal Stats ha una nuova sezione 'GK Method Comparison': "
-               "un elenco persistente (scelto con un multiselect, salvato automaticamente) dei portieri "
-               "seguiti personalmente come GK Method, confrontati contro tutti gli altri con gli stessi "
-               "filtri e la stessa soglia di 100 tiri del ranking sopra. La tabella mostra la media dei "
-               "non-GK Method come riferimento, la media dei GK Method, e ogni portiere GK Method "
-               "individualmente in ordine di Save % decrescente, colorato in verde/giallo/rosso a seconda "
-               "che superi, eguagli o sia sotto la media dei non-GK Method — ripetuto per il totale e per "
-               "ogni macro-settore, esattamente come il ranking generale")
+APP_VERSION = ("v61 - 2026-09-29 - GK Method Comparison (Universal Stats): reso esplicito che il filtro "
+               "'Championship/Date Range/...' scelto sopra in Filters limita anche questo confronto (es. "
+               "sceglilo su una singola lega per vedere GK Method vs altri solo lì), e aggiunto un secondo "
+               "selettore per raffinare manualmente — aggiungere o togliere singoli portieri dalla "
+               "comparazione — senza toccare l'elenco GK Method permanente")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -13037,16 +13034,20 @@ with tab7:
         st.markdown("---")
         st.subheader("🥇 GK Method Comparison")
         st.caption("Compares the goalkeepers you follow as GK Method against everyone else, using "
-                   "the same filters and the same 100-shot minimum threshold as the ranking above.")
+                   "the same 100-shot minimum threshold as the ranking above — and the SAME filter "
+                   f"selected up in '🔍 Filters' too (currently: **{modo_filtro_us}**). To limit this "
+                   "comparison to a single league, change that filter to 'Championship' and pick it there.")
 
         # L'elenco per scegliere i portieri GK Method include TUTTI quelli mai caricati in
         # tutto il software, non solo quelli nel filtro attuale — così se ne può segnare uno
-        # come GK Method anche in un momento in cui non ha tiri nella selezione corrente.
+        # come GK Method anche in un momento in cui non ha tiri nella selezione corrente. Questo
+        # è l'elenco PERSISTENTE (salvato), non quello usato per QUESTA specifica vista — vedi
+        # il secondo multiselect sotto per quello.
         tutti_i_portieri_us = sorted(set(
             g for m in st.session_state['db'] for g in m['dati']['PORTIERE_ID'].dropna().unique()
         ))
         elenco_gk_method_scelto = st.multiselect(
-            "Goalkeepers you follow as GK Method:", tutti_i_portieri_us,
+            "Goalkeepers you follow as GK Method (saved permanently):", tutti_i_portieri_us,
             default=[g for g in st.session_state['portieri_gk_method'] if g in tutti_i_portieri_us],
             key="us_gk_method_elenco"
         )
@@ -13066,25 +13067,50 @@ with tab7:
             gk_idonei_us = set(totali_per_gk_us[totali_per_gk_us >= 100].index)
             df_idonei_gk_method_us = df_universale[df_universale['PORTIERE_ID'].isin(gk_idonei_us)]
 
-            tabella_gen_confronto_gk = _tabella_confronto_gk_method(df_idonei_gk_method_us, st.session_state['portieri_gk_method'])
-            tabella_gen_vuota = tabella_gen_confronto_gk.data.empty if hasattr(tabella_gen_confronto_gk, 'data') else tabella_gen_confronto_gk.empty
-            if tabella_gen_vuota:
-                st.info("Not enough eligible goalkeepers on both sides (GK Method and others) for a comparison.")
-            else:
-                st.markdown("**Overall**")
-                st.dataframe(tabella_gen_confronto_gk, use_container_width=True, hide_index=True)
+            # Raffinamento MANUALE per questa vista soltanto: parte già selezionato con i GK
+            # Method idonei nel filtro corrente (sopra), ma Luigi può togliere singoli portieri
+            # (es. non vuole confrontarne uno specifico anche se idoneo) o aggiungerne altri che
+            # non sono nell'elenco persistente, senza toccare quest'ultimo — non viene salvato,
+            # vale solo per questa tabella. La chiave include anche la scelta SPECIFICA del
+            # filtro (non solo il modo Championship/Date Range/...), altrimenti passando da una
+            # competizione all'altra restando su "Championship" la selezione precedente
+            # resterebbe quella della lega di prima invece di aggiornarsi da sola.
+            dettaglio_filtro_us = (
+                (campionato_us['nome'] if campionato_us else '') if modo_filtro_us == "Championship" else
+                f"{data_inizio_us}_{data_fine_us}" if modo_filtro_us == "Date Range" else
+                str(sorted(chiavi_custom_us)) if modo_filtro_us == "Custom Match Selection" and chiavi_custom_us else
+                ""
+            )
+            gk_method_idonei_qui = [g for g in st.session_state['portieri_gk_method'] if g in gk_idonei_us]
+            elenco_gk_method_vista = st.multiselect(
+                "GK Method goalkeepers to include in THIS comparison (defaults to everyone eligible "
+                "above — add or remove individual names just for this view):",
+                tutti_i_portieri_us, default=gk_method_idonei_qui,
+                key=f"us_gk_method_vista_{modo_filtro_us}_{dettaglio_filtro_us}"
+            )
 
-                macro_per_riga_gk_us = df_idonei_gk_method_us['TIRO_CLEAN'].apply(mappa_macro_settore)
-                for macro in ORDINE_MACRO_UNIVERSALE:
-                    df_macro_idonei_gk = df_idonei_gk_method_us[macro_per_riga_gk_us == macro]
-                    if df_macro_idonei_gk.empty:
-                        continue
-                    tabella_macro_confronto_gk = _tabella_confronto_gk_method(df_macro_idonei_gk, st.session_state['portieri_gk_method'])
-                    tabella_macro_vuota = tabella_macro_confronto_gk.data.empty if hasattr(tabella_macro_confronto_gk, 'data') else tabella_macro_confronto_gk.empty
-                    if tabella_macro_vuota:
-                        continue
-                    st.markdown(f"**{ETICHETTA_MACRO_UNIVERSALE[macro]}**")
-                    st.dataframe(tabella_macro_confronto_gk, use_container_width=True, hide_index=True)
+            if not elenco_gk_method_vista:
+                st.info("Select at least one goalkeeper above to see the comparison.")
+            else:
+                tabella_gen_confronto_gk = _tabella_confronto_gk_method(df_idonei_gk_method_us, elenco_gk_method_vista)
+                tabella_gen_vuota = tabella_gen_confronto_gk.data.empty if hasattr(tabella_gen_confronto_gk, 'data') else tabella_gen_confronto_gk.empty
+                if tabella_gen_vuota:
+                    st.info("Not enough eligible goalkeepers on both sides (GK Method and others) for a comparison.")
+                else:
+                    st.markdown("**Overall**")
+                    st.dataframe(tabella_gen_confronto_gk, use_container_width=True, hide_index=True)
+
+                    macro_per_riga_gk_us = df_idonei_gk_method_us['TIRO_CLEAN'].apply(mappa_macro_settore)
+                    for macro in ORDINE_MACRO_UNIVERSALE:
+                        df_macro_idonei_gk = df_idonei_gk_method_us[macro_per_riga_gk_us == macro]
+                        if df_macro_idonei_gk.empty:
+                            continue
+                        tabella_macro_confronto_gk = _tabella_confronto_gk_method(df_macro_idonei_gk, elenco_gk_method_vista)
+                        tabella_macro_vuota = tabella_macro_confronto_gk.data.empty if hasattr(tabella_macro_confronto_gk, 'data') else tabella_macro_confronto_gk.empty
+                        if tabella_macro_vuota:
+                            continue
+                        st.markdown(f"**{ETICHETTA_MACRO_UNIVERSALE[macro]}**")
+                        st.dataframe(tabella_macro_confronto_gk, use_container_width=True, hide_index=True)
 
         gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
         includi_pdf_shooter_rank, sotto_tir_us = _mostra_classifica_con_sottotabelle(
