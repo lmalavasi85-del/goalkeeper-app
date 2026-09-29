@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v56 - 2026-09-27 - Ogni PDF che puo' contenere le note del coach (report tiratori in Single Game e Seasonal, PDF del singolo giocatore, Tag & Go, sessioni di allenamento) ha ora un checkbox \"Include coach's notes in the PDF\", acceso di default: spegnendolo le note e le tendenze non compaiono nel PDF, cosi' il report si puo' mandare all'allenatore di una squadra senza i propri commenti. Il Trend Summary resta a parte perche' e' fatto solo di note"
+APP_VERSION = "v57 - 2026-09-29 - Aggiunta una riga di diagnostica nella sidebar ('Initial data load') che isola il tempo del blocco di caricamento iniziale (circa 20 chiamate a Google Sheets/disco alla prima apertura di ogni sessione) dal resto del tempo di esecuzione, per capire se un rallentamento viene da li' o da altrove"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -7285,6 +7285,8 @@ if 'loghi_squadre' not in st.session_state:
             _migrazione_avvenuta = True
     if _migrazione_avvenuta:
         salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
+
+st.sidebar.caption(f"   • Initial data load (Google Sheets/disk): {time.time() - _t_inizio_esecuzione_script:.1f}s")
 
 # ============================================================
 # NOTE DEL COACH: markup semplice **grassetto**, __sottolineato__, ==evidenziato==
