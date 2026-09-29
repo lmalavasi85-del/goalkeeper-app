@@ -1029,14 +1029,14 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v59 - 2026-09-29 - Ogni salvataggio (note, foto, anagrafica, link, alias, disambiguazione, "
-               "campionati, squadre allenate, gruppi sessioni, e tutti i database di partite: stagione "
-               "portieri, categoria alternativa, tiratori, testa-a-testa, tiro portiere) ora aggiorna solo "
-               "la riga davvero cambiata invece di cancellare e riscrivere l'intero foglio Google Sheets — "
-               "se scrivi una nota, l'app lavora solo su quella nota, non su tutte. Ogni funzione ha comunque "
-               "un fallback automatico al vecchio comportamento sicuro se qualcosa nel percorso mirato non "
-               "va, quindi il caso peggiore possibile resta 'lento come prima', mai 'perde dati'. Non tocca "
-               "come l'app si collega a Google Sheets, solo come scrive")
+APP_VERSION = ("v60 - 2026-09-29 - Universal Stats ha una nuova sezione 'GK Method Comparison': "
+               "un elenco persistente (scelto con un multiselect, salvato automaticamente) dei portieri "
+               "seguiti personalmente come GK Method, confrontati contro tutti gli altri con gli stessi "
+               "filtri e la stessa soglia di 100 tiri del ranking sopra. La tabella mostra la media dei "
+               "non-GK Method come riferimento, la media dei GK Method, e ogni portiere GK Method "
+               "individualmente in ordine di Save % decrescente, colorato in verde/giallo/rosso a seconda "
+               "che superi, eguagli o sia sotto la media dei non-GK Method — ripetuto per il totale e per "
+               "ogni macro-settore, esattamente come il ranking generale")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1391,6 +1391,71 @@ def classifiche_tiratori_universale(df, soglia_tiri_minimi=20):
         if not df_macro.empty:
             sotto_tabelle[ETICHETTA_MACRO_UNIVERSALE[macro]] = _classifica_tiratori_da_df(df_macro)
     return df_generale, sotto_tabelle
+
+# ============================================================
+# CONFRONTO GK METHOD: rendimento dei portieri seguiti come GK Method contro tutti gli altri,
+# stessa soglia minima di idoneità del ranking generale (100 tiri totali, applicata a monte).
+# ============================================================
+def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method):
+    """df_idonei_subset: tiri già filtrati ai soli portieri idonei (soglia minima già applicata
+    a monte — stessa identica soglia del ranking generale) per un dato livello (il totale
+    generale, o un singolo macro-settore). elenco_gk_method: lista di PORTIERE_ID seguiti come
+    GK Method. Restituisce un DataFrame stilizzato: riga 'Non-GK Method Average' (tutti i tiri
+    dei portieri NON in elenco_gk_method, messi insieme — non media delle singole percentuali),
+    riga 'GK Method Average' (stessa cosa per quelli in elenco), poi ogni singolo portiere GK
+    Method idoneo, ordinato per Save % decrescente. Le righe dei singoli portieri e quella della
+    media GK Method sono colorate confrontando Save %/Efficiency % con la media Non-GK Method
+    (il riferimento, mai colorato): verde se superiore, giallo se uguale, rosso se inferiore —
+    stessi colori già usati altrove nell'app per il confronto con l'Expected Goal %.
+    Restituisce un DataFrame vuoto (non stilizzato) se manca almeno un portiere idoneo su uno
+    dei due lati — un confronto non avrebbe senso con un lato a zero."""
+    colonne_vuote = ['Goalkeeper', 'Save %', 'Efficiency %', 'Shots Faced']
+    if df_idonei_subset.empty:
+        return pd.DataFrame(columns=colonne_vuote)
+
+    maschera_gk = df_idonei_subset['PORTIERE_ID'].isin(elenco_gk_method)
+    df_gk = df_idonei_subset[maschera_gk]
+    df_altri = df_idonei_subset[~maschera_gk]
+    if df_gk.empty or df_altri.empty:
+        return pd.DataFrame(columns=colonne_vuote)
+
+    _, _, _, pct_altri, eff_altri = calcola_metriche_gruppo(df_altri)
+    _, _, _, pct_gk, eff_gk = calcola_metriche_gruppo(df_gk)
+
+    righe = [
+        {'Goalkeeper': 'Non-GK Method Average', 'Save %': round(pct_altri, 1),
+         'Efficiency %': round(eff_altri, 1), 'Shots Faced': len(df_altri)},
+        {'Goalkeeper': 'GK Method Average', 'Save %': round(pct_gk, 1),
+         'Efficiency %': round(eff_gk, 1), 'Shots Faced': len(df_gk)},
+    ]
+    righe_singole = []
+    for gk, df_singolo in df_gk.groupby('PORTIERE_ID'):
+        _, _, _, pct_s, eff_s = calcola_metriche_gruppo(df_singolo)
+        righe_singole.append({'Goalkeeper': gk, 'Save %': round(pct_s, 1),
+                               'Efficiency %': round(eff_s, 1), 'Shots Faced': len(df_singolo)})
+    righe_singole.sort(key=lambda r: r['Save %'], reverse=True)
+
+    df_finale = pd.DataFrame(righe + righe_singole)
+
+    def _colora_riga(row):
+        if row['Goalkeeper'] == 'Non-GK Method Average':
+            return [''] * len(row)
+        colori = []
+        for col in row.index:
+            if col not in ('Save %', 'Efficiency %'):
+                colori.append('')
+                continue
+            valore_riferimento = pct_altri if col == 'Save %' else eff_altri
+            differenza = row[col] - valore_riferimento
+            if abs(differenza) < 0.05:  # uguale, con una piccola tolleranza per gli arrotondamenti
+                colori.append('background-color: #ffeb9c')
+            elif differenza > 0:
+                colori.append('background-color: #c6efce')
+            else:
+                colori.append('background-color: #ffc7ce')
+        return colori
+
+    return df_finale.style.apply(_colora_riga, axis=1)
 
 
 # HOME / AWAY: la prima squadra scritta nel nome del file è sempre "home",
@@ -7042,6 +7107,86 @@ def salva_gruppi_sessioni_su_disco(gruppi, permetti_svuotamento=False):
                 return
     with open(TRAINING_GROUPS_FILE, 'wb') as f:
         pickle.dump(gruppi, f)
+
+# ============================================================
+# GK METHOD: elenco persistente dei portieri che Luigi segue personalmente come GK Method,
+# usato da Universal Stats per il confronto di rendimento contro tutti gli altri portieri.
+# Stesso schema di storage di TRAINING_GROUPS (lista semplice di nomi) — salvataggio mirato
+# fin da subito, non serve prima passare per la versione "riscrivi tutto".
+# ============================================================
+GK_METHOD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gk_method_goalkeepers.pkl")
+
+@st.cache_resource
+def _ottieni_worksheet_gk_method():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    credenziali = Credentials.from_service_account_info(
+        dict(st.secrets['gcp_service_account']), scopes=GOOGLE_SHEETS_SCOPES
+    )
+    client = gspread.authorize(credenziali)
+    foglio = client.open_by_key(st.secrets['season_sheet_id'])
+    try:
+        worksheet = foglio.worksheet('GkMethodGoalkeepers')
+    except Exception:
+        worksheet = foglio.add_worksheet(title='GkMethodGoalkeepers', rows=200, cols=1)
+        worksheet.append_row(['portiere'])
+    return _WorksheetConRetry(worksheet)
+
+def carica_gk_method_da_disco():
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_gk_method()
+            valori = worksheet.get_all_values()
+            elenco = [riga[0] for riga in valori[1:] if riga and riga[0]]
+            st.session_state['_ultimo_salvato_gk_method'] = {g: g for g in elenco}
+            return elenco
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not load GK Method goalkeepers from Google Sheets: {e}")
+            # Non arrendersi al primo errore: prova comunque il backup locale sotto
+            # (se esiste) prima di restituire [] vuoto — meglio mostrare dati
+            # un po' vecchi che nessun dato affatto.
+    if os.path.exists(GK_METHOD_FILE):
+        try:
+            with open(GK_METHOD_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
+def salva_gk_method_su_disco(elenco, permetti_svuotamento=False):
+    # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
+    # salvataggio remoto interrotto a metà (rete, quota, qualunque motivo) non lascia MAI
+    # l'app priva di una copia recente e recuperabile.
+    try:
+        with open(GK_METHOD_FILE, 'wb') as _f_backup_preventivo:
+            pickle.dump(elenco, _f_backup_preventivo)
+    except Exception:
+        pass
+    if _google_sheets_configurato():
+        try:
+            worksheet = _ottieni_worksheet_gk_method()
+            _blocca_se_svuotamento_sospetto(worksheet, elenco, permetti_svuotamento, "GK Method goalkeeper(s)")
+            nuovo_dict = {g: g for g in elenco}
+            vecchio = st.session_state.get('_ultimo_salvato_gk_method')
+            if vecchio is not None and _salva_record_mirato(worksheet, nuovo_dict, vecchio, lambda k, v: []):
+                st.session_state['_ultimo_salvato_gk_method'] = dict(nuovo_dict)
+                return
+            worksheet.clear()
+            worksheet.append_row(['portiere'])
+            righe = [[g] for g in elenco]
+            if righe:
+                worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_gk_method'] = dict(nuovo_dict)
+            return
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Could not save GK Method goalkeepers to Google Sheets: {e}")
+            if not elenco:
+                # Dati vuoti e salvataggio remoto fallito: NON tocco il backup locale,
+                # per non rischiare di sovrascrivere un backup buono con dati vuoti.
+                return
+    with open(GK_METHOD_FILE, 'wb') as f:
+        pickle.dump(elenco, f)
+
 DIMENSIONE_CHUNK_PDF = 40000  # caratteri base64 per riga: resta sotto il limite di una cella di Google Sheets
 
 @st.cache_resource
@@ -7631,6 +7776,8 @@ if 'sessioni_allenamento' not in st.session_state:
     st.session_state['sessioni_allenamento'] = _carica_con_timing('training sessions', carica_sessioni_allenamento_da_disco)
 if 'gruppi_sessioni_allenamento' not in st.session_state:
     st.session_state['gruppi_sessioni_allenamento'] = _carica_con_timing('training session groups', carica_gruppi_sessioni_da_disco)
+if 'portieri_gk_method' not in st.session_state:
+    st.session_state['portieri_gk_method'] = _carica_con_timing('GK Method goalkeepers', carica_gk_method_da_disco)
 if 'loghi_squadre' not in st.session_state:
     st.session_state['loghi_squadre'] = _carica_con_timing('team logos', carica_loghi_squadra_da_disco)
     # Migrazione: i loghi caricati finora dentro "Training Sessions" (per squadra) confluiscono
@@ -12882,6 +13029,62 @@ with tab7:
             "(on the TOTAL, not per macro-sector) applies to every macro-sector breakdown below too.",
             "us_pdf_include_gk_rank"
         )
+
+        # ============================================================
+        # GK METHOD COMPARISON: rendimento dei portieri seguiti personalmente contro tutti gli
+        # altri, con gli STESSI filtri e la STESSA soglia (100 tiri) del ranking sopra.
+        # ============================================================
+        st.markdown("---")
+        st.subheader("🥇 GK Method Comparison")
+        st.caption("Compares the goalkeepers you follow as GK Method against everyone else, using "
+                   "the same filters and the same 100-shot minimum threshold as the ranking above.")
+
+        # L'elenco per scegliere i portieri GK Method include TUTTI quelli mai caricati in
+        # tutto il software, non solo quelli nel filtro attuale — così se ne può segnare uno
+        # come GK Method anche in un momento in cui non ha tiri nella selezione corrente.
+        tutti_i_portieri_us = sorted(set(
+            g for m in st.session_state['db'] for g in m['dati']['PORTIERE_ID'].dropna().unique()
+        ))
+        elenco_gk_method_scelto = st.multiselect(
+            "Goalkeepers you follow as GK Method:", tutti_i_portieri_us,
+            default=[g for g in st.session_state['portieri_gk_method'] if g in tutti_i_portieri_us],
+            key="us_gk_method_elenco"
+        )
+        if set(elenco_gk_method_scelto) != set(st.session_state['portieri_gk_method']):
+            st.session_state['portieri_gk_method'] = elenco_gk_method_scelto
+            salva_gk_method_su_disco(elenco_gk_method_scelto)
+
+        if not st.session_state['portieri_gk_method']:
+            st.info("Select at least one goalkeeper above to see the comparison.")
+        elif gen_gk_us.empty:
+            st.info("No one meets the minimum shots threshold in this selection.")
+        else:
+            # Stessa identica soglia del ranking appena mostrato sopra — ricostruita qui perché
+            # classifiche_portieri_universale non restituisce il sottoinsieme già filtrato,
+            # solo le tabelle finali.
+            totali_per_gk_us = df_universale.groupby('PORTIERE_ID').size()
+            gk_idonei_us = set(totali_per_gk_us[totali_per_gk_us >= 100].index)
+            df_idonei_gk_method_us = df_universale[df_universale['PORTIERE_ID'].isin(gk_idonei_us)]
+
+            tabella_gen_confronto_gk = _tabella_confronto_gk_method(df_idonei_gk_method_us, st.session_state['portieri_gk_method'])
+            tabella_gen_vuota = tabella_gen_confronto_gk.data.empty if hasattr(tabella_gen_confronto_gk, 'data') else tabella_gen_confronto_gk.empty
+            if tabella_gen_vuota:
+                st.info("Not enough eligible goalkeepers on both sides (GK Method and others) for a comparison.")
+            else:
+                st.markdown("**Overall**")
+                st.dataframe(tabella_gen_confronto_gk, use_container_width=True, hide_index=True)
+
+                macro_per_riga_gk_us = df_idonei_gk_method_us['TIRO_CLEAN'].apply(mappa_macro_settore)
+                for macro in ORDINE_MACRO_UNIVERSALE:
+                    df_macro_idonei_gk = df_idonei_gk_method_us[macro_per_riga_gk_us == macro]
+                    if df_macro_idonei_gk.empty:
+                        continue
+                    tabella_macro_confronto_gk = _tabella_confronto_gk_method(df_macro_idonei_gk, st.session_state['portieri_gk_method'])
+                    tabella_macro_vuota = tabella_macro_confronto_gk.data.empty if hasattr(tabella_macro_confronto_gk, 'data') else tabella_macro_confronto_gk.empty
+                    if tabella_macro_vuota:
+                        continue
+                    st.markdown(f"**{ETICHETTA_MACRO_UNIVERSALE[macro]}**")
+                    st.dataframe(tabella_macro_confronto_gk, use_container_width=True, hide_index=True)
 
         gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
         includi_pdf_shooter_rank, sotto_tir_us = _mostra_classifica_con_sottotabelle(
