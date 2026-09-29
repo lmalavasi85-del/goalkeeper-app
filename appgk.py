@@ -1029,7 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v57 - 2026-09-29 - Aggiunta una riga di diagnostica nella sidebar ('Initial data load') che isola il tempo del blocco di caricamento iniziale (circa 20 chiamate a Google Sheets/disco alla prima apertura di ogni sessione) dal resto del tempo di esecuzione, per capire se un rallentamento viene da li' o da altrove"
+APP_VERSION = "v58 - 2026-09-29 - La riga diagnostica 'Initial data load' (v57) ora si scompone: ciascuna delle ~20 chiamate di caricamento del blocco iniziale (partite, note, foto, alias, ecc.) e' misurata singolarmente e appare in sidebar solo se supera 0.5s, cosi' un rallentamento (visto ieri: 80.5s totali) si individua subito sulla chiamata precisa invece che sul solo totale"
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -7207,56 +7207,67 @@ def gestisci_foto_giocatore(nome_giocatore, key_prefix):
                 salva_foto_su_disco(st.session_state['foto_giocatori'])
                 st.rerun()
 
+def _carica_con_timing(etichetta, funzione_caricamento):
+    """Esegue una funzione carica_X_da_disco() misurandone il tempo — mostra una riga in
+    sidebar SOLO se supera 0.5s, per non affollarla quando va tutto bene, ma per far saltare
+    subito all'occhio quale chiamata (tra le ~20 del caricamento iniziale) sta rallentando."""
+    _inizio_step = time.time()
+    risultato = funzione_caricamento()
+    _durata_step = time.time() - _inizio_step
+    if _durata_step > 0.5:
+        st.sidebar.caption(f"     - {etichetta}: {_durata_step:.1f}s")
+    return risultato
+
 if 'db' not in st.session_state:
-    st.session_state['db'] = carica_stagione_da_disco()
+    st.session_state['db'] = _carica_con_timing('season (goalkeepers)', carica_stagione_da_disco)
     for _m in st.session_state['db']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'categoria_alt_db' not in st.session_state:
-    st.session_state['categoria_alt_db'] = carica_categoria_alt_da_disco()
+    st.session_state['categoria_alt_db'] = _carica_con_timing('separate categories', carica_categoria_alt_da_disco)
     for _m in st.session_state['categoria_alt_db']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'db_tiratori' not in st.session_state:
-    st.session_state['db_tiratori'] = carica_stagione_tiratori_da_disco()
+    st.session_state['db_tiratori'] = _carica_con_timing('season (shooters)', carica_stagione_tiratori_da_disco)
     for _m in st.session_state['db_tiratori']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'TIRATORE_CLEAN', 'TIRATORE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'note_tiratori' not in st.session_state:
-    st.session_state['note_tiratori'] = carica_note_da_disco()
+    st.session_state['note_tiratori'] = _carica_con_timing('shooter notes', carica_note_da_disco)
 if 'anagrafica_giocatori' not in st.session_state:
-    st.session_state['anagrafica_giocatori'] = carica_anagrafica_da_disco()
+    st.session_state['anagrafica_giocatori'] = _carica_con_timing('player profiles', carica_anagrafica_da_disco)
 if 'link_video_zone' not in st.session_state:
-    st.session_state['link_video_zone'] = carica_link_zone_da_disco()
+    st.session_state['link_video_zone'] = _carica_con_timing('microzone video links', carica_link_zone_da_disco)
 if 'link_duelli' not in st.session_state:
-    st.session_state['link_duelli'] = carica_link_duelli_da_disco()
+    st.session_state['link_duelli'] = _carica_con_timing('head-to-head links', carica_link_duelli_da_disco)
 if 'link_youtube_partite' not in st.session_state:
-    st.session_state['link_youtube_partite'] = carica_link_youtube_da_disco()
+    st.session_state['link_youtube_partite'] = _carica_con_timing('YouTube links', carica_link_youtube_da_disco)
 if 'competizioni_partite' not in st.session_state:
-    st.session_state['competizioni_partite'] = carica_competizioni_partite_da_disco()
+    st.session_state['competizioni_partite'] = _carica_con_timing('competitions', carica_competizioni_partite_da_disco)
 if 'matches_analyzed_manuali' not in st.session_state:
-    st.session_state['matches_analyzed_manuali'] = carica_matches_analyzed_manuali_da_disco()
+    st.session_state['matches_analyzed_manuali'] = _carica_con_timing('matches analyzed (manual)', carica_matches_analyzed_manuali_da_disco)
 if 'foto_giocatori' not in st.session_state:
-    st.session_state['foto_giocatori'] = carica_foto_da_disco()
+    st.session_state['foto_giocatori'] = _carica_con_timing('player photos', carica_foto_da_disco)
 if 'db_h2h' not in st.session_state:
-    st.session_state['db_h2h'] = carica_h2h_da_disco()
+    st.session_state['db_h2h'] = _carica_con_timing('head-to-head data', carica_h2h_da_disco)
     for _m in st.session_state['db_h2h']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_id(_m['dati'], 'TIRATORE_CLEAN', 'TIRATORE_ID')
 if 'db_tiro_portiere' not in st.session_state:
-    st.session_state['db_tiro_portiere'] = carica_tiro_portiere_da_disco()
+    st.session_state['db_tiro_portiere'] = _carica_con_timing('goalkeeper own-shot data', carica_tiro_portiere_da_disco)
     for _m in st.session_state['db_tiro_portiere']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
 if 'gruppi_alias' not in st.session_state:
-    st.session_state['gruppi_alias'] = carica_alias_giocatori_da_disco()
+    st.session_state['gruppi_alias'] = _carica_con_timing('player aliases', carica_alias_giocatori_da_disco)
     riapplica_alias_a_tutti_i_dati()
 if 'disambiguazioni_giocatori' not in st.session_state:
-    st.session_state['disambiguazioni_giocatori'] = carica_disambiguazioni_da_disco()
+    st.session_state['disambiguazioni_giocatori'] = _carica_con_timing('player disambiguation', carica_disambiguazioni_da_disco)
     riapplica_disambiguazioni_a_tutti_i_dati()
 if 'tag_go_df_gk' not in st.session_state:
-    _stato_tag_go = carica_tag_go_da_disco()
+    _stato_tag_go = _carica_con_timing('Tag & Go analysis', carica_tag_go_da_disco)
     st.session_state['tag_go_df_gk'] = (pd.read_json(io.StringIO(_stato_tag_go['df_gk_json']), orient='split')
                                          if _stato_tag_go['df_gk_json'] else pd.DataFrame())
     st.session_state['tag_go_df_tir'] = (pd.read_json(io.StringIO(_stato_tag_go['df_tir_json']), orient='split')
@@ -7265,17 +7276,17 @@ if 'tag_go_df_gk' not in st.session_state:
     st.session_state['tag_go_nome_analisi'] = _stato_tag_go['nome_analisi']
     st.session_state['tag_go_mappe_salvate'] = []
 if 'campionati' not in st.session_state:
-    st.session_state['campionati'] = carica_campionati_da_disco()
+    st.session_state['campionati'] = _carica_con_timing('championships', carica_campionati_da_disco)
 if 'profili_expected_stato' not in st.session_state:
-    st.session_state['profili_expected_stato'] = carica_profili_expected_da_disco()
+    st.session_state['profili_expected_stato'] = _carica_con_timing('expected values profiles', carica_profili_expected_da_disco)
 if 'squadre_allenate' not in st.session_state:
-    st.session_state['squadre_allenate'] = carica_squadre_allenate_da_disco()
+    st.session_state['squadre_allenate'] = _carica_con_timing('trained teams', carica_squadre_allenate_da_disco)
 if 'sessioni_allenamento' not in st.session_state:
-    st.session_state['sessioni_allenamento'] = carica_sessioni_allenamento_da_disco()
+    st.session_state['sessioni_allenamento'] = _carica_con_timing('training sessions', carica_sessioni_allenamento_da_disco)
 if 'gruppi_sessioni_allenamento' not in st.session_state:
-    st.session_state['gruppi_sessioni_allenamento'] = carica_gruppi_sessioni_da_disco()
+    st.session_state['gruppi_sessioni_allenamento'] = _carica_con_timing('training session groups', carica_gruppi_sessioni_da_disco)
 if 'loghi_squadre' not in st.session_state:
-    st.session_state['loghi_squadre'] = carica_loghi_squadra_da_disco()
+    st.session_state['loghi_squadre'] = _carica_con_timing('team logos', carica_loghi_squadra_da_disco)
     # Migrazione: i loghi caricati finora dentro "Training Sessions" (per squadra) confluiscono
     # nel magazzino condiviso, così sono riconosciuti subito ovunque nell'app.
     _migrazione_avvenuta = False
