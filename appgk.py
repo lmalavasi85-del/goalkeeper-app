@@ -1029,11 +1029,12 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v61 - 2026-09-29 - GK Method Comparison (Universal Stats): reso esplicito che il filtro "
-               "'Championship/Date Range/...' scelto sopra in Filters limita anche questo confronto (es. "
-               "sceglilo su una singola lega per vedere GK Method vs altri solo lì), e aggiunto un secondo "
-               "selettore per raffinare manualmente — aggiungere o togliere singoli portieri dalla "
-               "comparazione — senza toccare l'elenco GK Method permanente")
+APP_VERSION = ("v62 - 2026-09-29 - GK Method Comparison: nuovo checkbox 'Also show Olympic averages' — "
+               "per ciascun gruppo (GK Method e non) esclude il portiere con Save % più alto e quello con "
+               "Save % più basso (la decisione si basa solo su Save %, applicata poi anche a Efficiency % "
+               "sugli stessi portieri rimasti), poi fa la media semplice dei rimanenti — utile per capire "
+               "se un singolo fenomeno o un singolo caso difficile sta spostando la media di un gruppo. "
+               "Sotto ogni tabella compaiono i nomi esclusi da entrambi i lati")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1393,28 +1394,57 @@ def classifiche_tiratori_universale(df, soglia_tiri_minimi=20):
 # CONFRONTO GK METHOD: rendimento dei portieri seguiti come GK Method contro tutti gli altri,
 # stessa soglia minima di idoneità del ranking generale (100 tiri totali, applicata a monte).
 # ============================================================
-def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method):
+def _media_olimpica_gruppo(df_gruppo):
+    """Calcola Save %/Efficiency % per ogni portiere del gruppo, esclude quello con Save % più
+    alto e quello con Save % più basso (l'esclusione si decide SOLO su Save %, anche per la
+    colonna Efficiency % — sugli stessi portieri rimanenti), poi fa la media aritmetica SEMPLICE
+    dei rimanenti (ogni portiere pesa uguale, non i suoi tiri — è il punto della media olimpica:
+    isolare l'effetto di un singolo fenomeno o disastro individuale). Richiede almeno 3 portieri
+    nel gruppo, altrimenti l'esclusione non lascerebbe nessuno o un solo caso limite — restituisce
+    None in quel caso. Restituisce {'save': ..., 'efficiency': ..., 'n_inclusi': ...,
+    'escluso_alto': {'nome':, 'save':}, 'escluso_basso': {'nome':, 'save':}}."""
+    per_portiere = []
+    for gk, df_singolo in df_gruppo.groupby('PORTIERE_ID'):
+        _, _, _, pct_s, eff_s = calcola_metriche_gruppo(df_singolo)
+        per_portiere.append({'nome': gk, 'save': pct_s, 'efficiency': eff_s})
+    if len(per_portiere) < 3:
+        return None
+    per_portiere.sort(key=lambda r: r['save'])
+    escluso_basso, escluso_alto = per_portiere[0], per_portiere[-1]
+    rimanenti = per_portiere[1:-1]
+    return {
+        'save': sum(r['save'] for r in rimanenti) / len(rimanenti),
+        'efficiency': sum(r['efficiency'] for r in rimanenti) / len(rimanenti),
+        'n_inclusi': len(rimanenti),
+        'escluso_alto': escluso_alto, 'escluso_basso': escluso_basso,
+    }
+
+def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method, mostra_olimpica=False):
     """df_idonei_subset: tiri già filtrati ai soli portieri idonei (soglia minima già applicata
     a monte — stessa identica soglia del ranking generale) per un dato livello (il totale
     generale, o un singolo macro-settore). elenco_gk_method: lista di PORTIERE_ID seguiti come
-    GK Method. Restituisce un DataFrame stilizzato: riga 'Non-GK Method Average' (tutti i tiri
-    dei portieri NON in elenco_gk_method, messi insieme — non media delle singole percentuali),
-    riga 'GK Method Average' (stessa cosa per quelli in elenco), poi ogni singolo portiere GK
-    Method idoneo, ordinato per Save % decrescente. Le righe dei singoli portieri e quella della
-    media GK Method sono colorate confrontando Save %/Efficiency % con la media Non-GK Method
-    (il riferimento, mai colorato): verde se superiore, giallo se uguale, rosso se inferiore —
-    stessi colori già usati altrove nell'app per il confronto con l'Expected Goal %.
-    Restituisce un DataFrame vuoto (non stilizzato) se manca almeno un portiere idoneo su uno
+    GK Method. Restituisce (tabella_stilizzata, info_olimpica) — tabella_stilizzata è un
+    DataFrame stilizzato con riga 'Non-GK Method Average' (tutti i tiri dei portieri NON in
+    elenco_gk_method, messi insieme — non media delle singole percentuali), riga 'GK Method
+    Average' (stessa cosa per quelli in elenco), opzionalmente 'Non-GK Method Olympic Average'/
+    'GK Method Olympic Average' (vedi _media_olimpica_gruppo — solo se mostra_olimpica=True),
+    poi ogni singolo portiere GK Method idoneo, ordinato per Save % decrescente. Le righe dei
+    singoli portieri e quelle 'GK Method' sono colorate confrontando Save %/Efficiency % con la
+    media Non-GK Method pesata sui tiri (il riferimento, mai colorato) — tranne la riga Olympic
+    di GK Method, colorata contro il riferimento Olympic non-GK (coerenza: pulito contro pulito).
+    info_olimpica: None se mostra_olimpica=False o se un gruppo ha meno di 3 portieri idonei,
+    altrimenti {'non_gk': risultato_di _media_olimpica_gruppo, 'gk': risultato}.
+    Restituisce (DataFrame vuoto non stilizzato, None) se manca almeno un portiere idoneo su uno
     dei due lati — un confronto non avrebbe senso con un lato a zero."""
     colonne_vuote = ['Goalkeeper', 'Save %', 'Efficiency %', 'Shots Faced']
     if df_idonei_subset.empty:
-        return pd.DataFrame(columns=colonne_vuote)
+        return pd.DataFrame(columns=colonne_vuote), None
 
     maschera_gk = df_idonei_subset['PORTIERE_ID'].isin(elenco_gk_method)
     df_gk = df_idonei_subset[maschera_gk]
     df_altri = df_idonei_subset[~maschera_gk]
     if df_gk.empty or df_altri.empty:
-        return pd.DataFrame(columns=colonne_vuote)
+        return pd.DataFrame(columns=colonne_vuote), None
 
     _, _, _, pct_altri, eff_altri = calcola_metriche_gruppo(df_altri)
     _, _, _, pct_gk, eff_gk = calcola_metriche_gruppo(df_gk)
@@ -1425,6 +1455,20 @@ def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method):
         {'Goalkeeper': 'GK Method Average', 'Save %': round(pct_gk, 1),
          'Efficiency %': round(eff_gk, 1), 'Shots Faced': len(df_gk)},
     ]
+
+    info_olimpica = None
+    pct_olimpica_altri = None
+    if mostra_olimpica:
+        olimpica_altri = _media_olimpica_gruppo(df_altri)
+        olimpica_gk = _media_olimpica_gruppo(df_gk)
+        if olimpica_altri and olimpica_gk:
+            info_olimpica = {'non_gk': olimpica_altri, 'gk': olimpica_gk}
+            pct_olimpica_altri = olimpica_altri['save']
+            righe.append({'Goalkeeper': 'Non-GK Method Olympic Average', 'Save %': round(olimpica_altri['save'], 1),
+                           'Efficiency %': round(olimpica_altri['efficiency'], 1), 'Shots Faced': None})
+            righe.append({'Goalkeeper': 'GK Method Olympic Average', 'Save %': round(olimpica_gk['save'], 1),
+                           'Efficiency %': round(olimpica_gk['efficiency'], 1), 'Shots Faced': None})
+
     righe_singole = []
     for gk, df_singolo in df_gk.groupby('PORTIERE_ID'):
         _, _, _, pct_s, eff_s = calcola_metriche_gruppo(df_singolo)
@@ -1435,14 +1479,18 @@ def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method):
     df_finale = pd.DataFrame(righe + righe_singole)
 
     def _colora_riga(row):
-        if row['Goalkeeper'] == 'Non-GK Method Average':
+        if row['Goalkeeper'] in ('Non-GK Method Average', 'Non-GK Method Olympic Average'):
             return [''] * len(row)
+        # La riga Olympic di GK Method si confronta col riferimento Olympic (pulito anch'esso),
+        # tutte le altre (media pesata + singoli portieri) col riferimento pesato sui tiri.
+        riferimento_save = pct_olimpica_altri if row['Goalkeeper'] == 'GK Method Olympic Average' else pct_altri
+        riferimento_eff = info_olimpica['non_gk']['efficiency'] if row['Goalkeeper'] == 'GK Method Olympic Average' else eff_altri
         colori = []
         for col in row.index:
             if col not in ('Save %', 'Efficiency %'):
                 colori.append('')
                 continue
-            valore_riferimento = pct_altri if col == 'Save %' else eff_altri
+            valore_riferimento = riferimento_save if col == 'Save %' else riferimento_eff
             differenza = row[col] - valore_riferimento
             if abs(differenza) < 0.05:  # uguale, con una piccola tolleranza per gli arrotondamenti
                 colori.append('background-color: #ffeb9c')
@@ -1452,7 +1500,7 @@ def _tabella_confronto_gk_method(df_idonei_subset, elenco_gk_method):
                 colori.append('background-color: #ffc7ce')
         return colori
 
-    return df_finale.style.apply(_colora_riga, axis=1)
+    return df_finale.style.apply(_colora_riga, axis=1), info_olimpica
 
 
 # HOME / AWAY: la prima squadra scritta nel nome del file è sempre "home",
@@ -13092,25 +13140,49 @@ with tab7:
             if not elenco_gk_method_vista:
                 st.info("Select at least one goalkeeper above to see the comparison.")
             else:
-                tabella_gen_confronto_gk = _tabella_confronto_gk_method(df_idonei_gk_method_us, elenco_gk_method_vista)
-                tabella_gen_vuota = tabella_gen_confronto_gk.data.empty if hasattr(tabella_gen_confronto_gk, 'data') else tabella_gen_confronto_gk.empty
-                if tabella_gen_vuota:
+                mostra_olimpica_us = st.checkbox(
+                    "Also show Olympic averages (drop each group's highest and lowest Save % "
+                    "goalkeeper, then average the rest — isolates whether one standout or one "
+                    "outlier is skewing a group's average)",
+                    key="us_gk_method_olimpica"
+                )
+
+                def _mostra_tabella_e_esclusi_gk(df_idonei_livello, titolo_livello):
+                    tabella, info_olimpica = _tabella_confronto_gk_method(df_idonei_livello, elenco_gk_method_vista, mostra_olimpica_us)
+                    vuota = tabella.data.empty if hasattr(tabella, 'data') else tabella.empty
+                    if vuota:
+                        return
+                    st.markdown(f"**{titolo_livello}**")
+                    st.dataframe(tabella, use_container_width=True, hide_index=True)
+                    if info_olimpica:
+                        st.caption(
+                            f"Excluded from Non-GK Method Olympic Average: "
+                            f"{info_olimpica['non_gk']['escluso_alto']['nome']} "
+                            f"({info_olimpica['non_gk']['escluso_alto']['save']:.1f}% — highest), "
+                            f"{info_olimpica['non_gk']['escluso_basso']['nome']} "
+                            f"({info_olimpica['non_gk']['escluso_basso']['save']:.1f}% — lowest). "
+                            f"Excluded from GK Method Olympic Average: "
+                            f"{info_olimpica['gk']['escluso_alto']['nome']} "
+                            f"({info_olimpica['gk']['escluso_alto']['save']:.1f}% — highest), "
+                            f"{info_olimpica['gk']['escluso_basso']['nome']} "
+                            f"({info_olimpica['gk']['escluso_basso']['save']:.1f}% — lowest)."
+                        )
+                    elif mostra_olimpica_us:
+                        st.caption("Olympic average not available here — at least 3 goalkeepers per side are needed.")
+
+                _tabella_gen_gk, _info_gen_gk = _tabella_confronto_gk_method(df_idonei_gk_method_us, elenco_gk_method_vista, mostra_olimpica_us)
+                _tabella_gen_gk_vuota = _tabella_gen_gk.data.empty if hasattr(_tabella_gen_gk, 'data') else _tabella_gen_gk.empty
+                if _tabella_gen_gk_vuota:
                     st.info("Not enough eligible goalkeepers on both sides (GK Method and others) for a comparison.")
                 else:
-                    st.markdown("**Overall**")
-                    st.dataframe(tabella_gen_confronto_gk, use_container_width=True, hide_index=True)
+                    _mostra_tabella_e_esclusi_gk(df_idonei_gk_method_us, "Overall")
 
                     macro_per_riga_gk_us = df_idonei_gk_method_us['TIRO_CLEAN'].apply(mappa_macro_settore)
                     for macro in ORDINE_MACRO_UNIVERSALE:
                         df_macro_idonei_gk = df_idonei_gk_method_us[macro_per_riga_gk_us == macro]
                         if df_macro_idonei_gk.empty:
                             continue
-                        tabella_macro_confronto_gk = _tabella_confronto_gk_method(df_macro_idonei_gk, elenco_gk_method_vista)
-                        tabella_macro_vuota = tabella_macro_confronto_gk.data.empty if hasattr(tabella_macro_confronto_gk, 'data') else tabella_macro_confronto_gk.empty
-                        if tabella_macro_vuota:
-                            continue
-                        st.markdown(f"**{ETICHETTA_MACRO_UNIVERSALE[macro]}**")
-                        st.dataframe(tabella_macro_confronto_gk, use_container_width=True, hide_index=True)
+                        _mostra_tabella_e_esclusi_gk(df_macro_idonei_gk, ETICHETTA_MACRO_UNIVERSALE[macro])
 
         gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
         includi_pdf_shooter_rank, sotto_tir_us = _mostra_classifica_con_sottotabelle(
