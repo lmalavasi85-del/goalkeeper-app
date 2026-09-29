@@ -1029,11 +1029,12 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v66 - 2026-09-29 - GK Method Comparison: la soglia minima di tiri per entrare nel "
-               "confronto è ora sganciata dal fisso 100 del ranking generale sopra — un campo numerico "
-               "dedicato (parte da 100, modificabile) permette di abbassarla o alzarla solo per questa "
-               "sezione, dato che è una media e non una classifica per merito individuale. Il ranking "
-               "Goalkeeper Rankings sopra resta invariato a soglia 100 fissa")
+APP_VERSION = ("v67 - 2026-09-29 - Corretto un bug in GK Method Comparison: cambiando SOLO la soglia "
+               "minima di tiri (senza toccare lega/filtro sopra), il menu di raffinamento manteneva la "
+               "vecchia selezione invece di aggiornarsi — un portiere GK Method reso idoneo da una soglia "
+               "più bassa restava fuori dal gruppo giusto, e i suoi tiri finivano sommati al gruppo "
+               "'everyone else' invece che al gruppo GK Method. La soglia si applica e si è sempre "
+               "applicata a entrambi i lati ugualmente — il bug era solo nel widget che non si aggiornava")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -13219,7 +13220,8 @@ with tab7:
             # portieri con meno tiri, se Luigi lo decide esplicitamente.
             soglia_gk_method_us = st.number_input(
                 "Minimum shots threshold for THIS comparison (unlocked from the 100-shot ranking "
-                "above — lower it to also include goalkeepers with fewer shots):",
+                "above — applies to BOTH sides, GK Method and everyone else; lower it to also "
+                "include goalkeepers with fewer shots on both):",
                 min_value=1, max_value=1000, value=100, step=10, key="us_gk_method_soglia"
             )
             totali_per_gk_us = df_universale.groupby('PORTIERE_ID').size()
@@ -13249,7 +13251,12 @@ with tab7:
                     "GK Method goalkeepers to include in THIS comparison (defaults to everyone eligible "
                     "above — add or remove individual names just for this view):",
                     tutti_i_portieri_us, default=gk_method_idonei_qui,
-                    key=f"us_gk_method_vista_{modo_filtro_us}_{dettaglio_filtro_us}"
+                    # La chiave include ANCHE la soglia (non solo il filtro/lega): senza,
+                    # cambiando solo la soglia il widget manterrebbe la vecchia selezione — un
+                    # portiere GK Method che diventa idoneo con una soglia più bassa non
+                    # entrerebbe nel gruppo giusto finché non lo si aggiunge a mano, e i suoi
+                    # tiri finirebbero sommati agli "altri" invece che al gruppo GK Method.
+                    key=f"us_gk_method_vista_{modo_filtro_us}_{dettaglio_filtro_us}_{soglia_gk_method_us}"
                 )
 
                 if not elenco_gk_method_vista:
@@ -13316,7 +13323,11 @@ with tab7:
                             etichette_disponibili_gk = [t['etichetta'] for t in tabelle_gk_method_disponibili]
                             etichette_scelte_gk = st.multiselect(
                                 "Which tables to include:", etichette_disponibili_gk,
-                                default=etichette_disponibili_gk, key="us_pdf_gk_method_scelte"
+                                default=etichette_disponibili_gk,
+                                # Stessa ragione della key sopra: senza includere filtro e
+                                # soglia, cambiandoli il widget manterrebbe la vecchia selezione
+                                # invece di aggiornarsi a "tutte" per le nuove tabelle disponibili.
+                                key=f"us_pdf_gk_method_scelte_{modo_filtro_us}_{dettaglio_filtro_us}_{soglia_gk_method_us}"
                             )
                             tabelle_scelte_gk = [t for t in tabelle_gk_method_disponibili if t['etichetta'] in etichette_scelte_gk]
                             if tabelle_scelte_gk:
