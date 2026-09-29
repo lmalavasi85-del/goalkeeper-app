@@ -1029,7 +1029,14 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = "v58 - 2026-09-29 - La riga diagnostica 'Initial data load' (v57) ora si scompone: ciascuna delle ~20 chiamate di caricamento del blocco iniziale (partite, note, foto, alias, ecc.) e' misurata singolarmente e appare in sidebar solo se supera 0.5s, cosi' un rallentamento (visto ieri: 80.5s totali) si individua subito sulla chiamata precisa invece che sul solo totale"
+APP_VERSION = ("v59 - 2026-09-29 - Ogni salvataggio (note, foto, anagrafica, link, alias, disambiguazione, "
+               "campionati, squadre allenate, gruppi sessioni, e tutti i database di partite: stagione "
+               "portieri, categoria alternativa, tiratori, testa-a-testa, tiro portiere) ora aggiorna solo "
+               "la riga davvero cambiata invece di cancellare e riscrivere l'intero foglio Google Sheets — "
+               "se scrivi una nota, l'app lavora solo su quella nota, non su tutte. Ogni funzione ha comunque "
+               "un fallback automatico al vecchio comportamento sicuro se qualcosa nel percorso mirato non "
+               "va, quindi il caso peggiore possibile resta 'lento come prima', mai 'perde dati'. Non tocca "
+               "come l'app si collega a Google Sheets, solo come scrive")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -4572,6 +4579,155 @@ class _WorksheetConRetry:
         return metodo_con_retry
 
 # ============================================================
+# SALVATAGGIO MIRATO: per i fogli con schema "chiave, valore..." (la maggior parte dello
+# storage dell'app), aggiorna SOLO le righe di dati realmente cambiate rispetto all'ultimo stato
+# noto, invece di cancellare e riscrivere l'intero foglio ad ogni singola modifica (es. una sola
+# nota). Se qualunque cosa va storta nel percorso mirato (foglio inatteso, versione di gspread
+# diversa dal previsto, qualunque eccezione), _salva_record_mirato restituisce False e il
+# chiamante deve ricadere sul vecchio comportamento clear()+riscrivi tutto, che resta la rete di
+# sicurezza finale — quindi il caso peggiore possibile è "resta lento come prima", mai "perde
+# dati", perché il percorso sicuro esistente non viene mai rimosso, solo scavalcato quando
+# possibile.
+# ============================================================
+
+def _riga_per_chiave(worksheet, chiave):
+    """Numero di riga (1-based) che contiene 'chiave' nella prima colonna, o None se davvero
+    non la trova. Un errore nella RICERCA stessa (rete, permessi, versione API diversa) NON va
+    mai confuso con 'chiave assente' — altrimenti si rischia un append che duplica una riga che
+    in realtà esiste ma non si è riusciti a localizzare — quindi si propaga al chiamante, che lo
+    interpreta come 'qualcosa non va, fai fallback'."""
+    try:
+        import gspread
+        eccezione_non_trovata = gspread.exceptions.CellNotFound
+    except Exception:
+        eccezione_non_trovata = ()  # gspread non importabile qui: nessuna eccezione da distinguere, tutto propaga
+    try:
+        cella = worksheet.find(str(chiave), in_column=1)
+    except eccezione_non_trovata:
+        return None
+    return cella.row if cella else None
+
+def _salva_record_mirato(worksheet, nuovi_record, vecchi_record, serializza_riga):
+    """nuovi_record/vecchi_record: dict {chiave: valore_python} — valore_python è tutto ciò che
+    serve per costruire la riga, passato a serializza_riga(chiave, valore_python) che deve
+    restituire la lista di celle da scrivere (SENZA la chiave, che va sempre in colonna 1).
+    Scrive solo le chiavi nuove o il cui valore è cambiato, cancella quelle rimosse, non tocca
+    nient'altro. Ritorna True se il salvataggio mirato è andato a buon fine (il chiamante non
+    deve fare altro), False se va rifatto con il vecchio comportamento sicuro."""
+    try:
+        chiavi_da_scrivere = [k for k, v in nuovi_record.items() if vecchi_record.get(k) != v]
+        chiavi_da_rimuovere = [k for k in vecchi_record if k not in nuovi_record]
+        if not chiavi_da_scrivere and not chiavi_da_rimuovere:
+            return True
+        # Le rimozioni PRIMA delle scritture: cancellare una riga sposta in su tutte quelle
+        # sotto, quindi le posizioni cercate DOPO restano valide; cercarle prima invece
+        # rischierebbe di operare su una riga già spostata da una cancellazione precedente.
+        for chiave in chiavi_da_rimuovere:
+            riga = _riga_per_chiave(worksheet, chiave)
+            if riga:
+                worksheet.delete_rows(riga)
+        for chiave in chiavi_da_scrivere:
+            riga_valori = serializza_riga(chiave, nuovi_record[chiave])
+            riga = _riga_per_chiave(worksheet, chiave)
+            if riga:
+                worksheet.update(f"A{riga}", [[chiave] + riga_valori])
+            else:
+                worksheet.append_row([chiave] + riga_valori)
+        return True
+    except Exception:
+        return False
+
+def _salva_record_mirato_larghezza_variabile(worksheet, nuovi_record, vecchi_record, serializza_riga):
+    """Come _salva_record_mirato, ma per righe il cui NUMERO DI COLONNE può cambiare da un
+    salvataggio all'altro — è il caso delle partite, il cui DataFrame è spezzato in un numero
+    di 'chunk' che dipende da quanti tiri contiene. Un update() in-place, se la riga nuova ha
+    MENO colonne di quella vecchia, lascerebbe le colonne in eccesso intatte con il loro
+    vecchio contenuto — dati corrotti (chunk vecchi mescolati a quelli nuovi) alla lettura
+    successiva. Qui una chiave la cui riga esiste già viene SEMPRE cancellata e poi riaggiunta
+    in fondo, mai aggiornata sul posto: più lento nel caso di modifica, ma non lascia mai
+    residui. L'ordine delle righe nel foglio non ha significato — non è un problema che le
+    partite modificate finiscano in fondo."""
+    try:
+        chiavi_da_scrivere = [k for k, v in nuovi_record.items() if vecchi_record.get(k) != v]
+        chiavi_da_rimuovere = [k for k in vecchi_record if k not in nuovi_record]
+        if not chiavi_da_scrivere and not chiavi_da_rimuovere:
+            return True
+        chiavi_esistenti_da_sostituire = [k for k in chiavi_da_scrivere if k in vecchi_record]
+        # Ogni cancellazione PRIMA di ogni append: stesso motivo del caso a larghezza fissa,
+        # più il fatto che qui anche le chiavi "modificate" vanno cancellate (mai aggiornate
+        # sul posto), quindi la lista di cancellazioni è più lunga.
+        for chiave in chiavi_da_rimuovere + chiavi_esistenti_da_sostituire:
+            riga = _riga_per_chiave(worksheet, chiave)
+            if riga:
+                worksheet.delete_rows(riga)
+        for chiave in chiavi_da_scrivere:
+            worksheet.append_row([chiave] + serializza_riga(chiave, nuovi_record[chiave]))
+        return True
+    except Exception:
+        return False
+
+def _mappa_righe_per_chiave_composta(worksheet, indici_colonne_chiave):
+    """Legge tutto il foglio UNA volta e costruisce {chiave_composta: numero_riga}, dove
+    chiave_composta è la tupla dei valori nelle colonne indicate (1-based) per ogni riga —
+    usata quando la chiave naturale di un record sta su PIÙ colonne (es. nome+data di una
+    partita, dato che il solo nome non è sempre univoco): find() di gspread cerca un solo
+    valore in una sola colonna, non supporta nativamente questo caso."""
+    valori = worksheet.get_all_values()
+    mappa = {}
+    for i, riga in enumerate(valori[1:], start=2):  # start=2: la riga 1 è l'intestazione
+        if not riga or not riga[0]:
+            continue
+        chiave = tuple(riga[c - 1] if len(riga) >= c else '' for c in indici_colonne_chiave)
+        mappa[chiave] = i
+    return mappa
+
+def _salva_partite_mirato(worksheet, nuovo_db, vecchio_serializzato, costruisci_chiave, serializza_match, n_colonne_chiave=2):
+    """Variante per i database di partite: chiave composta (nome+data — o categoria+nome+data
+    per i fogli che hanno anche quella colonna — il solo nome non è sempre univoco), letta una
+    volta sola in una mappa costruita da _mappa_righe_per_chiave_composta (find() non supporta
+    chiavi su più colonne). SEMPRE delete+append per le modifiche, mai un update() in-place —
+    il numero di colonne per riga varia con quanti tiri contiene la partita, un update()
+    lascerebbe colonne residue col vecchio contenuto.
+    nuovo_db: lista di match-dict correnti. vecchio_serializzato: dict {chiave: riga_lista} —
+    l'ultimo stato scritto, già serializzato in liste di stringhe (MAI un DataFrame dentro:
+    confrontare DataFrame con == solleva un errore di ambiguità in pandas).
+    n_colonne_chiave: quante colonne, a partire dalla 1, compongono la chiave (2 = nome+data,
+    3 = categoria+nome+data).
+    Ritorna (True, nuovo_serializzato) se riuscito — il chiamante salva nuovo_serializzato come
+    cache per il prossimo confronto — oppure (False, None) se va rifatto col vecchio comportamento."""
+    try:
+        nuovo_serializzato = {}
+        righe_da_scrivere = {}
+        for m in nuovo_db:
+            chiave = costruisci_chiave(m)
+            riga = serializza_match(m)
+            nuovo_serializzato[chiave] = riga
+            if vecchio_serializzato.get(chiave) != riga:
+                righe_da_scrivere[chiave] = riga
+        chiavi_da_rimuovere = [k for k in vecchio_serializzato if k not in nuovo_serializzato]
+        if not righe_da_scrivere and not chiavi_da_rimuovere:
+            return True, nuovo_serializzato
+
+        mappa_righe = _mappa_righe_per_chiave_composta(worksheet, list(range(1, n_colonne_chiave + 1)))
+        chiavi_esistenti_da_sostituire = [k for k in righe_da_scrivere if k in mappa_righe]
+        # Cancellare dalla riga PIÙ ALTA alla più bassa: cancellando dal basso, gli indici delle
+        # righe sopra restano validi per le cancellazioni successive nello stesso giro — con
+        # numeri pre-calcolati in anticipo (necessario qui, a differenza delle altre varianti,
+        # perché find() non può cercare una chiave su due colonne), l'ordine inverso è l'unico
+        # sicuro.
+        numeri_riga_da_cancellare = sorted(
+            {mappa_righe[k] for k in (chiavi_da_rimuovere + chiavi_esistenti_da_sostituire) if k in mappa_righe},
+            reverse=True
+        )
+        for numero_riga in numeri_riga_da_cancellare:
+            worksheet.delete_rows(numero_riga)
+        for riga in righe_da_scrivere.values():
+            worksheet.append_row(riga)
+        return True, nuovo_serializzato
+    except Exception:
+        return False, None
+
+# ============================================================
 # TAG & GO ANALYSIS: sezione completamente svincolata dal resto dell'app (i suoi dati non
 # entrano MAI nelle statistiche generali, nel Full Backup, né in Reset All Data). Storage isolato
 # in worksheet dedicati. Pensata per analizzare un video di soli tiri estrapolati da più partite
@@ -4894,7 +5050,11 @@ def carica_categoria_alt_da_disco():
                     except Exception:
                         pass
                 return []
-            return [_riga_sheet_a_match_alt(riga) for riga in valori[1:] if riga and riga[1]]
+            db_caricato_alt = [_riga_sheet_a_match_alt(riga) for riga in valori[1:] if riga and riga[1]]
+            st.session_state['_ultimo_salvato_categoria_alt'] = {
+                (m.get('categoria', ''), m['nome'], str(m['data'])): _match_a_riga_sheet_alt(m) for m in db_caricato_alt
+            }
+            return db_caricato_alt
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load alternate-category data from Google Sheets: {e}")
     if os.path.exists(ALT_CATEGORY_FILE):
@@ -4923,11 +5083,24 @@ def salva_categoria_alt_su_disco(db, permetti_svuotamento=False):
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "alternate-category match(es)")
+            vecchio = st.session_state.get('_ultimo_salvato_categoria_alt')
+            if vecchio is not None:
+                ok, nuova_cache = _salva_partite_mirato(
+                    worksheet, db, vecchio,
+                    lambda m: (m.get('categoria', ''), m['nome'], str(m['data'])), _match_a_riga_sheet_alt,
+                    n_colonne_chiave=3
+                )
+                if ok:
+                    st.session_state['_ultimo_salvato_categoria_alt'] = nuova_cache
+                    return
             worksheet.clear()
             worksheet.append_row(['categoria', 'nome', 'data', 'squadra', 'squadra_home', 'squadra_away',
                                    'neutro', 'partita_completa', 'num_chunk'])
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_categoria_alt'] = {
+                (m.get('categoria', ''), m['nome'], str(m['data'])): _match_a_riga_sheet_alt(m) for m in db
+            }
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save alternate-category data to Google Sheets: {e}")
@@ -5013,7 +5186,11 @@ def carica_stagione_da_disco():
                     except Exception:
                         pass
                 return []
-            return [_riga_sheet_a_match(riga) for riga in valori[1:] if riga and riga[0]]
+            db_caricato = [_riga_sheet_a_match(riga) for riga in valori[1:] if riga and riga[0]]
+            st.session_state['_ultimo_salvato_stagione'] = {
+                (m['nome'], str(m['data'])): _match_a_riga_sheet(m) for m in db_caricato
+            }
+            return db_caricato
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load season from Google Sheets: {e}")
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
@@ -5060,10 +5237,22 @@ def salva_stagione_su_disco(db, permetti_svuotamento=False):
             if worksheet.col_count < colonne_necessarie:
                 worksheet.resize(cols=colonne_necessarie)
             _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "goalkeeper match(es)")
+            vecchio = st.session_state.get('_ultimo_salvato_stagione')
+            if vecchio is not None:
+                ok, nuova_cache = _salva_partite_mirato(
+                    worksheet, db, vecchio,
+                    lambda m: (m['nome'], str(m['data'])), _match_a_riga_sheet
+                )
+                if ok:
+                    st.session_state['_ultimo_salvato_stagione'] = nuova_cache
+                    return
             worksheet.clear()
             worksheet.append_row(GOOGLE_SHEETS_HEADER)
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_stagione'] = {
+                (m['nome'], str(m['data'])): _match_a_riga_sheet(m) for m in db
+            }
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save season to Google Sheets: {e}")
@@ -5186,7 +5375,11 @@ def carica_stagione_tiratori_da_disco():
                     except Exception:
                         pass
                 return []
-            return [_riga_sheet_a_match_tiratori(riga) for riga in valori[1:] if riga and riga[0]]
+            db_caricato_tir = [_riga_sheet_a_match_tiratori(riga) for riga in valori[1:] if riga and riga[0]]
+            st.session_state['_ultimo_salvato_stagione_tiratori'] = {
+                (m['nome'], str(m['data'])): _match_a_riga_sheet_tiratori(m) for m in db_caricato_tir
+            }
+            return db_caricato_tir
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load shooter season from Google Sheets: {e}")
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
@@ -5231,10 +5424,22 @@ def salva_stagione_tiratori_su_disco(db, permetti_svuotamento=False):
             if worksheet.col_count < colonne_necessarie:
                 worksheet.resize(cols=colonne_necessarie)
             _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "shooter match(es)")
+            vecchio = st.session_state.get('_ultimo_salvato_stagione_tiratori')
+            if vecchio is not None:
+                ok, nuova_cache = _salva_partite_mirato(
+                    worksheet, db, vecchio,
+                    lambda m: (m['nome'], str(m['data'])), _match_a_riga_sheet_tiratori
+                )
+                if ok:
+                    st.session_state['_ultimo_salvato_stagione_tiratori'] = nuova_cache
+                    return
             worksheet.clear()
             worksheet.append_row(intestazione_tiratori)
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_stagione_tiratori'] = {
+                (m['nome'], str(m['data'])): _match_a_riga_sheet_tiratori(m) for m in db
+            }
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save shooter season to Google Sheets: {e}")
@@ -5270,6 +5475,7 @@ def carica_note_da_disco():
             migrato = _migra_chiavi_a_identita(grezzo)
             if migrato != grezzo:
                 salva_note_su_disco(migrato)
+            st.session_state['_ultimo_salvato_note_tiratori'] = dict(migrato)
             return migrato
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
@@ -5303,11 +5509,18 @@ def salva_note_su_disco(note_dict, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_note()
             _blocca_se_svuotamento_sospetto(worksheet, note_dict, permetti_svuotamento, "note(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_note_tiratori')
+            if vecchio is not None and _salva_record_mirato(worksheet, note_dict, vecchio, lambda k, v: [v]):
+                st.session_state['_ultimo_salvato_note_tiratori'] = dict(note_dict)
+                return
+            # Prima volta in questa sessione, o il percorso mirato non è andato a buon fine:
+            # comportamento originale, sempre valido come rete di sicurezza.
             worksheet.clear()
             worksheet.append_row(['giocatore', 'nota'])
             righe = [[g, n] for g, n in note_dict.items()]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_note_tiratori'] = dict(note_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save notes to Google Sheets: {e}")
@@ -5362,7 +5575,9 @@ def carica_anagrafica_da_disco():
                     except Exception:
                         pass
                 return {}
-            return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+            grezzo = {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+            st.session_state['_ultimo_salvato_anagrafica_giocatori'] = dict(grezzo)
+            return grezzo
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
             # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
@@ -5399,10 +5614,15 @@ def salva_anagrafica_su_disco(anagrafica_dict, permetti_svuotamento=False):
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             _blocca_se_svuotamento_sospetto(worksheet, anagrafica_dict, permetti_svuotamento, "player profile(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_anagrafica_giocatori')
+            if vecchio is not None and _salva_record_mirato(worksheet, anagrafica_dict, vecchio, lambda k, v: [json.dumps(v)]):
+                st.session_state['_ultimo_salvato_anagrafica_giocatori'] = dict(anagrafica_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['giocatore', 'dati_json'])
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_anagrafica_giocatori'] = dict(anagrafica_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save player profiles to Google Sheets: {e}")
@@ -5455,7 +5675,9 @@ def carica_link_duelli_da_disco():
                     except Exception:
                         pass
                 return {}
-            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            grezzo_duelli = {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            st.session_state['_ultimo_salvato_link_duelli'] = dict(grezzo_duelli)
+            return grezzo_duelli
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
             # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
@@ -5489,10 +5711,15 @@ def salva_link_duelli_su_disco(link_dict, permetti_svuotamento=False):
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             _blocca_se_svuotamento_sospetto(worksheet, link_dict, permetti_svuotamento, "duel link(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_link_duelli')
+            if vecchio is not None and _salva_record_mirato(worksheet, link_dict, vecchio, lambda k, v: [v]):
+                st.session_state['_ultimo_salvato_link_duelli'] = dict(link_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['giocatore_zona', 'link'])
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_link_duelli'] = dict(link_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save duel links to Google Sheets: {e}")
@@ -5678,7 +5905,9 @@ def carica_competizioni_partite_da_disco():
                     except Exception:
                         pass
                 return {}
-            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            grezzo_comp = {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            st.session_state['_ultimo_salvato_competizioni_partite'] = dict(grezzo_comp)
+            return grezzo_comp
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
             # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
@@ -5712,10 +5941,15 @@ def salva_competizioni_partite_su_disco(competizioni_dict, permetti_svuotamento=
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             _blocca_se_svuotamento_sospetto(worksheet, competizioni_dict, permetti_svuotamento, "match competition(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_competizioni_partite')
+            if vecchio is not None and _salva_record_mirato(worksheet, competizioni_dict, vecchio, lambda k, v: [v]):
+                st.session_state['_ultimo_salvato_competizioni_partite'] = dict(competizioni_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['partita_data', 'competizione'])
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_competizioni_partite'] = dict(competizioni_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save match competitions to Google Sheets: {e}")
@@ -5769,7 +6003,9 @@ def carica_matches_analyzed_manuali_da_disco():
                     except Exception:
                         pass
                 return {}
-            return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+            grezzo_mam = {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+            st.session_state['_ultimo_salvato_matches_analyzed_manuali'] = dict(grezzo_mam)
+            return grezzo_mam
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
             # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
@@ -5803,10 +6039,15 @@ def salva_matches_analyzed_manuali_su_disco(dati_dict, permetti_svuotamento=Fals
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             _blocca_se_svuotamento_sospetto(worksheet, dati_dict, permetti_svuotamento, "manually-entered match set(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_matches_analyzed_manuali')
+            if vecchio is not None and _salva_record_mirato(worksheet, dati_dict, vecchio, lambda k, v: [json.dumps(v)]):
+                st.session_state['_ultimo_salvato_matches_analyzed_manuali'] = dict(dati_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['squadra_selezione', 'righe_json'])
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_matches_analyzed_manuali'] = dict(dati_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save manually-entered matches to Google Sheets: {e}")
@@ -5857,7 +6098,9 @@ def carica_link_zone_da_disco():
                     except Exception:
                         pass
                 return {}
-            return {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+            grezzo_lz = {r[0]: json.loads(r[1]) for r in valori[1:] if r and r[0] and len(r) > 1}
+            st.session_state['_ultimo_salvato_link_zone'] = dict(grezzo_lz)
+            return grezzo_lz
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
             # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
@@ -5891,10 +6134,15 @@ def salva_link_zone_su_disco(link_dict, permetti_svuotamento=False):
                     if len(str(cella)) > 49000:
                         raise ValueError(f"A cell exceeds Google Sheets' limit ({len(str(cella))} chars) — aborting before touching the sheet.")
             _blocca_se_svuotamento_sospetto(worksheet, link_dict, permetti_svuotamento, "zone video link set(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_link_zone')
+            if vecchio is not None and _salva_record_mirato(worksheet, link_dict, vecchio, lambda k, v: [json.dumps(v)]):
+                st.session_state['_ultimo_salvato_link_zone'] = dict(link_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['squadra', 'link_json'])
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_link_zone'] = dict(link_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save zone video links to Google Sheets: {e}")
@@ -5959,6 +6207,7 @@ def carica_foto_da_disco():
             migrato = _migra_chiavi_a_identita(grezzo)
             if migrato != grezzo:
                 salva_foto_su_disco(migrato)
+            st.session_state['_ultimo_salvato_foto_giocatori'] = dict(migrato)
             return migrato
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
@@ -5992,11 +6241,16 @@ def salva_foto_su_disco(foto_dict, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_foto()
             _blocca_se_svuotamento_sospetto(worksheet, foto_dict, permetti_svuotamento, "player photo(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_foto_giocatori')
+            if vecchio is not None and _salva_record_mirato(worksheet, foto_dict, vecchio, lambda k, v: [v]):
+                st.session_state['_ultimo_salvato_foto_giocatori'] = dict(foto_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['giocatore', 'foto_base64'])
             righe = [[g, f] for g, f in foto_dict.items()]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_foto_giocatori'] = dict(foto_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save player photos to Google Sheets: {e}")
@@ -6059,6 +6313,10 @@ def carica_h2h_da_disco():
                     df['Is_Money_Time'] = df['Is_Money_Time'].astype(bool)
                 df = _backfill_id_h2h(df)
                 partite.append({'nome': riga[0], 'data': riga[1], 'dati': df})
+            st.session_state['_ultimo_salvato_h2h'] = {
+                (m['nome'], str(m['data'])): [m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')]
+                for m in partite
+            }
             return partite
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load head-to-head data from Google Sheets: {e}")
@@ -6091,11 +6349,24 @@ def salva_h2h_su_disco(db, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_h2h()
             _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "head-to-head match(es)")
+
+            def _serializza_h2h(m):
+                return [m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')]
+
+            vecchio = st.session_state.get('_ultimo_salvato_h2h')
+            if vecchio is not None:
+                ok, nuova_cache = _salva_partite_mirato(
+                    worksheet, db, vecchio, lambda m: (m['nome'], str(m['data'])), _serializza_h2h
+                )
+                if ok:
+                    st.session_state['_ultimo_salvato_h2h'] = nuova_cache
+                    return
             worksheet.clear()
             worksheet.append_row(['nome', 'data', 'dati_json'])
-            righe = [[m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')] for m in db]
+            righe = [_serializza_h2h(m) for m in db]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_h2h'] = {(m['nome'], str(m['data'])): _serializza_h2h(m) for m in db}
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save head-to-head data to Google Sheets: {e}")
@@ -6140,6 +6411,10 @@ def carica_tiro_portiere_da_disco():
                     continue
                 df = pd.read_json(io.StringIO(riga[2]), orient='split')
                 partite.append({'nome': riga[0], 'data': riga[1], 'dati': df})
+            st.session_state['_ultimo_salvato_tiro_portiere'] = {
+                (m['nome'], str(m['data'])): [m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')]
+                for m in partite
+            }
             return partite
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load goalkeeper own-shots data from Google Sheets: {e}")
@@ -6169,11 +6444,26 @@ def salva_tiro_portiere_su_disco(db, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_tiro_portiere()
             _blocca_se_svuotamento_sospetto(worksheet, db, permetti_svuotamento, "goalkeeper own-shot match(es)")
+
+            def _serializza_tiro_portiere(m):
+                return [m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')]
+
+            vecchio = st.session_state.get('_ultimo_salvato_tiro_portiere')
+            if vecchio is not None:
+                ok, nuova_cache = _salva_partite_mirato(
+                    worksheet, db, vecchio, lambda m: (m['nome'], str(m['data'])), _serializza_tiro_portiere
+                )
+                if ok:
+                    st.session_state['_ultimo_salvato_tiro_portiere'] = nuova_cache
+                    return
             worksheet.clear()
             worksheet.append_row(['nome', 'data', 'dati_json'])
-            righe = [[m['nome'], str(m['data']), m['dati'].to_json(orient='split', date_format='iso')] for m in db]
+            righe = [_serializza_tiro_portiere(m) for m in db]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_tiro_portiere'] = {
+                (m['nome'], str(m['data'])): _serializza_tiro_portiere(m) for m in db
+            }
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save goalkeeper own-shots data to Google Sheets: {e}")
@@ -6222,7 +6512,11 @@ def carica_alias_giocatori_da_disco():
         try:
             worksheet = _ottieni_worksheet_alias_giocatori()
             valori = worksheet.get_all_values()
-            return [json.loads(riga[0]) for riga in valori[1:] if riga and riga[0]]
+            gruppi = [json.loads(riga[0]) for riga in valori[1:] if riga and riga[0]]
+            # Chiave = il JSON del gruppo stesso (non c'è un id separato): preserva l'ordine dei
+            # nomi al suo interno, che è significativo (il primo determina l'etichetta mostrata).
+            st.session_state['_ultimo_salvato_gruppi_alias'] = {json.dumps(g): g for g in gruppi}
+            return gruppi
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load player aliases from Google Sheets: {e}")
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
@@ -6251,11 +6545,19 @@ def salva_alias_giocatori_su_disco(gruppi_alias, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_alias_giocatori()
             _blocca_se_svuotamento_sospetto(worksheet, gruppi_alias, permetti_svuotamento, "player alias group(s)")
+            nuovo_dict = {json.dumps(g): g for g in gruppi_alias}
+            vecchio = st.session_state.get('_ultimo_salvato_gruppi_alias')
+            # Qui la "colonna valore" non esiste separatamente: la chiave STESSA (il JSON già
+            # serializzato) è l'intera riga, quindi serializza_riga non aggiunge nulla in più.
+            if vecchio is not None and _salva_record_mirato(worksheet, nuovo_dict, vecchio, lambda k, v: []):
+                st.session_state['_ultimo_salvato_gruppi_alias'] = dict(nuovo_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['gruppo_json'])
             righe = [[json.dumps(gruppo)] for gruppo in gruppi_alias]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_gruppi_alias'] = dict(nuovo_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save player aliases to Google Sheets: {e}")
@@ -6305,7 +6607,9 @@ def carica_disambiguazioni_da_disco():
         try:
             worksheet = _ottieni_worksheet_disambiguazioni()
             valori = worksheet.get_all_values()
-            return {riga[0]: json.loads(riga[1]) for riga in valori[1:] if len(riga) >= 2 and riga[0] and riga[1]}
+            grezzo_disamb = {riga[0]: json.loads(riga[1]) for riga in valori[1:] if len(riga) >= 2 and riga[0] and riga[1]}
+            st.session_state['_ultimo_salvato_disambiguazioni'] = dict(grezzo_disamb)
+            return grezzo_disamb
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load player disambiguation from Google Sheets: {e}")
     if os.path.exists(PLAYER_DISAMBIGUATION_FILE):
@@ -6326,11 +6630,16 @@ def salva_disambiguazioni_su_disco(disambiguazioni, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_disambiguazioni()
             _blocca_se_svuotamento_sospetto(worksheet, disambiguazioni, permetti_svuotamento, "player disambiguation entr(y/ies)")
+            vecchio = st.session_state.get('_ultimo_salvato_disambiguazioni')
+            if vecchio is not None and _salva_record_mirato(worksheet, disambiguazioni, vecchio, lambda k, v: [json.dumps(v)]):
+                st.session_state['_ultimo_salvato_disambiguazioni'] = dict(disambiguazioni)
+                return
             worksheet.clear()
             worksheet.append_row(['nome_base', 'gruppi_json'])
             righe = [[nome_base, json.dumps(gruppi)] for nome_base, gruppi in disambiguazioni.items()]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_disambiguazioni'] = dict(disambiguazioni)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save player disambiguation to Google Sheets: {e}")
@@ -6472,6 +6781,7 @@ def carica_campionati_da_disco():
                 data_inizio = datetime.strptime(riga[2], '%Y-%m-%d').date()
                 data_fine = datetime.strptime(riga[3], '%Y-%m-%d').date() if len(riga) > 3 and riga[3] else None
                 campionati.append({'nome': riga[0], 'squadre': squadre, 'data_inizio': data_inizio, 'data_fine': data_fine})
+            st.session_state['_ultimo_salvato_campionati'] = {c['nome']: c for c in campionati}
             return campionati
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load championships from Google Sheets: {e}")
@@ -6485,6 +6795,13 @@ def carica_campionati_da_disco():
         except Exception:
             return []
     return []
+
+def _serializza_riga_campionato(nome, c):
+    return [
+        json.dumps(c['squadre']) if c['squadre'] else '',
+        str(c['data_inizio']),
+        str(c['data_fine']) if c['data_fine'] else ''
+    ]
 
 def salva_campionati_su_disco(lista_campionati, permetti_svuotamento=False):
     # Backup locale SEMPRE scritto per primo, PRIMA di tentare Google Sheets — così un
@@ -6501,6 +6818,11 @@ def salva_campionati_su_disco(lista_campionati, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_campionati()
             _blocca_se_svuotamento_sospetto(worksheet, lista_campionati, permetti_svuotamento, "championship(s)")
+            nuovo_dict = {c['nome']: c for c in lista_campionati}
+            vecchio = st.session_state.get('_ultimo_salvato_campionati')
+            if vecchio is not None and _salva_record_mirato(worksheet, nuovo_dict, vecchio, _serializza_riga_campionato):
+                st.session_state['_ultimo_salvato_campionati'] = dict(nuovo_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['nome', 'squadre_json', 'data_inizio', 'data_fine'])
             righe = [[
@@ -6511,6 +6833,7 @@ def salva_campionati_su_disco(lista_campionati, permetti_svuotamento=False):
             ] for c in lista_campionati]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_campionati'] = dict(nuovo_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save championships to Google Sheets: {e}")
@@ -6668,7 +6991,9 @@ def carica_gruppi_sessioni_da_disco():
         try:
             worksheet = _ottieni_worksheet_gruppi_sessioni()
             valori = worksheet.get_all_values()
-            return [riga[0] for riga in valori[1:] if riga and riga[0]]
+            gruppi = [riga[0] for riga in valori[1:] if riga and riga[0]]
+            st.session_state['_ultimo_salvato_gruppi_sessioni'] = {g: g for g in gruppi}
+            return gruppi
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load training session groups from Google Sheets: {e}")
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
@@ -6697,11 +7022,17 @@ def salva_gruppi_sessioni_su_disco(gruppi, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_gruppi_sessioni()
             _blocca_se_svuotamento_sospetto(worksheet, gruppi, permetti_svuotamento, "training session group(s)")
+            nuovo_dict = {g: g for g in gruppi}
+            vecchio = st.session_state.get('_ultimo_salvato_gruppi_sessioni')
+            if vecchio is not None and _salva_record_mirato(worksheet, nuovo_dict, vecchio, lambda k, v: []):
+                st.session_state['_ultimo_salvato_gruppi_sessioni'] = dict(nuovo_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['nome_gruppo'])
             righe = [[g] for g in gruppi]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_gruppi_sessioni'] = dict(nuovo_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save training session groups to Google Sheets: {e}")
@@ -6734,7 +7065,9 @@ def carica_squadre_allenate_da_disco():
         try:
             worksheet = _ottieni_worksheet_training_teams()
             valori = worksheet.get_all_values()
-            return [{'nome': r[0], 'logo_b64': r[1] if len(r) > 1 and r[1] else None} for r in valori[1:] if r and r[0]]
+            lista_squadre = [{'nome': r[0], 'logo_b64': r[1] if len(r) > 1 and r[1] else None} for r in valori[1:] if r and r[0]]
+            st.session_state['_ultimo_salvato_squadre_allenate'] = {s['nome']: s for s in lista_squadre}
+            return lista_squadre
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not load training teams from Google Sheets: {e}")
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
@@ -6763,11 +7096,17 @@ def salva_squadre_allenate_su_disco(lista_squadre, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_training_teams()
             _blocca_se_svuotamento_sospetto(worksheet, lista_squadre, permetti_svuotamento, "training team(s)")
+            nuovo_dict = {s['nome']: s for s in lista_squadre}
+            vecchio = st.session_state.get('_ultimo_salvato_squadre_allenate')
+            if vecchio is not None and _salva_record_mirato(worksheet, nuovo_dict, vecchio, lambda k, s: [s.get('logo_b64') or '']):
+                st.session_state['_ultimo_salvato_squadre_allenate'] = dict(nuovo_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['nome', 'logo_base64'])
             righe = [[s['nome'], s.get('logo_b64') or ''] for s in lista_squadre]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_squadre_allenate'] = dict(nuovo_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save training teams to Google Sheets: {e}")
@@ -7111,7 +7450,9 @@ def carica_loghi_squadra_da_disco():
         try:
             worksheet = _ottieni_worksheet_loghi_squadra()
             valori = worksheet.get_all_values()
-            return {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            grezzo_loghi = {r[0]: r[1] for r in valori[1:] if r and r[0] and len(r) > 1}
+            st.session_state['_ultimo_salvato_loghi_squadre'] = dict(grezzo_loghi)
+            return grezzo_loghi
         except Exception:
             # Non arrendersi al primo errore: prova comunque il backup locale sotto
             # (se esiste) prima di restituire {} vuoto — meglio mostrare dati
@@ -7140,11 +7481,16 @@ def salva_loghi_squadra_su_disco(loghi_dict, permetti_svuotamento=False):
         try:
             worksheet = _ottieni_worksheet_loghi_squadra()
             _blocca_se_svuotamento_sospetto(worksheet, loghi_dict, permetti_svuotamento, "team logo(s)")
+            vecchio = st.session_state.get('_ultimo_salvato_loghi_squadre')
+            if vecchio is not None and _salva_record_mirato(worksheet, loghi_dict, vecchio, lambda k, v: [v]):
+                st.session_state['_ultimo_salvato_loghi_squadre'] = dict(loghi_dict)
+                return
             worksheet.clear()
             worksheet.append_row(['squadra', 'logo_base64'])
             righe = [[nome, logo] for nome, logo in loghi_dict.items()]
             if righe:
                 worksheet.append_rows(righe)
+            st.session_state['_ultimo_salvato_loghi_squadre'] = dict(loghi_dict)
             return
         except Exception as e:
             st.sidebar.error(f"⚠️ Could not save team logos to Google Sheets: {e}")
