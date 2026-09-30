@@ -1029,12 +1029,13 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v67 - 2026-09-29 - Corretto un bug in GK Method Comparison: cambiando SOLO la soglia "
-               "minima di tiri (senza toccare lega/filtro sopra), il menu di raffinamento manteneva la "
-               "vecchia selezione invece di aggiornarsi — un portiere GK Method reso idoneo da una soglia "
-               "più bassa restava fuori dal gruppo giusto, e i suoi tiri finivano sommati al gruppo "
-               "'everyone else' invece che al gruppo GK Method. La soglia si applica e si è sempre "
-               "applicata a entrambi i lati ugualmente — il bug era solo nel widget che non si aggiornava")
+APP_VERSION = ("v68 - 2026-09-30 - CORREZIONE CRITICA: il salvataggio mirato introdotto in v59 usava "
+               "'nome+data' come chiave per il database principale, i tiratori e le categorie separate "
+               "— ma una partita caricata in formato unificato genera DUE record (uno per squadra) con "
+               "lo STESSO nome e la STESSA data, quindi uno sovrascriveva l'altro su Google Sheets ad "
+               "ogni salvataggio (la sessione in memoria restava corretta, il problema si vedeva solo "
+               "uscendo e rientrando). La chiave ora include anche la squadra su tutti e tre i database "
+               "— H2H e tiro-portiere non erano toccati (lì un solo record esiste davvero per partita)")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -5235,7 +5236,7 @@ def carica_categoria_alt_da_disco():
                 return []
             db_caricato_alt = [_riga_sheet_a_match_alt(riga) for riga in valori[1:] if riga and riga[1]]
             st.session_state['_ultimo_salvato_categoria_alt'] = {
-                (m.get('categoria', ''), m['nome'], str(m['data'])): _match_a_riga_sheet_alt(m) for m in db_caricato_alt
+                (m.get('categoria', ''), m['nome'], str(m['data']), m['squadra']): _match_a_riga_sheet_alt(m) for m in db_caricato_alt
             }
             return db_caricato_alt
         except Exception as e:
@@ -5270,8 +5271,8 @@ def salva_categoria_alt_su_disco(db, permetti_svuotamento=False):
             if vecchio is not None:
                 ok, nuova_cache = _salva_partite_mirato(
                     worksheet, db, vecchio,
-                    lambda m: (m.get('categoria', ''), m['nome'], str(m['data'])), _match_a_riga_sheet_alt,
-                    n_colonne_chiave=3
+                    lambda m: (m.get('categoria', ''), m['nome'], str(m['data']), m['squadra']), _match_a_riga_sheet_alt,
+                    n_colonne_chiave=4
                 )
                 if ok:
                     st.session_state['_ultimo_salvato_categoria_alt'] = nuova_cache
@@ -5282,7 +5283,7 @@ def salva_categoria_alt_su_disco(db, permetti_svuotamento=False):
             if righe:
                 worksheet.append_rows(righe)
             st.session_state['_ultimo_salvato_categoria_alt'] = {
-                (m.get('categoria', ''), m['nome'], str(m['data'])): _match_a_riga_sheet_alt(m) for m in db
+                (m.get('categoria', ''), m['nome'], str(m['data']), m['squadra']): _match_a_riga_sheet_alt(m) for m in db
             }
             return
         except Exception as e:
@@ -5371,7 +5372,7 @@ def carica_stagione_da_disco():
                 return []
             db_caricato = [_riga_sheet_a_match(riga) for riga in valori[1:] if riga and riga[0]]
             st.session_state['_ultimo_salvato_stagione'] = {
-                (m['nome'], str(m['data'])): _match_a_riga_sheet(m) for m in db_caricato
+                (m['nome'], str(m['data']), m['squadra']): _match_a_riga_sheet(m) for m in db_caricato
             }
             return db_caricato
         except Exception as e:
@@ -5424,7 +5425,8 @@ def salva_stagione_su_disco(db, permetti_svuotamento=False):
             if vecchio is not None:
                 ok, nuova_cache = _salva_partite_mirato(
                     worksheet, db, vecchio,
-                    lambda m: (m['nome'], str(m['data'])), _match_a_riga_sheet
+                    lambda m: (m['nome'], str(m['data']), m['squadra']), _match_a_riga_sheet,
+                    n_colonne_chiave=3
                 )
                 if ok:
                     st.session_state['_ultimo_salvato_stagione'] = nuova_cache
@@ -5434,7 +5436,7 @@ def salva_stagione_su_disco(db, permetti_svuotamento=False):
             if righe:
                 worksheet.append_rows(righe)
             st.session_state['_ultimo_salvato_stagione'] = {
-                (m['nome'], str(m['data'])): _match_a_riga_sheet(m) for m in db
+                (m['nome'], str(m['data']), m['squadra']): _match_a_riga_sheet(m) for m in db
             }
             return
         except Exception as e:
@@ -5560,7 +5562,7 @@ def carica_stagione_tiratori_da_disco():
                 return []
             db_caricato_tir = [_riga_sheet_a_match_tiratori(riga) for riga in valori[1:] if riga and riga[0]]
             st.session_state['_ultimo_salvato_stagione_tiratori'] = {
-                (m['nome'], str(m['data'])): _match_a_riga_sheet_tiratori(m) for m in db_caricato_tir
+                (m['nome'], str(m['data']), m['squadra']): _match_a_riga_sheet_tiratori(m) for m in db_caricato_tir
             }
             return db_caricato_tir
         except Exception as e:
@@ -5611,7 +5613,8 @@ def salva_stagione_tiratori_su_disco(db, permetti_svuotamento=False):
             if vecchio is not None:
                 ok, nuova_cache = _salva_partite_mirato(
                     worksheet, db, vecchio,
-                    lambda m: (m['nome'], str(m['data'])), _match_a_riga_sheet_tiratori
+                    lambda m: (m['nome'], str(m['data']), m['squadra']), _match_a_riga_sheet_tiratori,
+                    n_colonne_chiave=3
                 )
                 if ok:
                     st.session_state['_ultimo_salvato_stagione_tiratori'] = nuova_cache
@@ -5621,7 +5624,7 @@ def salva_stagione_tiratori_su_disco(db, permetti_svuotamento=False):
             if righe:
                 worksheet.append_rows(righe)
             st.session_state['_ultimo_salvato_stagione_tiratori'] = {
-                (m['nome'], str(m['data'])): _match_a_riga_sheet_tiratori(m) for m in db
+                (m['nome'], str(m['data']), m['squadra']): _match_a_riga_sheet_tiratori(m) for m in db
             }
             return
         except Exception as e:
