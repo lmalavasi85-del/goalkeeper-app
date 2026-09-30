@@ -1029,12 +1029,9 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v69 - 2026-09-30 - Aggiunto un controllo automatico in cima a Upload Match Sheets: "
-               "scandisce Season, Shooters e Separate category cercando partite col nome nel formato "
-               "'SquadraHome-SquadraAway' per cui è presente una sola delle due squadre attese — segno "
-               "che l'altra potrebbe essere andata persa per il bug corretto in v68. Elenca ogni caso "
-               "sospetto (non è una certezza per ognuno, ma un elenco puntuale da controllare) e sparisce "
-               "da solo quando non ne trova più")
+APP_VERSION = ("v70 - 2026-09-30 - Rimosso il controllo diagnostico temporaneo (v69) da Upload Match "
+               "Sheets — non serve più dopo il ripristino della cronologia Google Sheets, che ha "
+               "recuperato i dati precedenti al bug corretto in v68")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1564,41 +1561,6 @@ def estrai_nome_e_data_da_nome_file(nome_file):
         except ValueError:
             data = None
     return nome_partita, data
-
-def _trova_partite_sospette_squadra_mancante():
-    """Diagnostica per il bug del salvataggio mirato (v59-v67, corretto in v68): quella versione
-    usava 'nome+data' come chiave per il database principale, i tiratori e le categorie separate,
-    senza includere la squadra — ma una partita in formato unificato genera DUE record (uno per
-    squadra) con lo STESSO nome e la STESSA data, quindi uno poteva sovrascrivere l'altro ad ogni
-    salvataggio avvenuto in quella finestra di tempo. Scandisce i tre archivi e segnala ogni
-    combinazione nome+data il cui nome è nel formato riconoscibile 'SquadraHome-SquadraAway' ma
-    per cui è presente UNA SOLA delle due squadre attese — segnale che l'altra potrebbe essere
-    andata persa. Non è una certezza (alcuni file tracciano di proposito una sola squadra), solo
-    un elenco di candidati da controllare uno per uno. Restituisce una lista di dict {nome, data,
-    dove, squadra_presente, squadra_mancante}."""
-    sospette = []
-    archivi = [
-        ('Season (goalkeepers)', st.session_state.get('db', [])),
-        ('Season (shooters)', st.session_state.get('db_tiratori', [])),
-        ('Separate category', st.session_state.get('categoria_alt_db', [])),
-    ]
-    for etichetta_archivio, db_archivio in archivi:
-        per_chiave = {}
-        for m in db_archivio:
-            chiave = (m['nome'], str(m['data']))
-            per_chiave.setdefault(chiave, set()).add(m['squadra'])
-        for (nome, data), squadre_presenti in per_chiave.items():
-            squadra_home, squadra_away = estrai_home_away_da_nome_file(nome)
-            if not squadra_home or not squadra_away:
-                continue  # nome non nel pattern "A-B": non posso dedurre le 2 squadre attese
-            mancanti = {squadra_home, squadra_away} - squadre_presenti
-            if mancanti:
-                sospette.append({
-                    'nome': nome, 'data': data, 'dove': etichetta_archivio,
-                    'squadra_presente': ', '.join(sorted(squadre_presenti)) or '(nessuna)',
-                    'squadra_mancante': ', '.join(sorted(mancanti)),
-                })
-    return sospette
 
 def determina_casa_trasferta(squadra_analizzata, squadra_home, squadra_away):
     """Restituisce 'home', 'away' o None (se non determinabile), confrontando in modo
@@ -9227,28 +9189,6 @@ with tab1:
             else:
                 st.error("Incorrect code.")
     else:
-        # ============================================================
-        # DIAGNOSTICA TEMPORANEA: rileva partite che potrebbero aver perso una squadra a causa
-        # del bug del salvataggio mirato (v59-v67, corretto in v68). Va tenuta finché Luigi non
-        # ha controllato/ricaricato tutte le voci segnalate, poi va rimossa.
-        # ============================================================
-        _partite_sospette = _trova_partite_sospette_squadra_mancante()
-        if _partite_sospette:
-            st.error(
-                f"⚠️ **Data check: {len(_partite_sospette)} match(es) may be missing a team's data.** "
-                "A bug in the save logic (active Sept 29 morning – Sept 30, now fixed in this version) "
-                "could have caused one team's data to overwrite the other's for matches uploaded or "
-                "re-saved in that window. This is not certain for every entry below — some files "
-                "intentionally track only one team — but each one is worth a quick check against the "
-                "original Excel file, and a re-upload if the other team is indeed missing."
-            )
-            for _s in sorted(_partite_sospette, key=lambda x: (str(x['data']), x['nome'])):
-                st.markdown(
-                    f"- **{_s['nome']}** ({_s['data']}) — *{_s['dove']}*: has **{_s['squadra_presente']}** "
-                    f"only, missing **{_s['squadra_mancante']}**"
-                )
-            st.caption("This check disappears on its own once no more matches are flagged.")
-
         # ============================================================
         # UPLOAD FILE UNIFICATO (formato unico HOME/AWAY, un solo file per l'intera gara)
         # ============================================================
