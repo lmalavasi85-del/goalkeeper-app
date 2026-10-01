@@ -1029,9 +1029,11 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v70 - 2026-09-30 - Rimosso il controllo diagnostico temporaneo (v69) da Upload Match "
-               "Sheets — non serve più dopo il ripristino della cronologia Google Sheets, che ha "
-               "recuperato i dati precedenti al bug corretto in v68")
+APP_VERSION = ("v71 - 2026-09-30 - Corretto un difetto visivo nei grafici PDF con etichette verticali "
+               "(Progressive GPI Trend e Season Trend): erano ruotate nel verso sbagliato (rotation=90 "
+               "invece di -90), quindi si leggevano dal basso verso l'alto invece che dall'alto verso il "
+               "basso — il nome del portiere e l'orario apparivano 'al contrario' rispetto alla lettura "
+               "naturale. Verificato generando i due grafici con dati di prova e confrontando visivamente")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2645,7 +2647,7 @@ def _disegna_grafico_stagione(dati_per_portiere, chiave_valore, etichetta_y, out
     ax.set_xlabel('Match', fontsize=11)
     ax.set_ylabel(etichetta_y, fontsize=11)
     ax.set_xticks(range(len(etichette_ordinate)))
-    ax.set_xticklabels(etichette_ordinate, rotation=90, fontsize=9)
+    ax.set_xticklabels(etichette_ordinate, rotation=-90, fontsize=9)
     ax.axhline(0, color='black', linewidth=1.2, alpha=0.5)
     ax.grid(axis='y', linestyle='--', alpha=0.3)
     ax.legend(loc='best', fontsize=9)
@@ -2697,7 +2699,7 @@ def _disegna_grafico_timeline_pdf(df_match, output_path):
 
     ax.axhline(0, color='black', linewidth=3, zorder=2)
     ax.set_xticks(x)
-    ax.set_xticklabels(x_labels, rotation=90, fontsize=9)
+    ax.set_xticklabels(x_labels, rotation=-90, fontsize=9)
     ax.tick_params(axis='x', pad=16)  # spinge le etichette più in basso, per fare spazio ai pallini
     ax.set_ylabel('Progressive GPI Valuation Index', fontsize=11)
     ax.set_xlim(-0.5, n - 0.5)
