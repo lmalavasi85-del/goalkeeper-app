@@ -1029,11 +1029,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v71 - 2026-09-30 - Corretto un difetto visivo nei grafici PDF con etichette verticali "
-               "(Progressive GPI Trend e Season Trend): erano ruotate nel verso sbagliato (rotation=90 "
-               "invece di -90), quindi si leggevano dal basso verso l'alto invece che dall'alto verso il "
-               "basso — il nome del portiere e l'orario apparivano 'al contrario' rispetto alla lettura "
-               "naturale. Verificato generando i due grafici con dati di prova e confrontando visivamente")
+APP_VERSION = ("v72 - 2026-10-04 - Nell'elenco \"My Shots on Video\" (link YouTube) i tiri a porta vuota (EG) comparivano con la sigla \"nan\" al posto del tipo di tiro: ora mostrano \"eg\". Lo stesso vale per il filtro \"Zone\", dove \"nan\" compariva come opzione: ora c'è \"eg\". Un tiro non-EG con tipo davvero mancante mostra un trattino invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2236,6 +2232,18 @@ def url_youtube_con_timestamp(link_base, secondi):
     link_base = link_base.strip()
     separatore = '&' if '?' in link_base else '?'
     return f"{link_base}{separatore}t={int(secondi)}s"
+
+def etichetta_tiro_per_video(riga):
+    """Tipo di tiro da mostrare accanto a un tiro nell'elenco dei video.
+
+    Un tiro a porta vuota (EG) non ha un tipo di tiro vero e proprio: nel file la colonna è vuota
+    e, convertita in testo, diventava la stringa 'nan'. Qui si mostra 'eg'. Per qualunque altro
+    tiro a cui il tipo manchi davvero si mostra un trattino invece di 'nan'."""
+    valore_eg = riga.get('Is_Empty_Goal', False)
+    if pd.notna(valore_eg) and bool(valore_eg):
+        return 'eg'
+    tiro = str(riga.get('TIRO_CLEAN', '')).strip()
+    return tiro if tiro and tiro.lower() not in ('nan', 'none') else '—'
 
 def secondi_da_orario_video(valore):
     """Converte il valore della colonna 'Start time' di VideoCoach (un datetime.time — ore,
@@ -9134,8 +9142,9 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
         with col_f2:
             filtro_esito = st.selectbox("Result:", ["(All)", "save", "goal", "miss"], key=f"gk_video_esito_{chiave_filtri_video}")
         with col_f3:
+            zone_video_disponibili = sorted(set(df_stagione_totale.apply(etichetta_tiro_per_video, axis=1)) - {'—'})
             filtro_zona = st.selectbox(
-                "Zone:", ["(All)"] + sorted(df_stagione_totale['TIRO_CLEAN'].dropna().unique()), key=f"gk_video_zona_{chiave_filtri_video}"
+                "Zone:", ["(All)"] + zone_video_disponibili, key=f"gk_video_zona_{chiave_filtri_video}"
             )
 
         df_video = df_stagione_totale.copy()
@@ -9146,7 +9155,7 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
         if filtro_esito != "(All)":
             df_video = df_video[df_video['RESULT_CLEAN'] == filtro_esito]
         if filtro_zona != "(All)":
-            df_video = df_video[df_video['TIRO_CLEAN'] == filtro_zona]
+            df_video = df_video[df_video.apply(etichetta_tiro_per_video, axis=1) == filtro_zona]
 
         st.caption(f"{len(df_video)} shot(s) match this filter.")
         for _, riga_video in df_video.head(200).iterrows():
@@ -9157,7 +9166,7 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
             url_tag = url_youtube_con_timestamp(link_partita, riga_video.get('VIDEO_START_SECONDS'))
             col_v1, col_v2 = st.columns([4, 1])
             with col_v1:
-                st.write(f"{riga_video['Match_Label']} — {riga_video['TIRO_CLEAN']} — {riga_video['RESULT_CLEAN']} — {analizza_timeline(riga_video['TIMELINE'])[1]}")
+                st.write(f"{riga_video['Match_Label']} — {etichetta_tiro_per_video(riga_video)} — {riga_video['RESULT_CLEAN']} — {analizza_timeline(riga_video['TIMELINE'])[1]}")
             with col_v2:
                 if url_tag:
                     st.link_button("▶️ Watch", url_tag)
