@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2544,6 +2544,11 @@ def raccogli_stagione_per_portiere(elenco_partite, identita_portiere):
             'money_time_pct': pct_mt,
             'casa_trasferta': None if match.get('neutro') else determina_casa_trasferta(match['squadra'], match.get('squadra_home'), match.get('squadra_away')),
             'numero_maglia': numeri_maglia_visti(df_gk['PORTIERE_CLEAN'].unique()),
+            # Parate divise per situazione di punteggio (squadra del portiere avanti / parità /
+            # indietro): calcolate al volo da timeline e punteggio già salvati, quindi valgono
+            # automaticamente per tutte le partite già presenti, vecchie comprese.
+            'parate_situazione': conta_parate_per_situazione(
+                df_gk, None if match.get('neutro') else determina_casa_trasferta(match['squadra'], match.get('squadra_home'), match.get('squadra_away'))),
         })
     df_aggregato = pd.concat(frammenti, ignore_index=True) if frammenti else pd.DataFrame()
     return df_aggregato, lista_partite
@@ -2869,6 +2874,443 @@ def _disegna_grafico_timeline_pdf(df_match, output_path):
 
     fig.savefig(output_path, bbox_inches='tight', dpi=150)
     plt.close(fig)
+
+# ============================================================
+# GRAFICI "SITUAZIONE DI PUNTEGGIO": scarto gol + parate (partita singola) e parate in
+# vantaggio / parità / svantaggio (stagione). Convenzione di tutto il progetto: il punteggio
+# nella timeline è sempre "CASA-TRASFERTA" (es. 3-2 = 3 la squadra di casa, 2 la trasferta),
+# quindi Scarto_Punteggio = gol casa - gol trasferta (positivo = casa avanti).
+# ============================================================
+COL_AREA_CASA = '#A7C7E7'        # area sopra l'asse: casa in vantaggio
+COL_AREA_TRASF = '#F8C9A0'       # area sotto l'asse: trasferta in vantaggio
+PALETTE_GK_SITUAZIONE = ['#1E88E5', '#E53935', '#43A047', '#FDD835', '#8E24AA', '#00897B', '#6D4C41']
+COL_VANTAGGIO = '#2ca02c'
+COL_PARITA = '#f2c200'
+COL_SVANTAGGIO = '#d62728'
+
+
+def _secondi_e_punteggio_da_riga(riga):
+    """Dalla riga di un tiro ricava (secondi_gara, gol_casa, gol_trasferta). Restituisce None
+    se la riga non ha una timeline valida. Usa Tempo_Visuale (minuti+secondi) e Punteggio_Live
+    quando ci sono; per le partite più vecchie, senza quei campi, ripiega su Minuti_Gara
+    e sul solo scarto (gol_casa/gol_trasferta restano None: si disegna lo scarto, ma la
+    scritta sul pallino mostra lo scarto invece del punteggio)."""
+    tempo = str(riga.get('Tempo_Visuale', '') or '')
+    if not tempo.strip() or tempo.strip().lower() in ('nan', 'none'):
+        return None
+    m = re.match(r"\s*(\d{1,3})'(\d{1,2})", tempo)
+    if m:
+        secondi = int(m.group(1)) * 60 + int(m.group(2))
+    else:
+        minuti = riga.get('Minuti_Gara', None)
+        if minuti is None or pd.isna(minuti):
+            return None
+        secondi = int(minuti) * 60
+    casa = trasf = None
+    punteggio = str(riga.get('Punteggio_Live', '') or '')
+    mp = re.match(r"\s*(\d{1,3})\s*-\s*(\d{1,3})\s*$", punteggio)
+    if mp:
+        casa, trasf = int(mp.group(1)), int(mp.group(2))
+    elif 'Scarto_Punteggio' in riga and not pd.isna(riga['Scarto_Punteggio']):
+        # solo lo scarto: lo rappresento come "scarto-0" non è corretto, quindi lo segno a parte
+        casa, trasf = None, None
+    scarto = riga.get('Scarto_Punteggio', None)
+    if (casa is not None) and (trasf is not None):
+        scarto = casa - trasf
+    if scarto is None or pd.isna(scarto):
+        return None
+    return secondi, casa, trasf, int(scarto)
+
+
+def raccogli_traiettoria_e_parate(elenco_df, df_parate=None):
+    """elenco_df: tutti i dataframe tiro della stessa partita (portieri di entrambe le squadre,
+    e tiratori se disponibili) — servono solo per ricostruire come cambia il punteggio.
+    df_parate: il dataframe del portiere/i di cui mostrare le parate (esito save).
+    Restituisce (punti, parate): punti = lista ordinata di (secondi, scarto), con (0, 0) iniziale;
+    parate = lista di dict(secondi, scarto, casa, trasf, portiere)."""
+    candidati = {}
+    for df in elenco_df:
+        if df is None or len(df) == 0:
+            continue
+        for _, r in df.iterrows():
+            v = _secondi_e_punteggio_da_riga(r)
+            if v is None:
+                continue
+            secondi, casa, trasf, scarto = v
+            candidati[(secondi, casa, trasf, scarto)] = True
+    lista_c = sorted(candidati.keys(), key=lambda t: (t[0], (t[1] or 0) + (t[2] or 0)))
+    # Il punteggio di una partita non scende mai: tra i punteggi letti tengo la catena più lunga
+    # in cui i gol di casa e di trasferta restano uguali o crescono nel tempo. Così un refuso
+    # nella timeline di un singolo tag (es. 33-20 invece di 33-30) non fa schizzare la curva.
+    if lista_c and all(t[1] is not None and t[2] is not None for t in lista_c):
+        n = len(lista_c)
+        lung = [1] * n
+        prec = [-1] * n
+        for j in range(n):
+            for i in range(j):
+                if lista_c[i][1] <= lista_c[j][1] and lista_c[i][2] <= lista_c[j][2] and lung[i] + 1 > lung[j]:
+                    lung[j] = lung[i] + 1
+                    prec[j] = i
+        fine_catena = max(range(n), key=lambda k: lung[k])
+        catena = []
+        k = fine_catena
+        while k != -1:
+            catena.append(lista_c[k])
+            k = prec[k]
+        lista_c = list(reversed(catena))
+    insieme_catena = set(lista_c)
+    lista = [(0, 0)] + [(t[0], t[3]) for t in lista_c]
+    ripulita = []
+    for s_, sc in lista:
+        if ripulita and ripulita[-1][0] == s_:
+            ripulita[-1] = (s_, sc)
+        else:
+            ripulita.append((s_, sc))
+    parate = []
+    if df_parate is not None and len(df_parate):
+        for _, r in df_parate.iterrows():
+            if str(r.get('RESULT_CLEAN', '')).lower().strip() not in ('save', 's'):
+                continue
+            v = _secondi_e_punteggio_da_riga(r)
+            if v is None:
+                continue
+            secondi, casa, trasf, scarto = v
+            anomala = bool(casa is not None and trasf is not None and len(insieme_catena) > 0
+                           and (secondi, casa, trasf, scarto) not in insieme_catena)
+            parate.append({'secondi': secondi, 'scarto': scarto, 'casa': casa, 'trasf': trasf, 'anomala': anomala,
+                           'portiere': str(r.get('PORTIERE_ID', r.get('PORTIERE_CLEAN', '?')))})
+    return ripulita, parate
+
+
+def _fmt_tempo(secondi):
+    return f"{int(secondi) // 60}'{int(secondi) % 60:02d}\""
+
+
+def disegna_grafico_scarto_parate(punti, parate, nome_casa='Home', nome_trasf='Away', output_path=None,
+                                  titolo=None):
+    """Asse verticale = scarto gol (sopra casa avanti, sotto trasferta avanti), asse orizzontale =
+    timeline di gara. L'asse orizzontale è la parità. Aree sopra/sotto colorate diversamente.
+    Parate = pallini (un colore per portiere) posti sul punto (tempo, scarto) di quel momento,
+    con il punteggio sul pallino e il momento esatto scritto sulla timeline."""
+    import matplotlib.pyplot as _plt
+    import numpy as _np
+    punti = list(punti) if punti else [(0, 0)]
+    fine = max([p[0] for p in punti] + [pa['secondi'] for pa in parate] + [3600])
+    fine = ((fine + 299) // 300) * 300
+    # Serie "a gradini": il punteggio resta uguale fino al tiro successivo
+    xs, ys = [], []
+    for i, (s, sc) in enumerate(punti):
+        if i > 0:
+            xs.append(s / 60.0); ys.append(punti[i - 1][1])
+        xs.append(s / 60.0); ys.append(sc)
+    xs.append(fine / 60.0); ys.append(punti[-1][1])
+    xs = _np.array(xs, dtype=float); ys = _np.array(ys, dtype=float)
+
+    tutti_scarti = list(ys) + [pa['scarto'] for pa in parate]
+    massimo = max(3, int(max(abs(v) for v in tutti_scarti)) + 1)
+
+    n_par = len(parate)
+    larghezza = max(14, min(26, 12 + n_par * 0.12))
+    fig, ax = _plt.subplots(figsize=(larghezza, 8), dpi=150)
+    ax.fill_between(xs, 0, ys, where=ys >= 0, interpolate=True, color=COL_AREA_CASA, alpha=0.85, linewidth=0, zorder=1)
+    ax.fill_between(xs, 0, ys, where=ys <= 0, interpolate=True, color=COL_AREA_TRASF, alpha=0.85, linewidth=0, zorder=1)
+    ax.plot(xs, ys, color='#555555', linewidth=1.4, zorder=2)
+    ax.axhline(0, color='black', linewidth=2.6, zorder=3)
+    # intervallo (30'): linea sottile di riferimento
+    ax.axvline(30, color='#999999', linewidth=0.9, linestyle=':', zorder=1)
+
+    ax.set_xlim(-0.6, fine / 60.0 + 0.7)
+    ax.set_ylim(-massimo - 1.2, massimo + 1.2)
+    ax.set_yticks(list(range(-massimo, massimo + 1)))
+    ax.set_yticklabels([f"+{abs(v)}" if v != 0 else '0' for v in range(-massimo, massimo + 1)], fontsize=10)
+    ax.set_xticks(list(range(0, int(fine / 60) + 1, 5)))
+    ax.set_xticklabels([f"{m}'" for m in range(0, int(fine / 60) + 1, 5)], fontsize=10)
+    ax.tick_params(axis='x', length=0, pad=2)
+    ax.set_ylabel('Goal difference', fontsize=11)
+    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+    ax.grid(axis='y', linestyle='--', alpha=0.25, zorder=0)
+    ax.text(0.01, 0.985, f"▲ {nome_casa} ahead", transform=ax.transAxes, va='top', ha='left',
+            fontsize=11, fontweight='bold', color='#2F5F8F')
+    ax.text(0.01, 0.015, f"▼ {nome_trasf} ahead", transform=ax.transAxes, va='bottom', ha='left',
+            fontsize=11, fontweight='bold', color='#B5651D')
+
+    portieri = []
+    for pa in parate:
+        if pa['portiere'] not in portieri:
+            portieri.append(pa['portiere'])
+    colore_gk = {gk: PALETTE_GK_SITUAZIONE[i % len(PALETTE_GK_SITUAZIONE)] for i, gk in enumerate(portieri)}
+
+    parate_ord = sorted(parate, key=lambda p: p['secondi'])
+    ultimo_x_sopra = -99.0
+    for i, pa in enumerate(parate_ord):
+        x = pa['secondi'] / 60.0
+        y = pa['scarto']
+        ax.scatter([x], [y], s=190, color=colore_gk[pa['portiere']], edgecolors='black', linewidths=1.1, zorder=5)
+        if pa.get('anomala'):
+            ax.scatter([x], [y], s=330, facecolors='none', edgecolors='#444444', linewidths=1.0, linestyle=(0, (2, 2)), zorder=5)
+        if pa['casa'] is not None and pa['trasf'] is not None:
+            etichetta = f"{pa['casa']}-{pa['trasf']}" + ('?' if pa.get('anomala') else '')
+        else:
+            etichetta = f"{y:+d}" if y else "0"
+        # etichetta punteggio: alterno sopra/sotto se due parate sono vicine, per non sovrapporle
+        vicina = (x - ultimo_x_sopra) < 1.4
+        offset = -15 if vicina else 11
+        ax.annotate(etichetta, (x, y), textcoords='offset points', xytext=(0, offset), ha='center',
+                    va='top' if vicina else 'bottom', fontsize=8, fontweight='bold', color='black', zorder=6,
+                    bbox=dict(boxstyle='round,pad=0.12', fc='white', ec='none', alpha=0.75))
+        ultimo_x_sopra = x if not vicina else -99.0
+
+    # Momento esatto di ogni parata, scritto sulla timeline sotto il grafico, in verticale.
+    # Se due parate sono troppo vicine nel tempo, le etichette vengono allargate di lato e
+    # collegate al punto vero da una linea sottile, così restano sempre leggibili.
+    min_gap = 0.62 * (fine / 60.0) / 60.0 * (14.0 / larghezza) * 1.6
+    pos = [pa['secondi'] / 60.0 for pa in parate_ord]
+    x_lab = list(pos)
+    for _ in range(60):
+        mosso = False
+        for i in range(1, len(x_lab)):
+            if x_lab[i] - x_lab[i - 1] < min_gap:
+                spinta = (min_gap - (x_lab[i] - x_lab[i - 1])) / 2.0
+                x_lab[i - 1] -= spinta; x_lab[i] += spinta
+                mosso = True
+        if not mosso:
+            break
+    trasf_asse = ax.get_xaxis_transform()
+    for pa, xv, xl in zip(parate_ord, pos, x_lab):
+        col = colore_gk[pa['portiere']]
+        ax.plot([xv, xv], [pa['scarto'], -massimo - 1.2], color=col, linewidth=0.5, alpha=0.35, zorder=2)
+        ax.plot([xv, xl], [0, -0.055], color=col, linewidth=0.7, alpha=0.8, transform=trasf_asse, clip_on=False)
+        ax.text(xl, -0.06, _fmt_tempo(pa['secondi']), transform=trasf_asse, ha='center', va='top',
+                rotation=-90, fontsize=8, color=col if pa['portiere'] != '' else 'black', fontweight='bold',
+                clip_on=False)
+
+    # Legenda portieri
+    for gk in portieri:
+        ax.scatter([], [], s=110, color=colore_gk[gk], edgecolors='black', linewidths=1.0, label=gk)
+    if portieri:
+        ax.legend(loc='lower right', bbox_to_anchor=(1.0, 1.0), ncol=max(1, len(portieri)), frameon=False,
+                  fontsize=10, title=None)
+    if any(pa.get('anomala') for pa in parate):
+        ax.text(0.995, 0.015, "? (dashed ring) = score not consistent with the rest of the match: possible typo in the tag's timeline",
+                transform=ax.transAxes, ha='right', va='bottom', fontsize=8.5, color='#444444', style='italic')
+    if titolo:
+        ax.set_title(titolo, fontsize=13, fontweight='bold', loc='left')
+    if output_path:
+        fig.savefig(output_path, bbox_inches='tight', dpi=150)
+        _plt.close(fig)
+        return output_path
+    return fig
+
+
+def classifica_situazione_parata(scarto, casa_trasferta):
+    """'vantaggio' / 'parita' / 'svantaggio' dal punto di vista della squadra del portiere.
+    scarto = gol casa - gol trasferta. casa_trasferta: 'home' / 'away' / None (non determinabile
+    -> None: la parata non si può classificare)."""
+    if scarto == 0:
+        return 'parita'
+    if casa_trasferta == 'home':
+        return 'vantaggio' if scarto > 0 else 'svantaggio'
+    if casa_trasferta == 'away':
+        return 'vantaggio' if scarto < 0 else 'svantaggio'
+    return None
+
+
+def conta_parate_per_situazione(df_gk, casa_trasferta):
+    """Conta le parate (esito save) del portiere nel dataframe dato, divise per situazione di
+    punteggio nel momento della parata. Restituisce dict(vantaggio, parita, svantaggio, non_classificabili).
+    Le parate senza timeline valida o in partite senza casa/trasferta (neutre) restano in
+    non_classificabili — mai forzate in una categoria."""
+    out = {'vantaggio': 0, 'parita': 0, 'svantaggio': 0, 'non_classificabili': 0}
+    if df_gk is None or len(df_gk) == 0:
+        return out
+    for _, r in df_gk.iterrows():
+        if str(r.get('RESULT_CLEAN', '')).lower().strip() not in ('save', 's'):
+            continue
+        v = _secondi_e_punteggio_da_riga(r)
+        if v is None:
+            out['non_classificabili'] += 1
+            continue
+        classe = classifica_situazione_parata(v[3], casa_trasferta)
+        if classe is None:
+            out['non_classificabili'] += 1
+        else:
+            out[classe] += 1
+    return out
+
+
+def _totali_situazione(lista_partite):
+    tot = {'vantaggio': 0, 'parita': 0, 'svantaggio': 0, 'non_classificabili': 0}
+    for p in lista_partite:
+        sit = p.get('parate_situazione') or {}
+        for k in tot:
+            tot[k] += sit.get(k, 0)
+    return tot
+
+
+def _torta_su_ax(ax, totali, titolo=None, colonne_legenda=None):
+    import math as _m
+    valori = [totali['vantaggio'], totali['parita'], totali['svantaggio']]
+    totale = sum(valori)
+    if totale == 0:
+        ax.text(0.5, 0.5, 'No saves with a valid score', ha='center', va='center', fontsize=12)
+        ax.axis('off')
+        return
+    nomi = ['Team ahead', 'Tied', 'Team behind']
+    colori = [COL_VANTAGGIO, COL_PARITA, COL_SVANTAGGIO]
+    idx = [i for i, v in enumerate(valori) if v > 0]
+    wedges, _ = ax.pie([valori[i] for i in idx], colors=[colori[i] for i in idx], startangle=90,
+                        counterclock=False, wedgeprops=dict(edgecolor='white', linewidth=2))
+    for w, i in zip(wedges, idx):
+        ang = (w.theta2 + w.theta1) / 2.0
+        r = 0.62 if len(idx) > 1 else 0.0
+        ax.text(r * _m.cos(_m.radians(ang)), r * _m.sin(_m.radians(ang)),
+                f"{valori[i]}\n{valori[i] / totale * 100:.0f}%", ha='center', va='center',
+                fontsize=13, fontweight='bold', color='black' if i == 1 else 'white')
+    ax.legend(wedges, [f"{nomi[i]} ({valori[i]})" for i in idx], loc='upper center',
+              bbox_to_anchor=(0.5, -0.02), ncol=colonne_legenda or len(idx), frameon=False, fontsize=10)
+    ax.set_title(titolo or 'Saves by score situation', fontsize=12, fontweight='bold')
+    ax.set_aspect('equal')
+
+
+def _partite_con_situazione(lista_partite):
+    partite = [p for p in lista_partite if p.get('parate_situazione')
+               and (p['parate_situazione']['vantaggio'] + p['parate_situazione']['parita'] + p['parate_situazione']['svantaggio']) > 0]
+    return sorted(partite, key=lambda p: p['data'])
+
+
+def _storico_su_axes(ax1, ax2, partite, titolo=None, fontsize_etichette=8.5):
+    import numpy as _np
+    n = len(partite)
+    etichette = [p['label'] for p in partite]
+    v = _np.array([p['parate_situazione']['vantaggio'] for p in partite], dtype=float)
+    pa = _np.array([p['parate_situazione']['parita'] for p in partite], dtype=float)
+    s = _np.array([p['parate_situazione']['svantaggio'] for p in partite], dtype=float)
+    x = _np.arange(n)
+    ax1.bar(x, v, color=COL_VANTAGGIO, label='Team ahead', width=0.62)
+    ax1.bar(x, pa, bottom=v, color=COL_PARITA, label='Tied', width=0.62)
+    ax1.bar(x, s, bottom=v + pa, color=COL_SVANTAGGIO, label='Team behind', width=0.62)
+    for i in range(n):
+        tot = v[i] + pa[i] + s[i]
+        ax1.text(i, tot + 0.2, f"{int(tot)}", ha='center', va='bottom', fontsize=9, fontweight='bold')
+        for val, base, col in ((v[i], 0, 'white'), (pa[i], v[i], 'black'), (s[i], v[i] + pa[i], 'white')):
+            if val >= 2:
+                ax1.text(i, base + val / 2, f"{int(val)}", ha='center', va='center', fontsize=8.5, color=col, fontweight='bold')
+    ax1.set_ylabel('Saves per match', fontsize=10)
+    ax1.legend(loc='upper left', ncol=3, frameon=False, fontsize=9)
+    ax1.spines['top'].set_visible(False); ax1.spines['right'].set_visible(False)
+    ax1.set_ylim(0, max(v + pa + s) * 1.22 + 0.5)
+    cv, cp, cs = _np.cumsum(v), _np.cumsum(pa), _np.cumsum(s)
+    ct = cv + cp + cs
+    for serie, col in ((cv, COL_VANTAGGIO), (cp, COL_PARITA), (cs, COL_SVANTAGGIO)):
+        pct = serie / ct * 100
+        ax2.plot(x, pct, color=col, linewidth=2.6, marker='o', markersize=7, markeredgecolor='white')
+        ax2.annotate(f"{pct[-1]:.0f}%", (x[-1], pct[-1]), textcoords='offset points', xytext=(9, 0),
+                     va='center', fontsize=10, fontweight='bold', color='black' if col == COL_PARITA else col)
+    ax2.set_ylim(0, 100)
+    ax2.set_ylabel('Cumulative share of saves (%)', fontsize=10)
+    ax2.grid(axis='y', linestyle='--', alpha=0.3)
+    ax2.spines['top'].set_visible(False); ax2.spines['right'].set_visible(False)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(etichette, rotation=-90, fontsize=fontsize_etichette)
+    ax2.set_xlim(-0.6, n - 0.4 + 0.6)
+    ax2.tick_params(axis='x', pad=4)
+    if titolo:
+        ax1.set_title(titolo, fontsize=12, fontweight='bold', loc='left')
+
+
+def disegna_torta_situazione(totali, titolo=None, output_path=None):
+    """Torta delle parate: verde = squadra del portiere in vantaggio, giallo = parità,
+    rosso = squadra del portiere in svantaggio."""
+    import matplotlib.pyplot as _plt
+    fig, ax = _plt.subplots(figsize=(6.2, 5.6), dpi=150)
+    _torta_su_ax(ax, totali, titolo)
+    if output_path:
+        fig.savefig(output_path, bbox_inches='tight', dpi=150)
+        _plt.close(fig)
+        return output_path
+    return fig
+
+
+def disegna_storico_situazione(lista_partite, titolo=None, output_path=None):
+    """Storico partita per partita: in alto le parate di ogni gara divise per situazione
+    (verde/giallo/rosso), in basso l'andamento cumulato della quota percentuale di parate
+    in vantaggio / parità / svantaggio dall'inizio del periodo selezionato."""
+    import matplotlib.pyplot as _plt
+    partite = _partite_con_situazione(lista_partite)
+    if not partite:
+        return None
+    n = len(partite)
+    larghezza = max(9, min(24, 5 + n * 0.75))
+    fig, (ax1, ax2) = _plt.subplots(2, 1, figsize=(larghezza, 9), dpi=150, sharex=True,
+                                     gridspec_kw={'height_ratios': [1.1, 1], 'hspace': 0.12})
+    _storico_su_axes(ax1, ax2, partite, titolo)
+    if output_path:
+        fig.savefig(output_path, bbox_inches='tight', dpi=150)
+        _plt.close(fig)
+        return output_path
+    return fig
+
+
+def disegna_pannello_situazione_pdf(lista_partite, titolo_portiere, output_path):
+    """Versione orizzontale per il PDF: torta a sinistra, storico (barre + andamento cumulato)
+    a destra, in un'unica immagine. Restituisce output_path, o None se non ci sono parate valide."""
+    import matplotlib.pyplot as _plt
+    partite = _partite_con_situazione(lista_partite)
+    if not partite:
+        return None
+    totali = _totali_situazione(partite)
+    n = len(partite)
+    larghezza = max(14, min(26, 10 + n * 0.7))
+    fig = _plt.figure(figsize=(larghezza, 8), dpi=150)
+    gs = fig.add_gridspec(2, 2, width_ratios=[1, max(1.6, n * 0.22 + 1)], height_ratios=[1.1, 1],
+                          hspace=0.12, wspace=0.28)
+    ax_p = fig.add_subplot(gs[:, 0])
+    ax1 = fig.add_subplot(gs[0, 1])
+    ax2 = fig.add_subplot(gs[1, 1], sharex=ax1)
+    _torta_su_ax(ax_p, totali, f"{titolo_portiere}", colonne_legenda=1)
+    _storico_su_axes(ax1, ax2, partite, None, fontsize_etichette=8)
+    _plt.setp(ax1.get_xticklabels(), visible=False)
+    fig.savefig(output_path, bbox_inches='tight', dpi=150)
+    _plt.close(fig)
+    return output_path
+
+
+def elenco_df_traiettoria_partita(nome, data, df_fallback=None):
+    """Tutti i dataframe di tiri della stessa partita (portieri e tiratori di entrambe le
+    squadre, stagione principale e categorie a parte): servono solo per ricostruire come cambia
+    il punteggio nel tempo. Più squadre taggate = più punti, quindi una curva più fedele."""
+    trovati = []
+    for sorgente in (st.session_state.get('db', []), st.session_state.get('categoria_alt_db', []),
+                     st.session_state.get('db_tiratori', [])):
+        for m in sorgente:
+            if m.get('nome') == nome and str(m.get('data')) == str(data):
+                trovati.append(m['dati'])
+    if not trovati and df_fallback is not None:
+        trovati = [df_fallback]
+    return trovati
+
+
+def mostra_situazione_parate(nome_portiere, lista_partite, mostra_nome=True):
+    """Sezione 'Saves by Score Situation' per un portiere: torta (verde = squadra del portiere in
+    vantaggio, giallo = parità, rosso = in svantaggio) + storico partita per partita e
+    andamento cumulato. Usata sia dal Seasonal Report (Admin) sia dall'area Portiere, sempre
+    sulle partite già filtrate dall'utente (lega, date, selezione a scelta)."""
+    if mostra_nome:
+        st.markdown(f"**{nome_portiere}**")
+    totali = _totali_situazione(lista_partite)
+    if totali['vantaggio'] + totali['parita'] + totali['svantaggio'] == 0:
+        st.info("No saves with a valid timeline/score in the selected matches.")
+        return
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_torta_sit:
+        disegna_torta_situazione(totali, 'Saves by score situation', tmp_torta_sit.name)
+        st.image(tmp_torta_sit.name, width=460)
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_storico_sit:
+        if disegna_storico_situazione(lista_partite, 'Match by match + cumulative trend', tmp_storico_sit.name):
+            st.image(tmp_storico_sit.name, width=1000)
+    if totali['non_classificabili']:
+        st.caption(f"{totali['non_classificabili']} save(s) not counted: no valid timeline/score, or a neutral-venue match "
+                   "where the goalkeeper's team can't be matched to home/away.")
+
 
 def _disegna_grafico_blocchi_pdf(df_blocchi, output_path):
     """Disegna il grafico a blocchi da 10 minuti (linea % sopra, barre GPI sotto) con Matplotlib,
@@ -4363,7 +4805,8 @@ def _separatore():
 
 def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_portieri, df_blocchi, df_match, fig_blocchi,
                         includi_mappa_generale=True, includi_mappe_per_portiere=True, mappe_extra=None,
-                        squadra_home=None, squadra_away=None, riga_gpi_squadra=None, partita_completa=True):
+                        squadra_home=None, squadra_away=None, riga_gpi_squadra=None, partita_completa=True,
+                        elenco_df_traiettoria=None):
     """Costruisce il PDF completo della pagina Single Game Analysis e lo restituisce come bytes.
     includi_mappa_generale: aggiunge la porta con tutti i tiri del match (tutti i portieri insieme).
     includi_mappe_per_portiere: aggiunge una porta per ciascun portiere che ha subito almeno un tiro.
@@ -4464,6 +4907,19 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             RLImage(tmp_linee.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
         ]))
     elementi.append(_separatore())
+
+    # Scarto gol + parate dei portieri (stessa immagine mostrata a schermo)
+    _punti_pdf, _parate_pdf = raccogli_traiettoria_e_parate(elenco_df_traiettoria or [df_match], df_match)
+    if len(_punti_pdf) > 1:
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_scarto:
+            disegna_grafico_scarto_parate(_punti_pdf, _parate_pdf, squadra_home or 'Home', squadra_away or 'Away', tmp_scarto.name)
+            larghezza_px, altezza_px = PILImage.open(tmp_scarto.name).size
+            larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 13.0)
+            elementi.append(KeepTogether([
+                Paragraph("Score Margin &amp; Goalkeeper Saves", sezione_stile),
+                RLImage(tmp_scarto.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
+            ]))
+        elementi.append(_separatore())
 
     # Chronological shot sequence — starts right after (no wasted blank page),
     # the table automatically continues onto the following pages if needed.
@@ -4704,6 +5160,18 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
             RLImage(tmp_pct.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
         ]))
     elementi.append(_separatore())
+
+    # Parate per situazione di punteggio (vantaggio / parità / svantaggio), una per portiere
+    for _gk_pdf, _lista_pdf in dati_portieri.items():
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_sit:
+            if disegna_pannello_situazione_pdf(_lista_pdf, str(_gk_pdf), tmp_sit.name):
+                larghezza_px, altezza_px = PILImage.open(tmp_sit.name).size
+                larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 13.0)
+                elementi.append(KeepTogether([
+                    Paragraph("Saves by Score Situation — " + str(_gk_pdf).replace('&', '&amp;'), sezione_stile),
+                    RLImage(tmp_sit.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
+                ]))
+                elementi.append(_separatore())
 
     # Match history
     elementi.append(KeepTogether([
@@ -9120,6 +9588,19 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
             campionato_gk = next(c for c in st.session_state['campionati'] if c['nome'] == lega_scelta_gk)
             db_per_vista = partite_in_campionato(st.session_state['db'], campionato_gk)
 
+    # Filtro per intervallo di date (facoltativo): dalla data X alla data Y
+    _date_disp_gk = [m['data'] for m in db_per_vista if hasattr(m['data'], 'year')]
+    if _date_disp_gk:
+        _d_min_gk, _d_max_gk = min(_date_disp_gk), max(_date_disp_gk)
+        if st.checkbox("📅 Filter by date range (optional)", key=f"gk_usa_date_{chiave_filtro_gk}"):
+            _sel_date_gk = st.date_input("From – To", value=(_d_min_gk, _d_max_gk), min_value=_d_min_gk,
+                                         max_value=_d_max_gk, key=f"gk_date_{chiave_filtro_gk}")
+            if isinstance(_sel_date_gk, (tuple, list)) and len(_sel_date_gk) == 2:
+                db_per_vista = [m for m in db_per_vista
+                                if hasattr(m['data'], 'year') and _sel_date_gk[0] <= m['data'] <= _sel_date_gk[1]]
+            else:
+                st.caption("Pick the end date to apply the filter.")
+
     df_stagione_totale, lista_partite = raccogli_stagione_per_portiere(db_per_vista, nome_portiere)
     if df_stagione_totale.empty:
         st.info("No matches found for this selection — check back after your next game, or try a different league filter.")
@@ -9182,6 +9663,33 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_pct_gk:
         if _disegna_grafico_stagione(dati_per_portiere, 'pct', 'Match Save %', tmp_pct_gk.name):
             st.image(tmp_pct_gk.name, width=1000)
+
+    st.markdown("---")
+    st.subheader("🚦 Saves by Score Situation")
+    st.caption("🟢 saves while your team is ahead · 🟡 saves with the score tied · 🔴 saves while your team is behind. "
+               "Follows the league, date and match filters above.")
+    mostra_situazione_parate(nome_portiere, lista_partite, mostra_nome=False)
+
+    st.markdown("---")
+    st.subheader("📉 Score Margin & My Saves — single match")
+    if lista_partite:
+        _etichette_sm_gk = [p['label'] for p in lista_partite]
+        _label_sm_gk = st.selectbox("Match:", _etichette_sm_gk, index=len(_etichette_sm_gk) - 1,
+                                    key=f"gk_scarto_match_{chiave_filtro_gk}")
+        _entry_sm_gk = next((m for m in db_per_vista
+                             if f"{m['nome']} ({m['data']})" == _label_sm_gk
+                             and (m['dati']['PORTIERE_ID'] == nome_portiere).any()), None)
+        if _entry_sm_gk is not None:
+            _df_gk_sm = _entry_sm_gk['dati'][_entry_sm_gk['dati']['PORTIERE_ID'] == nome_portiere]
+            _punti_gk_sm, _parate_gk_sm = raccogli_traiettoria_e_parate(
+                elenco_df_traiettoria_partita(_entry_sm_gk['nome'], _entry_sm_gk['data'], _entry_sm_gk['dati']), _df_gk_sm)
+            if len(_punti_gk_sm) <= 1:
+                st.info("This match has no tags with a valid timeline and score.")
+            else:
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_sm_gk:
+                    disegna_grafico_scarto_parate(_punti_gk_sm, _parate_gk_sm, _entry_sm_gk.get('squadra_home') or 'Home',
+                                                  _entry_sm_gk.get('squadra_away') or 'Away', tmp_sm_gk.name)
+                    st.image(tmp_sm_gk.name, width=1100)
 
     st.markdown("---")
     st.subheader("⏱️ Performance by 10-minute Block")
@@ -10558,6 +11066,29 @@ with tab2:
             st.caption("🟢 Save/positive Miss   🔴 Goal conceded   🟨 square = Money Time (last 10 real match minutes, score margin between -5 and +5)")
 
             # ============================================================
+            # SEZIONE: SCARTO GOL + PARATE DEI PORTIERI
+            # ============================================================
+            st.markdown("---")
+            st.subheader("📉 Score Margin & Goalkeeper Saves")
+            st.caption("The horizontal axis is a tied score. Above it the home team is ahead, below it the away "
+                       "team. Each dot is a save (one colour per goalkeeper): it sits at the score margin of that "
+                       "moment, with the score on the dot and the exact time on the timeline.")
+            _dfs_traiettoria_sm = elenco_df_traiettoria_partita(nome_match_sel, data_match_sel, df_match)
+            _punti_sm, _parate_sm = raccogli_traiettoria_e_parate(_dfs_traiettoria_sm, df_match)
+            if len(_punti_sm) <= 1:
+                st.info("This match has no tags with a valid timeline and score, so the chart can't be drawn.")
+            else:
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_scarto_screen:
+                    disegna_grafico_scarto_parate(_punti_sm, _parate_sm, squadra_home_match or 'Home',
+                                                  squadra_away_match or 'Away', tmp_scarto_screen.name)
+                    st.image(tmp_scarto_screen.name, width=1100)
+                _anomale_sm = [pa for pa in _parate_sm if pa.get('anomala')]
+                if _anomale_sm:
+                    st.caption("⚠️ Saves marked with '?' have a score that doesn't fit the rest of the match "
+                               "(possible typo in the tag's timeline): " +
+                               ", ".join(f"{pa['portiere']} {_fmt_tempo(pa['secondi'])} ({pa['casa']}-{pa['trasf']})" for pa in _anomale_sm))
+
+            # ============================================================
             # SEZIONE: SEQUENZA CRONOLOGICA DEI TIRI
             # ============================================================
             st.markdown("---")
@@ -10893,7 +11424,8 @@ with tab2:
                             mappe_extra=st.session_state.get('mappe_extra_pdf_match', {}).get(scelta, []),
                             squadra_home=squadra_home_match,
                             squadra_away=squadra_away_match,
-                            partita_completa=partita_completa_sel
+                            partita_completa=partita_completa_sel,
+                            elenco_df_traiettoria=_dfs_traiettoria_sm
                         )
                         nome_file_pdf = f"Report_{scelta}".replace(' ', '_').replace('/', '-') + ".pdf"
                         st.download_button(
@@ -11159,6 +11691,21 @@ with tab3:
             campionato_scelto_gk = dataset_scelto_sr
             db_gk_filtrato = db_sorgente_sr
 
+        # Filtro per intervallo di date (facoltativo, "dalla data X alla data Y"): vale per
+        # l'intero Seasonal Report, quindi anche per i grafici delle parate per situazione.
+        _date_disp_sr = [m['data'] for m in db_gk_filtrato if hasattr(m['data'], 'year')]
+        if _date_disp_sr:
+            _d_min_sr, _d_max_sr = min(_date_disp_sr), max(_date_disp_sr)
+            if st.checkbox("📅 Filter by date range", key="sr_usa_intervallo_date"):
+                _sel_date_sr = st.date_input("From – To", value=(_d_min_sr, _d_max_sr), min_value=_d_min_sr,
+                                             max_value=_d_max_sr, key="sr_intervallo_date")
+                if isinstance(_sel_date_sr, (tuple, list)) and len(_sel_date_sr) == 2:
+                    db_gk_filtrato = [m for m in db_gk_filtrato
+                                      if hasattr(m['data'], 'year') and _sel_date_sr[0] <= m['data'] <= _sel_date_sr[1]]
+                    campionato_scelto_gk = f"{campionato_scelto_gk} ({_sel_date_sr[0]} → {_sel_date_sr[1]})"
+                else:
+                    st.caption("Pick the end date to apply the filter.")
+
         portieri_stagione = sorted(set(
             gk for match in db_gk_filtrato for gk in match['dati']['PORTIERE_ID'].dropna().unique()
         ))
@@ -11266,6 +11813,14 @@ with tab3:
                 generato = _disegna_grafico_stagione(dati_per_portiere, 'pct', 'Match Save %', tmp_pct_screen.name)
                 if generato:
                     st.image(tmp_pct_screen.name, width=1000)
+
+            st.markdown("---")
+            st.subheader("🚦 Saves by Score Situation")
+            st.caption("🟢 saves while the goalkeeper's team is ahead · 🟡 saves with the score tied · "
+                       "🔴 saves while the goalkeeper's team is behind. Follows the championship, date range "
+                       "and match filters above.")
+            for _gk_sit, _lista_sit in dati_per_portiere.items():
+                mostra_situazione_parate(_gk_sit, _lista_sit, mostra_nome=(len(dati_per_portiere) > 1))
 
             st.markdown("---")
             st.subheader("📋 Match History")
