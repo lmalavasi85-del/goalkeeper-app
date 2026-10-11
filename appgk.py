@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -13951,16 +13951,23 @@ with tab7:
                     ""
                 )
                 gk_method_idonei_qui = [g for g in st.session_state['portieri_gk_method'] if g in gk_idonei_us]
+                # v75: niente più "default" legato alla chiave del widget (con la soglia a 1 la lista
+                # poteva restare vuota). La selezione vive in session_state con UNA chiave fissa e viene
+                # RIEMPITA ESPLICITAMENTE con tutti i GK Method idonei ogni volta che cambia il filtro, la
+                # lega o la soglia, oppure premendo il pulsante "Reselect" qui sotto.
+                chiave_vista_gk = "us_gk_method_vista"
+                firma_vista_gk = (modo_filtro_us, dettaglio_filtro_us, soglia_gk_method_us)
+                if st.session_state.get('_us_gk_vista_firma') != firma_vista_gk or chiave_vista_gk not in st.session_state:
+                    st.session_state[chiave_vista_gk] = list(gk_method_idonei_qui)
+                    st.session_state['_us_gk_vista_firma'] = firma_vista_gk
                 elenco_gk_method_vista = st.multiselect(
-                    "GK Method goalkeepers to include in THIS comparison (defaults to everyone eligible "
-                    "above — add or remove individual names just for this view):",
-                    tutti_i_portieri_us, default=gk_method_idonei_qui,
-                    # La chiave include ANCHE la soglia (non solo il filtro/lega): senza,
-                    # cambiando solo la soglia il widget manterrebbe la vecchia selezione — un
-                    # portiere GK Method che diventa idoneo con una soglia più bassa non
-                    # entrerebbe nel gruppo giusto finché non lo si aggiunge a mano, e i suoi
-                    # tiri finirebbero sommati agli "altri" invece che al gruppo GK Method.
-                    key=f"us_gk_method_vista_{modo_filtro_us}_{dettaglio_filtro_us}_{soglia_gk_method_us}"
+                    "GK Method goalkeepers to include in THIS comparison (filled automatically with "
+                    "everyone eligible above — add or remove individual names just for this view):",
+                    tutti_i_portieri_us, key=chiave_vista_gk
+                )
+                st.button(
+                    "🔄 Reselect all eligible GK Method goalkeepers", key="us_gk_method_vista_reset",
+                    on_click=lambda v=list(gk_method_idonei_qui): st.session_state.__setitem__("us_gk_method_vista", v)
                 )
 
                 if not elenco_gk_method_vista:
