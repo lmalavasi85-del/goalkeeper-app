@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -8142,16 +8142,29 @@ def aggiorna_metadati_singola_sessione(id_sessione, lista_sessioni_completa):
             # Caso normale: una sola riga esistente per questo ID — la aggiorno sul posto con
             # 'update', senza toccare nessun'altra riga (a differenza di delete+append, un
             # singolo update in-place è ancora più leggero per una singola riga di metadati).
-            worksheet_meta.update(f"A{indici_riga[0]}:C{indici_riga[0]}", [riga_nuova])
+            # v75: RAW = il testo viene scritto esattamente com'è (niente conversioni automatiche
+            # di Google Sheets), e argomenti con nome (validi in tutte le versioni di gspread).
+            worksheet_meta.update(range_name=f"A{indici_riga[0]}:C{indici_riga[0]}", values=[riga_nuova], value_input_option='RAW')
+            riga_verifica = indici_riga[0]
         elif not indici_riga:
             # Sessione non ancora presente sul foglio (es. appena creata): la aggiungo in fondo.
-            worksheet_meta.append_row(riga_nuova)
+            worksheet_meta.append_row(riga_nuova, value_input_option='RAW')
+            riga_verifica = None
         else:
             # Caso raro/inatteso (più righe per lo stesso ID): torno al salvataggio completo
             # sicuro invece di rischiare di lasciare righe duplicate o incoerenti.
             salva_sessioni_allenamento_su_disco(lista_sessioni_completa)
+            return True
+        # v75: rilettura di controllo — il gruppo/nota appena scritti DEVONO risultare sul foglio.
+        # Se non coincidono lo si dice subito, invece di scoprirlo al ricaricamento successivo.
+        if riga_verifica is not None:
+            celle_lette = worksheet_meta.row_values(riga_verifica)
+            if len(celle_lette) < 3 or celle_lette[0] != id_sessione or json.loads(celle_lette[2]).get('gruppo') != sessione_target.get('gruppo'):
+                raise ValueError("the value read back from Google Sheets is different from the one just written")
+        return True
     except Exception as e:
         st.sidebar.error(f"⚠️ Could not update this session's details on Google Sheets: {e}")
+        return False
 
 def sostituisci_file_singola_sessione(id_sessione, nuovo_file_bytes, lista_sessioni_completa):
     """Sostituisce il PDF/immagine di UNA sola sessione, toccando solo le sue righe nel foglio
@@ -12918,6 +12931,14 @@ with tab5:
                        "exported PDF will only include the cover page, not the original OneNote pages. "
                        "Add `pypdf` to requirements.txt to enable full merging.")
 
+        # v75: i gruppi già assegnati alle sessioni ma assenti dall'elenco (es. elenco gruppi non
+        # caricato o nome diverso) vengono riaggiunti all'elenco IN MEMORIA, così non si perdono
+        # più. Non si scrive nulla su Google Sheets: resta com'era finché non crei/cancelli un gruppo.
+        for _s_h in st.session_state.get('sessioni_allenamento', []):
+            _g_h = _s_h.get('gruppo')
+            if _g_h and _g_h not in st.session_state['gruppi_sessioni_allenamento']:
+                st.session_state['gruppi_sessioni_allenamento'].append(_g_h)
+
         st.markdown("---")
         st.subheader("🗂️ Session groups")
         st.caption("Group your sessions freely (e.g. 'Season 2026-27', 'World Cup Prep') to keep the "
@@ -13087,6 +13108,9 @@ with tab5:
                         st.success(f"{len(nomi_da_rimuovere)} session(s) deleted.")
                         st.rerun()
 
+            _msg_gr = st.session_state.pop('_msg_gruppo_sessione', None)
+            if _msg_gr:
+                (st.error if _msg_gr[0] == "error" else st.success)(_msg_gr[1])
             nomi_squadre_disponibili = sorted(s['nome'] for s in st.session_state['squadre_allenate'])
             for idx_sessione in sessioni_visibili_idx:
                 sessione = st.session_state['sessioni_allenamento'][idx_sessione]
@@ -13100,13 +13124,24 @@ with tab5:
 
                     opzioni_gruppo_sess = ["(no group)"] + st.session_state['gruppi_sessioni_allenamento']
                     gruppo_attuale = sessione.get('gruppo') or "(no group)"
+                    # v75: se il gruppo salvato nella sessione NON è (ancora) nell'elenco dei gruppi
+                    # (elenco non caricato, nome leggermente diverso, ecc.) il menu ricadeva su
+                    # "(no group)" e il codice sotto lo scambiava per una scelta dell'utente,
+                    # CANCELLANDO il gruppo dalla sessione e salvandolo così su Google Sheets.
+                    # Ora il gruppo salvato resta sempre tra le opzioni e non viene mai toccato da solo.
+                    if gruppo_attuale != "(no group)" and gruppo_attuale not in opzioni_gruppo_sess:
+                        opzioni_gruppo_sess = opzioni_gruppo_sess + [gruppo_attuale]
                     gruppo_scelto = st.selectbox("Group", opzioni_gruppo_sess,
                                                   index=opzioni_gruppo_sess.index(gruppo_attuale) if gruppo_attuale in opzioni_gruppo_sess else 0,
                                                   key=f"gruppo_sess_{chiave_sess}")
                     nuovo_gruppo_valore = None if gruppo_scelto == "(no group)" else gruppo_scelto
                     if nuovo_gruppo_valore != sessione.get('gruppo'):
                         st.session_state['sessioni_allenamento'][idx_sessione]['gruppo'] = nuovo_gruppo_valore
-                        aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
+                        _esito_salvataggio_gruppo = aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
+                        if _esito_salvataggio_gruppo is False:
+                            st.session_state['_msg_gruppo_sessione'] = ("error", f"⚠️ Group for '{sessione['nome_sessione']}' NOT saved on Google Sheets (see the sidebar for details).")
+                        else:
+                            st.session_state['_msg_gruppo_sessione'] = ("ok", f"✅ Group saved for '{sessione['nome_sessione']}'.")
                         st.rerun()
 
                     col_pdf1, col_pdf2 = st.columns(2)
