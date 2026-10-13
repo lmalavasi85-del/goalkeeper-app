@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -4353,13 +4353,26 @@ def classifica_tiratori_per_volume(df, solo_money_time=False, n=None):
         d = df.iloc[0:0]
     else:
         d = df[df['Is_Money_Time'] == True] if solo_money_time else df
+    colonne_volume = ['Player', 'Shots / (7m)', 'Goals / (7m)', 'Goal % / Goal % no 7m']
     if d.empty:
-        return pd.DataFrame({'Player': [], 'Shots': [], 'Goals': [], 'Goal %': []})
+        return pd.DataFrame({c: [] for c in colonne_volume})
+    # v78: per ogni giocatore, accanto ai totali compaiono i dati dei soli 7m (tiri e gol) e la % di
+    # realizzazione escludendo i 7m: "Shots / (7m)" = "50 (10)", "Goal %" = "50.0% (44.7%)".
+    if 'macro_settore_tir' in d.columns:
+        e_7m = d['macro_settore_tir'] == '7m'
+    else:
+        e_7m = d['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori) == '7m'
     righe = []
     for giocatore, df_g in d.groupby('TIRATORE_ID'):
         goal, tot, pct = calcola_metriche_tiratori_gruppo(df_g)
-        righe.append({'Player': giocatore, 'Shots': tot, 'Goals': goal, 'Goal %': round(pct, 1)})
-    df_classifica = pd.DataFrame(righe).sort_values('Shots', ascending=False).reset_index(drop=True)
+        maschera_7m = e_7m.loc[df_g.index]
+        df_7m, df_no7m = df_g[maschera_7m], df_g[~maschera_7m]
+        goal_7m, tot_7m = (calcola_metriche_tiratori_gruppo(df_7m)[:2] if not df_7m.empty else (0, 0))
+        pct_no7m = calcola_metriche_tiratori_gruppo(df_no7m)[2] if not df_no7m.empty else None
+        righe.append({'Player': giocatore, '_tot': tot, 'Shots / (7m)': f"{int(tot)} ({int(tot_7m)})",
+                      'Goals / (7m)': f"{int(goal)} ({int(goal_7m)})",
+                      'Goal % / Goal % no 7m': f"{pct:.1f}% (" + (f"{pct_no7m:.1f}%" if pct_no7m is not None else "—") + ")"})
+    df_classifica = pd.DataFrame(righe).sort_values('_tot', ascending=False, kind='stable').drop(columns='_tot').reset_index(drop=True)
     return df_classifica.head(n) if n else df_classifica
 
 def tabella_macro_tiratori(df):
