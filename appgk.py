@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -8884,11 +8884,9 @@ def _colore_soglia_expected_goals(pct_reale, tot_tiri, expected_pct):
     else:
         return colors.HexColor('#43a047')
 
-def tabella_partite_analizzate_pdf(elenco_partite):
-    """elenco_partite: lista di dict con almeno 'nome' e 'data'. Restituisce una singola tabella
-    (mai due affiancate: con molte partite si estende su più pagine, invece di rischiare di
-    uscire dai margini) con le partite ordinate cronologicamente dalla più vecchia alla più
-    recente, data in evidenza."""
+def _ordina_partite_pdf(elenco_partite):
+    """elenco_partite: lista di dict con almeno 'nome' e 'data'. Le restituisce ordinate
+    cronologicamente dalla più vecchia alla più recente (senza data/illeggibile in fondo)."""
     from datetime import date as _date_cls, datetime as _dt_cls
 
     def _chiave_ordinamento(p):
@@ -8910,6 +8908,12 @@ def tabella_partite_analizzate_pdf(elenco_partite):
         return (1, _date_cls.max)
 
     partite_ordinate = sorted(elenco_partite, key=_chiave_ordinamento)
+    return partite_ordinate
+
+def tabella_partite_analizzate_pdf(elenco_partite):
+    """Versione a una colonna (flusso su più pagine) — resta come ultima risorsa per elenchi
+    enormi; il PDF Shooting Trend usa di norma costruisci_pagine_partite_pdf (v77)."""
+    partite_ordinate = _ordina_partite_pdf(elenco_partite)
     n = len(partite_ordinate)
     font_size, padding_v = (10, 5) if n <= 20 else (8, 3)
 
@@ -8938,6 +8942,104 @@ def tabella_partite_analizzate_pdf(elenco_partite):
         ('LEFTPADDING', (0, 0), (-1, -1), 8),
     ]))
     return t
+
+
+def _tabella_partite_a_colonne_pdf(partite_ordinate, n_colonne, font_size, padding_v, larghezza_totale):
+    """v77: tabella partite su 1, 2, 3... colonne affiancate (si legge prima la colonna di
+    sinistra dall'alto in basso, poi la successiva). Date e nomi sono Paragraph: un nome lungo
+    va a capo invece di uscire dai margini."""
+    import math as _math
+    mostra_competizione = any(p.get('competizione') for p in partite_ordinate)
+    spazio = 0.5 * cm
+    larg_col = (larghezza_totale - spazio * (n_colonne - 1)) / n_colonne
+    frazioni = (0.19, 0.50, 0.31) if mostra_competizione else (0.2, 0.8)
+    larghezze = [larg_col * f for f in frazioni]
+    stile_testo = ParagraphStyle('PartitaCella', fontName='Helvetica', fontSize=font_size, leading=font_size * 1.2)
+    stile_data = ParagraphStyle('PartitaData', parent=stile_testo, fontName='Helvetica-Bold')
+    stile_testata = ParagraphStyle('PartitaTestata', parent=stile_testo, fontName='Helvetica-Bold', textColor=colors.white)
+    per_colonna = _math.ceil(len(partite_ordinate) / n_colonne)
+    sotto_tabelle = []
+    for c in range(n_colonne):
+        blocco = partite_ordinate[c * per_colonna:(c + 1) * per_colonna]
+        if not blocco:
+            break
+        testata = ['Date', 'Match'] + (['Competition'] if mostra_competizione else [])
+        dati = [[Paragraph(t, stile_testata) for t in testata]]
+        for p in blocco:
+            riga = [Paragraph(str(p['data']), stile_data), Paragraph(str(p['nome']), stile_testo)]
+            if mostra_competizione:
+                riga.append(Paragraph(str(p.get('competizione') or '—'), stile_testo))
+            dati.append(riga)
+        t = Table(dati, colWidths=larghezze, repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), COLORE_TESTATA_TABELLE),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#eef2f7')]),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), padding_v), ('BOTTOMPADDING', (0, 0), (-1, -1), padding_v),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6 if n_colonne <= 2 else 4), ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+        ]))
+        sotto_tabelle.append(t)
+    if len(sotto_tabelle) == 1:
+        sotto_tabelle[0].hAlign = 'CENTER'
+        return sotto_tabelle[0]
+    celle, larg_outer = [], []
+    for i, t in enumerate(sotto_tabelle):
+        if i:
+            celle.append(''); larg_outer.append(spazio)
+        celle.append(t); larg_outer.append(larg_col)
+    outer = Table([celle], colWidths=larg_outer)
+    outer.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                                ('RIGHTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0),
+                                ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+    return outer
+
+def costruisci_pagine_partite_pdf(elenco_partite, logo_squadra_b64, sezione_stile, larghezza, altezza_pagina1, altezza_pagina_piena):
+    """v77: restituisce una lista di BLOCCHI (uno per pagina) per la sezione "Matches Analyzed".
+    Regola: se logo + titolo + tabella (anche su 2 colonne, con carattere ridotto) entrano nello
+    spazio rimasto in pagina 1, stanno tutti lì. Altrimenti pagina 1 = solo il logo grande e
+    pagina 2 = SOLO la tabella, distribuita su 1-5 colonne con carattere decrescente finché
+    TUTTE le partite stanno in quella pagina (misurato con le altezze reali). Mai pagine bianche."""
+    partite = _ordina_partite_pdf(elenco_partite)
+    margine = 0.35 * cm
+    titolo = Paragraph("Matches Analyzed", sezione_stile)
+    spazio_titolo = Spacer(1, 0.3 * cm)
+
+    def _logo(dim_cm):
+        img = RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)), width=dim_cm * cm, height=dim_cm * cm)
+        img.hAlign = 'CENTER'
+        return img
+
+    def _altezza(flowables):
+        return sum(f.wrap(larghezza, 10000)[1] for f in flowables)
+
+    # Tentativi per "tutto in pagina 1": (colonne, font, padding, logo cm). Il logo non scende sotto 3,5 cm.
+    if logo_squadra_b64:
+        tentativi_p1 = [(1, 10, 5, 6), (1, 10, 4, 5), (2, 10, 5, 5), (2, 9, 4, 4.5), (2, 8, 3, 4), (2, 7, 2, 3.5)]
+    else:
+        tentativi_p1 = [(1, 10, 5, 0), (1, 9, 4, 0), (2, 9, 4, 0), (2, 8, 3, 0), (3, 7, 2, 0), (3, 6, 1.5, 0)]
+    for n_col, font, pad, logo_cm in tentativi_p1:
+        tab = _tabella_partite_a_colonne_pdf(partite, n_col, font, pad, larghezza)
+        pezzi = ([_logo(logo_cm), Spacer(1, 0.5 * cm)] if logo_cm else []) + [titolo, spazio_titolo, tab]
+        if _altezza(pezzi) <= altezza_pagina1 - margine:
+            return [pezzi]
+
+    # Troppe partite: pagina 1 solo logo grande, pagina 2 solo la tabella (tutta intera).
+    blocchi = []
+    if logo_squadra_b64:
+        dim = max(3.0, min(12.0, altezza_pagina1 - margine - 0.5))
+        blocchi.append([Spacer(1, 0.5 * cm), _logo(dim)])
+    tentativi_p2 = [(1, 10, 5), (1, 9, 4), (2, 10, 5), (2, 9, 4), (2, 8, 3), (2, 7, 2), (3, 7, 2),
+                    (3, 6, 1.5), (4, 6, 1.5), (4, 5.5, 1), (5, 5, 1), (6, 4.5, 0.8)]
+    for n_col, font, pad in tentativi_p2:
+        tab = _tabella_partite_a_colonne_pdf(partite, n_col, font, pad, larghezza)
+        pezzi = [titolo, spazio_titolo, tab]
+        if _altezza(pezzi) <= altezza_pagina_piena - margine:
+            blocchi.append(pezzi)
+            return blocchi
+    # Elenco davvero enorme (centinaia di partite): ultima risorsa, tabella a flusso su più pagine.
+    blocchi.append([titolo, spazio_titolo, tabella_partite_analizzate_pdf(elenco_partite)])
+    return blocchi
 
 def calcola_tabelle_duelli(df, soglia_tiri_minimi=6):
     """Per ogni giocatore e ogni micro-zona con almeno soglia_tiri_minimi tiri, confronta la %
@@ -9112,24 +9214,18 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
     # cronologico. Condivide la pagina fisica con blocco_titolo (nessun salto pagina prima);
     # tutto il resto (General Shot Map compresa) riceve il proprio salto pagina di conseguenza.
     if elenco_partite_analizzate:
-        n_partite_pdf = len(elenco_partite_analizzate)
-        pagina_matches = []
-        if logo_squadra_b64:
-            # Con molte partite la tabella ha bisogno di più spazio verticale: il logo si
-            # restringe un po', ma resta sempre presente e ben visibile.
-            dimensione_logo_grande = 6 * cm if n_partite_pdf <= 20 else (4 * cm if n_partite_pdf <= 40 else 3 * cm)
-            img_logo_grande = RLImage(io.BytesIO(foto_base64_a_bytes(logo_squadra_b64)),
-                                       width=dimensione_logo_grande, height=dimensione_logo_grande)
-            img_logo_grande.hAlign = 'CENTER'
-            pagina_matches.append(img_logo_grande)
-            pagina_matches.append(Spacer(1, 0.5 * cm))
-        pagina_matches.append(Paragraph("Matches Analyzed", sezione_stile))
-        pagina_matches.append(Spacer(1, 0.3 * cm))
-        pagina_matches.append(tabella_partite_analizzate_pdf(elenco_partite_analizzate))
-        # KeepTogether: logo, titolo e tabella devono restare SEMPRE sulla prima pagina, mai
-        # spezzati tra due — la tabella stessa si restringe/divide in due colonne per questo
-        # motivo già dentro tabella_partite_analizzate_pdf.
-        blocchi_pagine.append([KeepTogether(pagina_matches)])
+        # v77: la sezione si adatta da sola (vedi costruisci_pagine_partite_pdf): tutto in pagina 1
+        # se entra (tabella anche su 2 colonne), altrimenti pagina 1 = logo grande e pagina 2 =
+        # tutta la tabella. Le altezze disponibili tengono conto di titolo e dell'eventuale avviso.
+        _larghezza_utile = doc.width
+        _altezza_utile = doc.height - 12   # 6 pt di margine interno in alto e in basso del frame
+        _h_titolo = blocco_titolo.wrap(_larghezza_utile, 10000)[1] + 0.5 * cm
+        if not partita_completa:
+            _h_titolo += 2.4 * cm   # avviso "PARTIAL DATA" + spazio
+        for blocco_partite in costruisci_pagine_partite_pdf(
+                elenco_partite_analizzate, logo_squadra_b64, sezione_stile, _larghezza_utile,
+                _altezza_utile - _h_titolo, _altezza_utile):
+            blocchi_pagine.append(blocco_partite)
 
     if df_squadra_riepilogo is not None and not df_squadra_riepilogo.empty:
         # Mappa generale di squadra (porta + tastiera con heat map) — riceve un salto pagina
