@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -14015,11 +14015,17 @@ with tab7:
                                 st.dataframe(df_mostrata, use_container_width=True, hide_index=True)
             return includi, sotto_tabelle_filtrate
 
-        gen_gk_us, sotto_gk_us = classifiche_portieri_universale(df_universale, soglia_tiri_minimi=100)
+        # v79: soglia modificabile (qualsiasi valore da 1 in su); di default resta 100 tiri subiti.
+        st.markdown("---")
+        soglia_gk_rank_us = st.number_input(
+            "🧤 Goalkeeper Rankings — minimum shots faced to be ranked (default 100):",
+            min_value=1, max_value=100000, value=100, step=1, key="us_soglia_rank_portieri"
+        )
+        gen_gk_us, sotto_gk_us = classifiche_portieri_universale(df_universale, soglia_tiri_minimi=int(soglia_gk_rank_us))
         includi_pdf_gk_rank, sotto_gk_us = _mostra_classifica_con_sottotabelle(
             gen_gk_us, sotto_gk_us, "🧤 Goalkeeper Rankings",
-            "Only goalkeepers with at least 100 total shots faced in this selection are ranked — "
-            "sorted by Save %, then Efficiency %, then shots faced. The same 100-shot threshold "
+            f"Only goalkeepers with at least {int(soglia_gk_rank_us)} total shots faced in this selection are ranked — "
+            "sorted by Save %, then Efficiency %, then shots faced. The same threshold "
             "(on the TOTAL, not per macro-sector) applies to every macro-sector breakdown below too.",
             "us_pdf_include_gk_rank"
         )
@@ -14036,7 +14042,7 @@ with tab7:
                    "the SAME filter selected up in '🔍 Filters' too (currently: "
                    f"**{modo_filtro_us}**) — to limit this comparison to a single league, change that "
                    "filter to 'Championship' and pick it there. The minimum shots threshold below is "
-                   "set independently from the 100-shot ranking above.")
+                   "set independently from the Goalkeeper Rankings threshold above.")
 
         # L'elenco per scegliere i portieri GK Method include TUTTI quelli mai caricati in
         # tutto il software, non solo quelli nel filtro attuale — così se ne può segnare uno
@@ -14067,10 +14073,10 @@ with tab7:
             # media (non una classifica per merito individuale), ha senso poter includere anche
             # portieri con meno tiri, se Luigi lo decide esplicitamente.
             soglia_gk_method_us = st.number_input(
-                "Minimum shots threshold for THIS comparison (unlocked from the 100-shot ranking "
+                "Minimum shots threshold for THIS comparison (independent from the Goalkeeper Rankings threshold "
                 "above — applies to BOTH sides, GK Method and everyone else; lower it to also "
                 "include goalkeepers with fewer shots on both):",
-                min_value=1, max_value=1000, value=100, step=10, key="us_gk_method_soglia"
+                min_value=1, max_value=100000, value=100, step=1, key="us_gk_method_soglia"
             )
             totali_per_gk_us = df_universale.groupby('PORTIERE_ID').size()
             gk_idonei_us = set(totali_per_gk_us[totali_per_gk_us >= soglia_gk_method_us].index)
@@ -14190,11 +14196,17 @@ with tab7:
                                     'tipo': 'confronto_gk_method', 'titolo': 'GK Method Comparison', 'tabelle': tabelle_scelte_gk
                                 })
 
-        gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=20)
+        # v79: soglia modificabile (qualsiasi valore da 1 in su); di default resta 20 tiri effettuati.
+        st.markdown("---")
+        soglia_tir_rank_us = st.number_input(
+            "🎯 Shooter Rankings — minimum shots taken to be ranked (default 20):",
+            min_value=1, max_value=100000, value=20, step=1, key="us_soglia_rank_tiratori"
+        )
+        gen_tir_us, sotto_tir_us = classifiche_tiratori_universale(df_tiratori_universale, soglia_tiri_minimi=int(soglia_tir_rank_us))
         includi_pdf_shooter_rank, sotto_tir_us = _mostra_classifica_con_sottotabelle(
             gen_tir_us, sotto_tir_us, "🎯 Shooter Rankings",
-            "Only shooters with at least 20 total shots taken in this selection are ranked — "
-            "sorted by Goal %, then shots taken. The same 20-shot threshold (on the TOTAL, not "
+            f"Only shooters with at least {int(soglia_tir_rank_us)} total shots taken in this selection are ranked — "
+            "sorted by Goal %, then shots taken. The same threshold (on the TOTAL, not "
             "per macro-sector) applies to every macro-sector breakdown below too.",
             "us_pdf_include_shooter_rank"
         )
