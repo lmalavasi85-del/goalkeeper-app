@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -5952,6 +5952,12 @@ def aggiungi_partita_categoria_alt(match):
     caricamento costa 1 sola chiamata di scrittura invece di riscrivere tutto ogni volta."""
     if 'categoria_alt_db' not in st.session_state:
         st.session_state['categoria_alt_db'] = _migra_money_time_db(carica_categoria_alt_da_disco(), 'gk')
+    try:   # v81: codice "Disambiguate Players" subito sulla partita appena aggiunta
+        applica_disambiguazioni_a_colonna(match['dati'], 'PORTIERE_ID', match.get('squadra'),
+                                          chiave_partita(match.get('nome'), match.get('data')),
+                                          st.session_state.get('disambiguazioni_giocatori', {}))
+    except Exception:
+        pass
     st.session_state['categoria_alt_db'].append(match)
     try:
         with open(ALT_CATEGORY_FILE, 'wb') as _f_backup_preventivo:
@@ -10330,6 +10336,9 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                         aggiungi_partita_categoria_alt(match)
                         chiavi_alt.add(chiave)
                         agg_alt += 1
+                # v81: le partite appena caricate prendono subito i codici di "Disambiguate Players" (es. Garcia#001):
+                # prima li ricevevano solo al riavvio dell'app
+                riapplica_disambiguazioni_a_tutti_i_dati()
                 salva_stagione_su_disco(st.session_state['db'])
                 salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
                 salva_h2h_su_disco(st.session_state['db_h2h'])
@@ -10412,6 +10421,7 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                     elif not match_z['df_tir'].empty:
                         duplicati_z += 1
 
+                riapplica_disambiguazioni_a_tutti_i_dati()   # v81: codici "Disambiguate Players" subito anche qui
                 salva_stagione_su_disco(st.session_state['db'])
                 salva_stagione_tiratori_su_disco(st.session_state['db_tiratori'])
 
@@ -10969,6 +10979,7 @@ Concrete example: `Merano-Brixen 23-8-2026.xlsx` → home team **Merano**, away 
                         salva_loghi_squadra_su_disco(st.session_state['loghi_squadre'])
                         salva_alias_giocatori_su_disco(st.session_state['gruppi_alias'])
                         riapplica_alias_a_tutti_i_dati()
+                        riapplica_disambiguazioni_a_tutti_i_dati()   # v81: dopo gli alias, come all'avvio
                         st.success(f"Restored {agg_gk} goalkeeper record(s), {agg_tir} shooter record(s), "
                                    f"{agg_h2h} head-to-head match(es), {agg_tp} goalkeeper own-shot match(es), "
                                    f"{agg_foto} photo(s), {agg_note} note(s), "
