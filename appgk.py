@@ -2449,24 +2449,49 @@ def analizza_timeline(timeline_str):
 
     return minuti_totali, timeline_normalizzata, scarto, punteggio_pulito
 
-def calcola_gpi_riga(macro, esito, minuti, scarto, money_time_manuale=None):
+def scarto_prima_del_tiro(scarto, esito, lato_tiratore=None):
+    """Scarto punteggio (casa - trasferta) nel momento in cui il tiro viene effettuato, PRIMA di
+    conoscerne l'esito. Il punteggio scritto nella timeline è quello DOPO il tiro: su save/miss
+    non cambia, ma su un GOAL contiene già la rete appena segnata, quindi va tolta:
+      - ha segnato la squadra di casa (lato_tiratore='home')      -> scarto - 1
+      - ha segnato la squadra in trasferta (lato_tiratore='away') -> scarto + 1
+    Restituisce un numero (lato noto) oppure None se è un goal e il lato non è determinabile
+    (in quel caso chi chiama deve usare la regola prudente, vedi money_time_da_scarto)."""
+    e = str(esito).lower().strip() if esito is not None else ''
+    if e in ('goal', 'g'):
+        if lato_tiratore == 'home':
+            return scarto - 1
+        if lato_tiratore == 'away':
+            return scarto + 1
+        return None
+    return scarto
+
+def money_time_da_scarto(minuti, scarto, esito=None, lato_tiratore=None):
+    """REGOLA UNICA del Money Time: dal minuto 50'00'' in avanti, con lo scarto punteggio
+    compreso tra -5 e +5 PRIMA del tiro (senza contare l'esito del tiro taggato).
+    Se è un goal e non si sa quale squadra ha tirato, non si può ricostruire il punteggio
+    prima del tiro: si conta Money Time solo se lo è in ENTRAMBE le ipotesi (prudente)."""
+    if minuti < 50:
+        return False
+    e = str(esito).lower().strip() if esito is not None else ''
+    prima = scarto_prima_del_tiro(scarto, e, lato_tiratore)
+    if prima is None:
+        return (-5 <= scarto - 1 <= 5) and (-5 <= scarto + 1 <= 5)
+    return -5 <= prima <= 5
+
+def calcola_gpi_riga(macro, esito, minuti, scarto, money_time_manuale=None, lato_tiratore=None):
     e = str(esito).lower().strip()
-    # Money Time = SOLO dal minuto 50'00'' in avanti (soglia fissa), con lo scarto punteggio
-    # ENTRO -5/+5 nel momento in cui il tiro viene effettuato — PRIMA di conoscerne l'esito.
-    # Il punteggio scritto nella timeline è invece quello DOPO il tiro: su save/miss il
-    # punteggio non cambia (la forbice -5/+5 letta così com'è resta corretta), ma su goal il
-    # punteggio in timeline riflette già la rete appena segnata — quindi va letta una forbice
-    # più larga, da -6 a +6, per includere correttamente anche i tiri effettuati esattamente
-    # al limite (es. un goal segnato sul -5 diventa -6 nella timeline).
+    # Money Time = SOLO dal minuto 50'00'' in avanti, con lo scarto punteggio ENTRO -5/+5 nel
+    # momento in cui il tiro viene effettuato — PRIMA di conoscerne l'esito (vedi
+    # money_time_da_scarto). lato_tiratore ('home'/'away') serve per togliere dal punteggio
+    # della timeline la rete appena segnata quando l'esito è goal.
     # money_time_manuale: se non None, un coach/ragazzo l'ha segnato lui stesso al momento del
     # tagging (es. il Video Tagger per i giovani, dove non c'è un vero minuto/punteggio da cui
     # calcolarlo) — quel valore vince sempre sul calcolo automatico sottostante.
     if money_time_manuale is not None:
         is_money_time = money_time_manuale
-    elif e in ['goal', 'g']:
-        is_money_time = (minuti >= 50) and (-6 <= scarto <= 6)
     else:
-        is_money_time = (minuti >= 50) and (-5 <= scarto <= 5)
+        is_money_time = money_time_da_scarto(minuti, scarto, e, lato_tiratore)
     
     punti = 0.0
     if e in ['goal', 'g']:
@@ -3543,7 +3568,7 @@ def _ricalcola_blocco_10m(df):
         )
     return df
 
-def elabora_file_portieri(df_raw):
+def elabora_file_portieri(df_raw, lato_tiratore=None):
     """Prende il DataFrame grezzo (colonne tipo PORTIERE/GK, TIRO, RESULT, TIMELINE) e
     restituisce il DataFrame arricchito con tutte le colonne calcolate (GPI, Money Time, ecc.).
     GOAL SECTOR (per la porta a 9 settori) e le colonne di tagging avanzato sono facoltative:
@@ -3604,8 +3629,11 @@ def elabora_file_portieri(df_raw):
     ha_money_time_manuale = 'MONEY_TIME_MANUALE' in df.columns
     for _, row in df.iterrows():
         mt_manuale = row['MONEY_TIME_MANUALE'] if ha_money_time_manuale else None
+        if mt_manuale is not None and pd.isna(mt_manuale):
+            mt_manuale = None
         gp_val, str_bool = calcola_gpi_riga(row['macro_settore'], row['RESULT_CLEAN'], row['Minuti_Gara'],
-                                             row['Scarto_Punteggio'], money_time_manuale=mt_manuale)
+                                             row['Scarto_Punteggio'], money_time_manuale=mt_manuale,
+                                             lato_tiratore=lato_tiratore)
         gpi_list.append(gp_val)
         stress_list.append(str_bool)
     df['GPI_Tiro'] = gpi_list
@@ -3644,17 +3672,12 @@ def elabora_file_portieri(df_raw):
 # ============================================================
 # TIRATORI: PARSING FILE, METRICHE, TOP SCORERS, MACRO-SETTORI
 # ============================================================
-def calcola_money_time_flag(minuti, scarto, esito=None):
-    """Stessa logica di calcola_gpi_riga: il punteggio in timeline è quello DOPO il tiro, quindi
-    su un tiro andato a segno (goal) la forbice va letta più larga (-6/+6) per includere anche i
-    tiri effettuati esattamente al limite -5/+5, dato che il gol appena segnato ha già spostato
-    il punteggio di 1 nella timeline."""
-    e = str(esito).lower().strip() if esito is not None else ''
-    if e in ('goal', 'g'):
-        return (minuti >= 50) and (-6 <= scarto <= 6)
-    return (minuti >= 50) and (-5 <= scarto <= 5)
+def calcola_money_time_flag(minuti, scarto, esito=None, lato_tiratore=None):
+    """Stessa regola di calcola_gpi_riga (money_time_da_scarto): scarto tra -5 e +5 PRIMA del
+    tiro; su un goal si toglie dal punteggio in timeline la rete appena segnata."""
+    return money_time_da_scarto(minuti, scarto, esito, lato_tiratore)
 
-def elabora_file_tiratori(df_raw):
+def elabora_file_tiratori(df_raw, lato_tiratore=None):
     """Prende il DataFrame grezzo letto da un file Excel dei tiratori (TIRATORE, TIRO,
     GOAL SECTOR, RESULT, TIMELINE) e restituisce il DataFrame arricchito con tutte le colonne
     calcolate necessarie al resto dell'app. Solleva ValueError se manca una colonna essenziale."""
@@ -3701,7 +3724,7 @@ def elabora_file_tiratori(df_raw):
     df['Punteggio_Live'] = punteggi_list
 
     df['macro_settore_tir'] = df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori)
-    df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio'], r['RESULT_CLEAN']), axis=1)
+    df['Is_Money_Time'] = df.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio'], r['RESULT_CLEAN'], lato_tiratore), axis=1)
     # Blocco 'None' (non '0-10') quando non c'è una timeline valida per questo tiro — altrimenti
     # ogni tiro senza minuto finirebbe erroneamente nel primo blocco, falsando grafico e tabella.
     df['Blocco_10m'] = df.apply(
@@ -3870,20 +3893,22 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
             riga_h2h.update(valori_avanzati_tir)
             righe_h2h.append(riga_h2h)
 
-    def _elabora_o_vuoto_gk(righe):
+    def _elabora_o_vuoto_gk(righe, lato_tiratore):
         if not righe:
             return pd.DataFrame()
-        return elabora_file_portieri(pd.DataFrame(righe))
+        return elabora_file_portieri(pd.DataFrame(righe), lato_tiratore=lato_tiratore)
 
-    def _elabora_o_vuoto_tir(righe):
+    def _elabora_o_vuoto_tir(righe, lato_tiratore):
         if not righe:
             return pd.DataFrame()
-        return elabora_file_tiratori(pd.DataFrame(righe))
+        return elabora_file_tiratori(pd.DataFrame(righe), lato_tiratore=lato_tiratore)
 
-    df_gk_home = _elabora_o_vuoto_gk(righe_gk_home)
-    df_gk_away = _elabora_o_vuoto_gk(righe_gk_away)
-    df_tir_home = _elabora_o_vuoto_tir(righe_tir_home)
-    df_tir_away = _elabora_o_vuoto_tir(righe_tir_away)
+    # Il portiere di casa subisce i tiri della trasferta e viceversa: serve per ricostruire il
+    # punteggio PRIMA del tiro (Money Time) quando l'esito è goal.
+    df_gk_home = _elabora_o_vuoto_gk(righe_gk_home, 'away')
+    df_gk_away = _elabora_o_vuoto_gk(righe_gk_away, 'home')
+    df_tir_home = _elabora_o_vuoto_tir(righe_tir_home, 'home')
+    df_tir_away = _elabora_o_vuoto_tir(righe_tir_away, 'away')
 
     if righe_h2h:
         df_h2h = pd.DataFrame(righe_h2h)
@@ -3907,7 +3932,9 @@ def elabora_file_unificato(df_raw, squadra_home, squadra_away):
             scarti_list.append(sc)
         df_h2h['Minuti_Gara'] = minuti_list
         df_h2h['Scarto_Punteggio'] = scarti_list
-        df_h2h['Is_Money_Time'] = df_h2h.apply(lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio'], r['RESULT_CLEAN']), axis=1)
+        df_h2h['Is_Money_Time'] = df_h2h.apply(
+            lambda r: calcola_money_time_flag(r['Minuti_Gara'], r['Scarto_Punteggio'], r['RESULT_CLEAN'],
+                                              'home' if r['Squadra_Tiratore'] == squadra_home else 'away'), axis=1)
         colonne_base_h2h = ['PORTIERE_CLEAN', 'TIRATORE_CLEAN', 'PORTIERE_ID', 'TIRATORE_ID', 'Squadra_Portiere', 'Squadra_Tiratore',
                              'TIRO_CLEAN', 'RESULT_CLEAN', 'GOAL_SECTOR_CLEAN', 'macro_settore_tir', 'Is_Empty_Goal',
                              'Minuti_Gara', 'Scarto_Punteggio', 'Is_Money_Time']
@@ -5924,7 +5951,7 @@ def aggiungi_partita_categoria_alt(match):
     (append), non l'intero foglio — stesso principio già applicato ai link YouTube: ogni
     caricamento costa 1 sola chiamata di scrittura invece di riscrivere tutto ogni volta."""
     if 'categoria_alt_db' not in st.session_state:
-        st.session_state['categoria_alt_db'] = carica_categoria_alt_da_disco()
+        st.session_state['categoria_alt_db'] = _migra_money_time_db(carica_categoria_alt_da_disco(), 'gk')
     st.session_state['categoria_alt_db'].append(match)
     try:
         with open(ALT_CATEGORY_FILE, 'wb') as _f_backup_preventivo:
@@ -5963,6 +5990,81 @@ def _correggi_gpi_empty_goal(df):
         df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5 + df.loc[maschera_eg_save, 'Is_Stress_Test'].fillna(False).astype(float) * 0.5
     else:
         df.loc[maschera_eg_save, 'GPI_Tiro'] = 0.5
+
+
+# ============================================================
+# CORREZIONE MONEY TIME SULLE PARTITE GIÀ SALVATE
+# Regola corretta: dal 50' con scarto tra -5 e +5 PRIMA del tiro (senza contare l'esito del
+# tiro taggato). Le partite salvate in passato avevano, sui GOAL, il Money Time calcolato sul
+# punteggio DOPO il gol (forbice ±6). Ad ogni caricamento si ricalcolano Is_Stress_Test/GPI_Tiro
+# (portieri) e Is_Money_Time (tiratori, testa a testa) dai dati grezzi già salvati.
+# ============================================================
+def _ricalcola_money_time_gk(df, lato_portiere):
+    """Ricalcola IN-PLACE Is_Stress_Test e GPI_Tiro di un dataframe portieri. lato_portiere è
+    'home'/'away' (squadra del portiere) o None se non determinabile. Ritorna il numero di tiri
+    goal il cui lato non era determinabile e dove la regola prudente può dare un risultato diverso."""
+    colonne = ['macro_settore', 'RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio']
+    if df is None or df.empty or any(c not in df.columns for c in colonne):
+        return 0
+    lato_tiratore = {'home': 'away', 'away': 'home'}.get(lato_portiere)
+    ha_manuale = 'MONEY_TIME_MANUALE' in df.columns
+    gpi, stress, ambigui = [], [], 0
+    for _, r in df.iterrows():
+        mm = r['MONEY_TIME_MANUALE'] if ha_manuale else None
+        if mm is not None and pd.isna(mm):
+            mm = None
+        g, s_ = calcola_gpi_riga(r['macro_settore'], r['RESULT_CLEAN'], r['Minuti_Gara'], r['Scarto_Punteggio'],
+                                 money_time_manuale=mm, lato_tiratore=lato_tiratore)
+        gpi.append(g); stress.append(bool(s_))
+        if (mm is None and lato_tiratore is None and str(r['RESULT_CLEAN']).lower().strip() in ('goal', 'g')
+                and r['Minuti_Gara'] >= 50 and abs(r['Scarto_Punteggio']) in (4, 5, 6)):
+            ambigui += 1
+    df['GPI_Tiro'] = gpi
+    df['Is_Stress_Test'] = stress
+    _correggi_gpi_empty_goal(df)     # porta vuota: stessi valori di sempre (0 / 0.5 / 1 in Money Time)
+    return ambigui
+
+def _ricalcola_money_time_tir(df, lato_tiratore):
+    if df is None or df.empty or any(c not in df.columns for c in ['RESULT_CLEAN', 'Minuti_Gara', 'Scarto_Punteggio']):
+        return 0
+    df['Is_Money_Time'] = [bool(calcola_money_time_flag(m, sc, e, lato_tiratore))
+                           for m, sc, e in zip(df['Minuti_Gara'], df['Scarto_Punteggio'], df['RESULT_CLEAN'])]
+    ambigui = 0
+    if lato_tiratore is None:
+        ambigui = int(sum(1 for m, sc, e in zip(df['Minuti_Gara'], df['Scarto_Punteggio'], df['RESULT_CLEAN'])
+                          if str(e).lower().strip() in ('goal', 'g') and m >= 50 and abs(sc) in (4, 5, 6)))
+    return ambigui
+
+def _migra_money_time_db(db, tipo):
+    """Applica la regola corretta del Money Time a tutte le partite caricate dal disco.
+    tipo: 'gk' (stagione portieri / categorie separate), 'tir' (stagione tiratori), 'h2h'."""
+    ambigue = []
+    for m in (db or []):
+        try:
+            df = m.get('dati')
+            if df is None or not hasattr(df, 'columns'):
+                continue
+            if tipo == 'h2h':
+                if df.empty or 'Squadra_Tiratore' not in df.columns or 'Squadra_Portiere' not in df.columns:
+                    continue
+                squadre = [x for x in pd.unique(pd.concat([df['Squadra_Tiratore'], df['Squadra_Portiere']])) if isinstance(x, str) and x]
+                nome = str(m.get('nome', '')).strip().lower()
+                home = next((x for x in squadre if nome.startswith(x.strip().lower())), None)
+                if home is None:
+                    continue
+                df['Is_Money_Time'] = [bool(calcola_money_time_flag(mi, sc, e, 'home' if t == home else 'away'))
+                                       for mi, sc, e, t in zip(df['Minuti_Gara'], df['Scarto_Punteggio'], df['RESULT_CLEAN'], df['Squadra_Tiratore'])]
+                continue
+            lato = determina_casa_trasferta(m.get('squadra'), m.get('squadra_home'), m.get('squadra_away'))
+            n_amb = _ricalcola_money_time_gk(df, lato) if tipo == 'gk' else _ricalcola_money_time_tir(df, lato)
+            if n_amb:
+                ambigue.append(f"{m.get('nome', '?')} ({m.get('squadra', '?')}): {n_amb}")
+        except Exception as e:
+            print(f"[money time] partita saltata: {e}")
+    if ambigue:
+        st.session_state.setdefault('_money_time_lato_ambiguo', [])
+        st.session_state['_money_time_lato_ambiguo'] = list(dict.fromkeys(st.session_state['_money_time_lato_ambiguo'] + ambigue))
+    return db
 
 def carica_stagione_da_disco():
     if _google_sheets_configurato():
@@ -8470,19 +8572,19 @@ def _carica_con_timing(etichetta, funzione_caricamento):
     return risultato
 
 if 'db' not in st.session_state:
-    st.session_state['db'] = _carica_con_timing('season (goalkeepers)', carica_stagione_da_disco)
+    st.session_state['db'] = _carica_con_timing('season (goalkeepers)', lambda: _migra_money_time_db(carica_stagione_da_disco(), 'gk'))
     for _m in st.session_state['db']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'categoria_alt_db' not in st.session_state:
-    st.session_state['categoria_alt_db'] = _carica_con_timing('separate categories', carica_categoria_alt_da_disco)
+    st.session_state['categoria_alt_db'] = _carica_con_timing('separate categories', lambda: _migra_money_time_db(carica_categoria_alt_da_disco(), 'gk'))
     for _m in st.session_state['categoria_alt_db']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'GOAL_SECTOR_CLEAN')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
 if 'db_tiratori' not in st.session_state:
-    st.session_state['db_tiratori'] = _carica_con_timing('season (shooters)', carica_stagione_tiratori_da_disco)
+    st.session_state['db_tiratori'] = _carica_con_timing('season (shooters)', lambda: _migra_money_time_db(carica_stagione_tiratori_da_disco(), 'tir'))
     for _m in st.session_state['db_tiratori']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'TIRATORE_CLEAN', 'TIRATORE_ID')
         _m['dati'] = assicura_colonna_vuota(_m['dati'], 'Is_Empty_Goal', False)
@@ -8503,10 +8605,15 @@ if 'matches_analyzed_manuali' not in st.session_state:
 if 'foto_giocatori' not in st.session_state:
     st.session_state['foto_giocatori'] = _carica_con_timing('player photos', carica_foto_da_disco)
 if 'db_h2h' not in st.session_state:
-    st.session_state['db_h2h'] = _carica_con_timing('head-to-head data', carica_h2h_da_disco)
+    st.session_state['db_h2h'] = _carica_con_timing('head-to-head data', lambda: _migra_money_time_db(carica_h2h_da_disco(), 'h2h'))
     for _m in st.session_state['db_h2h']:
         _m['dati'] = assicura_colonna_id(_m['dati'], 'PORTIERE_CLEAN', 'PORTIERE_ID')
         _m['dati'] = assicura_colonna_id(_m['dati'], 'TIRATORE_CLEAN', 'TIRATORE_ID')
+if st.session_state.get('_money_time_lato_ambiguo'):
+    st.sidebar.warning(
+        "⚠️ Money Time: for these matches I could not tell if the shooter's team was home or away "
+        "(team name does not match the file name), so some goals near the ±5 limit were treated "
+        "conservatively (not Money Time): " + "; ".join(st.session_state['_money_time_lato_ambiguo'][:8]))
 if 'db_tiro_portiere' not in st.session_state:
     st.session_state['db_tiro_portiere'] = _carica_con_timing('goalkeeper own-shot data', carica_tiro_portiere_da_disco)
     for _m in st.session_state['db_tiro_portiere']:
