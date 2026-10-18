@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1453,13 +1453,19 @@ def _classifica_portieri_da_df(df_gk_subset):
     for gk, df_gk in df_gk_subset.groupby('PORTIERE_ID'):
         s, g, m, pct, eff = calcola_metriche_gruppo(df_gk)
         _, _, _, pct_noeg, eff_noeg = calcola_metriche_gruppo_no_eg(df_gk)
+        # v82: l'ordine si basa sui valori ESATTAMENTE come li vede l'utente (percentuali intere): due portieri con lo
+        # stesso "33%" sono in parità anche se i decimali nascosti sono diversi (prima i decimali decidevano al posto
+        # dell'efficacia, e la classifica sembrava sbagliata).
+        _int = lambda v: int(f"{v:.0f}")
         righe.append({'Goalkeeper': gk, 'Save %': round(pct, 1), 'Saves': s, 'OnTarget': s + g,
                        'Efficiency %': round(eff, 1), 'EffNum': s + m,
                        'Save % excl. EG': f"{pct_noeg:.0f}%", 'Efficiency % excl. EG': f"{eff_noeg:.0f}%",
-                       'Shots Faced': len(df_gk)})
+                       'Shots Faced': len(df_gk),
+                       '_k1': _int(pct), '_k2': _int(eff), '_k3': _int(pct_noeg), '_k4': _int(eff_noeg)})
     df_r = pd.DataFrame(righe)
-    df_r = df_r.sort_values(by=['Save %', 'Efficiency %', 'Shots Faced', 'Goalkeeper'],
-                             ascending=[False, False, False, True]).reset_index(drop=True)
+    # criteri: 1) Save %  2) Efficiency %  3) Save % senza EG  4) Efficiency % senza EG  5) più tiri subiti davanti
+    df_r = df_r.sort_values(by=['_k1', '_k2', '_k3', '_k4', 'Shots Faced', 'Goalkeeper'],
+                             ascending=[False, False, False, False, False, True]).reset_index(drop=True)
     df_r['Save % (Shots)'] = df_r.apply(
         lambda r: f"{int(r['Saves'])}/{int(r['OnTarget'])} = {r['Save %']:.0f}%" if r['OnTarget'] > 0 else "0/0 = 0%", axis=1)
     df_r['Efficiency % (Shots)'] = df_r.apply(
@@ -9959,7 +9965,7 @@ def mostra_vista_portiere(nome_portiere, modalita_anteprima=False):
         df_lega = pd.concat(frammenti_lega, ignore_index=True) if frammenti_lega else pd.DataFrame()
         gen_gk_lega, sotto_gk_lega = classifiche_portieri_universale(df_lega, soglia_tiri_minimi=100)
         st.caption("Only goalkeepers with at least 100 total shots faced in this league are ranked — "
-                   "sorted by Save %, then Efficiency %, then shots faced. The same 100-shot threshold "
+                   "sorted by Save %, then Efficiency %, then Save % excl. EG, then Efficiency % excl. EG, then shots faced (percentages compared as displayed, whole numbers). The same 100-shot threshold "
                    "(on the TOTAL, not per macro-sector) applies to every macro-sector breakdown below too.")
         if gen_gk_lega.empty:
             st.info("No one meets the minimum shots threshold in this league yet.")
@@ -14143,7 +14149,7 @@ with tab7:
         includi_pdf_gk_rank, sotto_gk_us = _mostra_classifica_con_sottotabelle(
             gen_gk_us, sotto_gk_us, "🧤 Goalkeeper Rankings",
             f"Only goalkeepers with at least {int(soglia_gk_rank_us)} total shots faced in this selection are ranked — "
-            "sorted by Save %, then Efficiency %, then shots faced. The same threshold "
+            "sorted by Save %, then Efficiency %, then Save % excl. EG, then Efficiency % excl. EG, then shots faced (percentages compared as displayed, whole numbers). The same threshold "
             "(on the TOTAL, not per macro-sector) applies to every macro-sector breakdown below too.",
             "us_pdf_include_gk_rank"
         )
