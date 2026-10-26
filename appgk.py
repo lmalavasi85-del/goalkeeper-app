@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -1841,10 +1841,57 @@ def mappa_macro_settore_tiratori(zona):
         return m.group(2)
     return None
 
-def selettore_macro_zona(key_prefix, etichetta="Focus on a macro-zone (optional):"):
+def _come_lista(x):
+    """None / '' -> []; un valore singolo -> [valore]; lista/insieme -> lista. Serve ai filtri a selezione multipla
+    (macro-zone, macro-sector, settori di campo) che possono arrivare come un solo valore o come più valori."""
+    if x is None or x == '':
+        return []
+    if isinstance(x, (list, tuple, set, frozenset)):
+        return [i for i in x if i is not None and i != '']
+    return [x]
+
+def _tasti_lista(v):
+    """Normalizza lo stato dei settori di campo scelti (microsettori) in una lista di tasti validi."""
+    return [t for t in _come_lista(v) if t in TUTTI_I_TASTI_TIRATORI]
+
+def _toggle_tasto(lista, tasto):
+    """Aggiunge il microsettore cliccato alla selezione, o lo toglie se c'era già."""
+    lista = _tasti_lista(lista)
+    return [t for t in lista if t != tasto] if tasto in lista else lista + [tasto]
+
+def _txt_tasti(lista):
+    return " + ".join(_come_lista(lista))
+
+def _expected_multi(tot_per_tasto, tasti):
+    """Expected Goal % di una selezione di microsettori: media dei singoli valori pesata sul numero di tiri
+    di ciascun settore (con un solo settore coincide con il suo valore). None se non calcolabile."""
+    tasti = _come_lista(tasti)
+    num = den = 0.0
+    for t in tasti:
+        e = ottieni_expected_goal_pct(t)
+        n = tot_per_tasto.get(t, 0) if isinstance(tot_per_tasto, dict) else 0
+        if e is None or n <= 0:
+            continue
+        num += e * n
+        den += n
+    if den > 0:
+        return num / den
+    if len(tasti) == 1:
+        return ottieni_expected_goal_pct(tasti[0])
+    return None
+
+def selettore_macro_zona(key_prefix, etichetta="Focus on a macro-zone (optional):", multi=False):
     """Selettore del macro-settore di campo (7m, LW, RW, FB, Zone 1...3), riusabile ovunque
     nell'app (Single Game Analysis, Seasonal Report, Shooting Trend Analysis). Restituisce la
-    chiave interna del macro-settore scelto, o None se '(All zones)'."""
+    chiave interna del macro-settore scelto, o None se '(All zones)'. Con multi=True si possono
+    scegliere più macro-zone insieme e restituisce la lista delle chiavi (None se non si sceglie nulla)."""
+    if multi:
+        scelte = st.multiselect(
+            etichetta, [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
+            key=f"{key_prefix}_macro_multi", placeholder="All zones (choose one or more)"
+        )
+        chiavi = [k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v in scelte]
+        return chiavi or None
     macro_scelto = st.selectbox(
         etichetta, ["(All zones)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
         key=f"{key_prefix}_macro_scelto"
@@ -1858,14 +1905,22 @@ def filtra_per_macro_zona(df, macro_key):
     Se macro_key è None, restituisce il dataframe invariato."""
     if not macro_key or df.empty:
         return df
-    return df[df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori) == macro_key]
+    return df[df['TIRO_CLEAN'].apply(mappa_macro_settore_tiratori).isin(_come_lista(macro_key))]
 
-def selettore_macro_settore(key_prefix, etichetta="Focus on a macro-sector (optional):"):
+def selettore_macro_settore(key_prefix, etichetta="Focus on a macro-sector (optional):", multi=False):
     """Come selettore_macro_zona, ma per il macro-settore aggregato (6M/9M/BT/LW/RW/7m/FB —
     Universal Stats/Shooting Trend 'By macro-sector'), non la macro-zona a fasce (Zone 1/2/3).
-    Restituisce la chiave del macro-settore scelto, o None se '(All sectors)'."""
+    Restituisce la chiave del macro-settore scelto, o None se '(All sectors)'. Con multi=True si possono
+    scegliere più macro-settori insieme e restituisce la lista delle chiavi (None se non si sceglie nulla)."""
     settori_unici = sorted(set(mappa_macro_settore(t) for t in TUTTI_I_TASTI_TIRATORI if mappa_macro_settore(t)))
     etichette_settori = {s: ETICHETTA_MACRO_UNIVERSALE.get(s, s.upper()) for s in settori_unici}
+    if multi:
+        scelte = st.multiselect(
+            etichetta, [etichette_settori[s] for s in settori_unici],
+            key=f"{key_prefix}_settore_multi", placeholder="All sectors (choose one or more)"
+        )
+        chiavi = [k for k, v in etichette_settori.items() if v in scelte]
+        return chiavi or None
     settore_scelto = st.selectbox(
         etichetta, ["(All sectors)"] + [etichette_settori[s] for s in settori_unici],
         key=f"{key_prefix}_settore_scelto"
@@ -1879,7 +1934,7 @@ def filtra_per_macro_settore(df, settore_key):
     TIRO_CLEAN. Se settore_key è None, restituisce il dataframe invariato."""
     if not settore_key or df.empty:
         return df
-    return df[df['TIRO_CLEAN'].apply(mappa_macro_settore) == settore_key]
+    return df[df['TIRO_CLEAN'].apply(mappa_macro_settore).isin(_come_lista(settore_key))]
 
 def selettore_avversario(df_h2h_scope, identita_giocatore_corrente, e_portiere, key_prefix):
     """Selettore 'faccia a faccia': per un portiere, l'elenco dei tiratori affrontati nell'ambito
@@ -2267,7 +2322,7 @@ def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato,
             with col_tasto:
                 premuto = _pulsante_colorato(
                     etichetta, colore, disabilitato=(tot == 0),
-                    selezionato=(tasto == tasto_selezionato), key=f"{key_prefix}_{tasto}"
+                    selezionato=(tasto in _come_lista(tasto_selezionato)), key=f"{key_prefix}_{tasto}"
                 )
             if premuto:
                 cliccato = tasto
@@ -4355,11 +4410,11 @@ def descrivi_filtri_attivi(macro_key=None, tasto_scelto=None, filtri_avanzati=No
     Restituisce 'All shots' se non è attivo nessun filtro."""
     parti = []
     if macro_key:
-        parti.append(ETICHETTA_MACRO_TIRATORI.get(macro_key, macro_key))
+        parti.append(" + ".join(ETICHETTA_MACRO_TIRATORI.get(k, k) for k in _come_lista(macro_key)))
     if settore_key:
-        parti.append(ETICHETTA_MACRO_UNIVERSALE.get(settore_key, settore_key.upper()))
+        parti.append(" + ".join(ETICHETTA_MACRO_UNIVERSALE.get(k, str(k).upper()) for k in _come_lista(settore_key)))
     if tasto_scelto:
-        parti.append(tasto_scelto)
+        parti.append(_txt_tasti(tasto_scelto))
     if avversario:
         parti.append(f"vs {avversario}")
     for chiave, valore in (filtri_avanzati or {}).items():
@@ -4525,7 +4580,7 @@ def tabella_macro_zone_con_dettaglio_micro(df, ruolo='tiratore'):
 
 def tabella_micro_di_un_macro(df, macro):
     """Ripartizione nei micro-settori di uno specifico macro-settore selezionato."""
-    df_m = df[df['macro_settore_tir'] == macro]
+    df_m = df[df['macro_settore_tir'].isin(_come_lista(macro))]
     righe = []
     for zona in sorted(df_m['TIRO_CLEAN'].apply(_normalizza_zona).unique()):
         df_z = df_m[df_m['TIRO_CLEAN'].apply(_normalizza_zona) == zona]
@@ -12368,19 +12423,14 @@ with tab4:
             )
 
             solo_money_time = st.checkbox("Money Time only (from 50', score margin ±5)", key="mt_toggle_tir")
-            st.caption("🎯 The two filters below apply to the Hot/Cold and Shot Map sections further down this page.")
+            st.caption("🎯 The two filters below (you can pick several values in each) apply to the Hot/Cold and Shot Map sections further down this page. In the Shot Map you can also click several micro-sectors at once.")
             col_a, col_b = st.columns(2)
             with col_a:
-                macro_scelto = st.selectbox(
-                    "Focus on a macro-zone (optional):",
-                    ["(All zones)"] + [ETICHETTA_MACRO_TIRATORI[m] for m in ORDINE_MACRO_TIRATORI],
-                    key="macro_scelto_tir"
-                )
+                # v83: selezione multipla — si possono scegliere più macro-zone insieme (lista, oppure None = tutte)
+                macro_key = selettore_macro_zona(key_prefix="tir_shared", multi=True)
             with col_b:
-                settore_key = selettore_macro_settore(key_prefix="tir_shared")
-            macro_key = None
-            if macro_scelto != "(All zones)":
-                macro_key = next(k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v == macro_scelto)
+                # v83: selezione multipla anche per i macro-sector (6M, 9M, BT, LW, RW, 7m, FB)
+                settore_key = selettore_macro_settore(key_prefix="tir_shared", multi=True)
 
             if not match_filtrati:
                 st.info("No matches match the current selection.")
@@ -12597,17 +12647,15 @@ with tab4:
                 # sotto devono continuare a mostrare la distribuzione completa tra tutte le
                 # zone, non solo quella scelta.
                 df_selezione_shotmap = filtra_per_macro_settore(filtra_per_macro_zona(df_selezione, macro_key), settore_key)
-                if 'tasto_focus_shared' not in st.session_state:
-                    st.session_state['tasto_focus_shared'] = None
                 tot_tast_sel, goal_tast_sel = costruisci_conteggi_tastiera(df_selezione_shotmap)
-                if st.session_state['tasto_focus_shared'] not in TUTTI_I_TASTI_TIRATORI:
-                    st.session_state['tasto_focus_shared'] = None
+                # v83: i micro-settori scelti sono una LISTA (vuota = tutti): si possono cliccare più tasti insieme
+                st.session_state['tasto_focus_shared'] = _tasti_lista(st.session_state.get('tasto_focus_shared'))
                 tasto_scelto = st.session_state['tasto_focus_shared']
 
                 if tasto_scelto:
-                    df_porta_sel = df_selezione_shotmap[df_selezione_shotmap['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
+                    df_porta_sel = df_selezione_shotmap[df_selezione_shotmap['TIRO_CLEAN'].apply(_normalizza_zona).isin(tasto_scelto)]
                     g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_porta_sel)
-                    expected_sel = ottieni_expected_goal_pct(tasto_scelto)
+                    expected_sel = _expected_multi(tot_tast_sel, tasto_scelto)
                     colore_cornice_sel = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
                 else:
                     df_porta_sel = df_selezione_shotmap
@@ -12621,21 +12669,19 @@ with tab4:
                     if tasto_scelto:
                         expected_testo_sel = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
                         if t_sel > 0:
-                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sel}**  |  Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})")
+                            st.caption(f"Expected Goal % for {_txt_tasti(tasto_scelto)}: **{expected_testo_sel}**  |  Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})")
                         else:
-                            st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo_sel}**  |  No shots from this sector.")
+                            st.caption(f"Expected Goal % for {_txt_tasti(tasto_scelto)}: **{expected_testo_sel}**  |  No shots from this sector.")
                 with col_tast_sel:
                     tasto_cliccato = pulsantiera_settori_campo(
                         tot_tast_sel, goal_tast_sel, tasto_scelto, key_prefix="pulsantiera"
                     )
                     if tasto_cliccato:
-                        st.session_state['tasto_focus_shared'] = (
-                            None if tasto_cliccato == st.session_state['tasto_focus_shared'] else tasto_cliccato
-                        )
+                        st.session_state['tasto_focus_shared'] = _toggle_tasto(st.session_state['tasto_focus_shared'], tasto_cliccato)
                         st.rerun()
                     if tasto_scelto:
                         if st.button("↺ Reset — show all sectors", key="reset_tasto_focus"):
-                            st.session_state['tasto_focus_shared'] = None
+                            st.session_state['tasto_focus_shared'] = []
                             st.rerun()
 
                 if 'mappe_extra_pdf_trend' not in st.session_state:
@@ -12648,8 +12694,8 @@ with tab4:
 
                 if modalita_tir == "Team":
                     if macro_key:
-                        st.markdown(f"**Breakdown of macro-zone {ETICHETTA_MACRO_TIRATORI[macro_key]}**")
-                        g_msq, t_msq, pct_msq = calcola_metriche_tiratori_gruppo(df_selezione[df_selezione['macro_settore_tir'] == macro_key])
+                        st.markdown(f"**Breakdown of macro-zone {' + '.join(ETICHETTA_MACRO_TIRATORI[k] for k in _come_lista(macro_key))}**")
+                        g_msq, t_msq, pct_msq = calcola_metriche_tiratori_gruppo(df_selezione[df_selezione['macro_settore_tir'].isin(_come_lista(macro_key))])
                         st.caption(f"Macro-zone total: {g_msq}/{t_msq} = {pct_msq:.1f}%")
                         st.dataframe(tabella_micro_di_un_macro(df_selezione, macro_key), use_container_width=True, hide_index=True)
                     else:
@@ -12694,7 +12740,7 @@ with tab4:
                     if solo_money_time:
                         df_giocatore = df_giocatore[df_giocatore['Is_Money_Time'] == True]
                     if macro_key:
-                        df_giocatore_vista = df_giocatore[df_giocatore['macro_settore_tir'] == macro_key]
+                        df_giocatore_vista = df_giocatore[df_giocatore['macro_settore_tir'].isin(_come_lista(macro_key))]
                     else:
                         df_giocatore_vista = df_giocatore
                     df_giocatore_vista = filtra_per_macro_settore(df_giocatore_vista, settore_key)
@@ -12717,9 +12763,9 @@ with tab4:
                         # sono già mostrate, identiche, nella Shot Map in cima alla pagina) ----
                         if modalita_tir == "Team":
                             if tasto_scelto:
-                                df_per_porta = df_giocatore_vista[df_giocatore_vista['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_scelto]
+                                df_per_porta = df_giocatore_vista[df_giocatore_vista['TIRO_CLEAN'].apply(_normalizza_zona).isin(tasto_scelto)]
                                 g_sel, t_sel, pct_sel = calcola_metriche_tiratori_gruppo(df_per_porta)
-                                expected_sel = ottieni_expected_goal_pct(tasto_scelto)
+                                expected_sel = _expected_multi(costruisci_conteggi_tastiera(df_per_porta)[0], tasto_scelto)
                                 colore_cornice = _colore_expected(pct_sel if t_sel > 0 else None, expected_sel)
                                 tot_porta, goal_porta = costruisci_conteggi_porta(df_per_porta)
                             else:
@@ -12735,27 +12781,25 @@ with tab4:
                                 if tasto_scelto:
                                     expected_testo = f"{expected_sel:.0f}%" if expected_sel is not None else "n/a"
                                     if t_sel > 0:
-                                        st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})")
+                                        st.caption(f"Expected Goal % for {_txt_tasti(tasto_scelto)}: **{expected_testo}**  |  Real: **{pct_sel:.1f}%** ({g_sel}/{t_sel})")
                                     else:
-                                        st.caption(f"Expected Goal % for {tasto_scelto}: **{expected_testo}**  |  No shots from this sector.")
+                                        st.caption(f"Expected Goal % for {_txt_tasti(tasto_scelto)}: **{expected_testo}**  |  No shots from this sector.")
                             with col_tast:
                                 tasto_cliccato_p = pulsantiera_settori_campo(
                                     tot_tast, goal_tast, tasto_scelto, key_prefix=f"pulsantiera_{chiave_giocatore}"
                                 )
                                 if tasto_cliccato_p:
-                                    st.session_state['tasto_focus_shared'] = (
-                                        None if tasto_cliccato_p == tasto_scelto else tasto_cliccato_p
-                                    )
+                                    st.session_state['tasto_focus_shared'] = _toggle_tasto(tasto_scelto, tasto_cliccato_p)
                                     st.rerun()
                                 if tasto_scelto:
                                     if st.button("↺ Reset — show all sectors", key=f"reset_tasto_focus_{chiave_giocatore}"):
-                                        st.session_state['tasto_focus_shared'] = None
+                                        st.session_state['tasto_focus_shared'] = []
                                         st.rerun()
 
                         # ---- Macro breakdown ----
                         if macro_key:
-                            st.markdown(f"**Breakdown of macro-zone {ETICHETTA_MACRO_TIRATORI[macro_key]}**")
-                            df_macro_view = df_giocatore[df_giocatore['macro_settore_tir'] == macro_key]
+                            st.markdown(f"**Breakdown of macro-zone {' + '.join(ETICHETTA_MACRO_TIRATORI[k] for k in _come_lista(macro_key))}**")
+                            df_macro_view = df_giocatore[df_giocatore['macro_settore_tir'].isin(_come_lista(macro_key))]
                             g_m, t_m, pct_m = calcola_metriche_tiratori_gruppo(df_macro_view)
                             st.caption(f"Macro-zone total: {g_m}/{t_m} = {pct_m:.1f}%")
                             st.dataframe(tabella_micro_di_un_macro(df_giocatore, macro_key), use_container_width=True, hide_index=True)
