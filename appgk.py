@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -5162,7 +5162,48 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     buffer.seek(0)
     return buffer.getvalue()
 
-def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_portieri, df_blocchi, df_stagione_totale, fig_blocchi, logo_squadra_b64=None, mappe_extra=None):
+def unisci_partite_squadra(dati_per_portiere):
+    """Unisce gli storici dei singoli portieri in una lista-partita UNICA per squadra (una voce per
+    partita, con parate/tiri/Money Time sommati su tutti i portieri che vi hanno giocato)."""
+    per_label = {}
+    for lista in (dati_per_portiere or {}).values():
+        for p in lista:
+            e = per_label.setdefault(p['label'], {
+                'label': p['label'], 'data': p['data'], 'saves': 0, 'tiri': 0, 'money_time_gpi': None,
+                'casa_trasferta': p.get('casa_trasferta')})
+            e['saves'] += p.get('saves', 0)
+            e['tiri'] += p.get('tiri', 0)
+            if p.get('money_time_gpi') is not None:
+                e['money_time_gpi'] = (e['money_time_gpi'] or 0) + p['money_time_gpi']
+    return sorted(per_label.values(), key=lambda e: e['data'])
+
+def _elementi_pdf_extra_stagione(df_tiri, lista_partite, stili, identita_portiere=None, df_tiro_portiere=None, titolo_mappa="Shot Map (season)", con_mappa=True):
+    """Elementi PDF che a schermo compaiono sotto le tabelle di un portiere (o della squadra):
+    Passive Play, Home/Away, tiri effettuati dal portiere e la MAPPA DEI TIRI (porta + settori)."""
+    el = []
+    split_casa = calcola_split_casa_trasferta(lista_partite or [], 'saves', 'tiri')
+    testo_casa = formatta_riga_casa_trasferta(split_casa).replace(':red[**', '<b>').replace('**]', '</b>')
+    el.append(Paragraph(f"<b>Home/Away Save %:</b> {testo_casa}", stili['Normal']))
+    df_passivo = filtra_tiri_passivi(df_tiri)
+    if not df_passivo.empty:
+        s_p, g_p, _, pct_p, eff_p = calcola_metriche_gruppo(df_passivo)
+        el.append(Paragraph(f"<b>Passive Play:</b> Saves: {s_p} | Goals Conceded: {g_p} | Save %: {pct_p:.1f}% | Efficiency: {eff_p:.1f}%", stili['Normal']))
+        _, _, _, pct_pn, eff_pn = calcola_metriche_gruppo_no_eg(df_passivo)
+        if round(pct_p, 1) != round(pct_pn, 1) or round(eff_p, 1) != round(eff_pn, 1):
+            el.append(Paragraph(f"Excluding Empty Goals - Save %: {pct_pn:.1f}% | Efficiency: {eff_pn:.1f}%", stili['Normal']))
+    if identita_portiere is not None and df_tiro_portiere is not None and not df_tiro_portiere.empty:
+        g_tp, t_tp, p_tp = calcola_statistica_tiro_portiere(df_tiro_portiere, identita_portiere=identita_portiere)
+        if t_tp > 0:
+            el.append(Paragraph(f"<b>Goalkeeper's own shots (season):</b> {g_tp}/{t_tp} = {p_tp:.1f}% (not counted in saves/GPI/GPI chart)", stili['Normal']))
+    if con_mappa and not df_tiri.empty:
+        el.append(Spacer(1, 0.25 * cm))
+        blocco = _blocco_porta_tastiera_pdf(df_tiri, ('save', 's'), None, 8, 12)
+        blocco.hAlign = 'CENTER'
+        el.append(KeepTogether([Paragraph(f"<b>{titolo_mappa}</b>", stili['Heading4']), blocco]))
+    return el
+
+def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_portieri, df_blocchi, df_stagione_totale, fig_blocchi, logo_squadra_b64=None, mappe_extra=None,
+                         df_squadra_generale=None, nome_squadra=None, df_tiro_portiere=None):
     """Costruisce il PDF del report stagionale (portiere singolo o squadra) e lo restituisce come bytes.
     Stessa identità grafica (logo, colori, footer) del report di partita singola.
     logo_squadra_b64: se fornito, il logo della squadra compare in copertina accanto al logo
@@ -5299,6 +5340,42 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
                 elementi.append(KeepTogether([blocco_mappa, Spacer(1, 0.3 * cm)]))
         elementi.append(_separatore())
 
+    # Team Overall (solo report per squadra): mappa generale + tutte le tabelle, tutti i portieri insieme.
+    if df_squadra_generale is not None and not df_squadra_generale.empty and nome_squadra:
+        lista_sq_pdf = unisci_partite_squadra(dati_portieri)
+        info_sq_pdf = calcola_dettaglio_portiere(df_squadra_generale, lista_partite=lista_sq_pdf)
+        elementi.append(PageBreak())
+        elementi.append(Paragraph(f"Team Overall - {nome_squadra} (all goalkeepers combined)".replace('&', '&amp;'), sezione_stile))
+        _t_sq = [f"Total Season GPI: {info_sq_pdf['gpi_totale']:+.1f}   |   Saves: {info_sq_pdf['parate']}   |   "
+                 f"Goals Conceded: {info_sq_pdf['gol']}   |   Save %: {info_sq_pdf['pct']:.1f}%   |   Efficiency: {info_sq_pdf['eff']:.1f}%"]
+        if round(info_sq_pdf['pct'], 1) != round(info_sq_pdf['pct_no_eg'], 1) or round(info_sq_pdf['eff'], 1) != round(info_sq_pdf['eff_no_eg'], 1):
+            _t_sq.append(f"Excluding Empty Goals - Save %: {info_sq_pdf['pct_no_eg']:.1f}%   |   Efficiency: {info_sq_pdf['eff_no_eg']:.1f}%")
+        elementi.append(Paragraph("<br/>".join(_t_sq), stili['Normal']))
+        elementi.append(Spacer(1, 0.25 * cm))
+        blocco_sq = _blocco_porta_tastiera_pdf(df_squadra_generale, ('save', 's'), "Team Shot Map (all shots, all goalkeepers)", 9, 13)
+        blocco_sq.hAlign = 'CENTER'
+        elementi.append(blocco_sq)
+        elementi.append(Spacer(1, 0.2 * cm))
+        elementi.append(KeepTogether([
+            Paragraph("By specific micro-zone", stili['Heading4']),
+            _tabella_settore_reportlab(info_sq_pdf['tabella_settore'], font_size=7),
+        ]))
+        elementi.append(Spacer(1, 0.2 * cm))
+        elementi.append(KeepTogether([
+            Paragraph("By macro-zone (LW, RW, 7m, FB, Zone 1...3)", stili['Heading4']),
+            _df_to_reportlab_table(tabella_macro_zone_universale(df_squadra_generale, ruolo='portiere'), font_size=7),
+        ]))
+        elementi.append(Spacer(1, 0.2 * cm))
+        elementi.append(KeepTogether([
+            Paragraph("By aggregated macro-sector", stili['Heading4']),
+            _df_to_reportlab_table(info_sq_pdf['tabella_macro'], font_size=7),
+        ]))
+        elementi.append(Spacer(1, 0.2 * cm))
+        elementi.append(Paragraph(
+            f"Money Time (from the 50th minute onward, score margin between -5 and +5): {info_sq_pdf['money_time_riassunto']}", stili['Normal']))
+        elementi.extend(_elementi_pdf_extra_stagione(df_squadra_generale, lista_sq_pdf, stili, con_mappa=False))
+        elementi.append(_separatore())
+
     # Detailed statistics per goalkeeper (season cumulative) — sempre su una pagina nuova.
     for gk, lista in dati_portieri.items():
         df_gk_tot = df_stagione_totale[df_stagione_totale['PORTIERE_ID'] == gk]
@@ -5349,6 +5426,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
         elementi.append(Paragraph(
             f"Money Time (from the 50th minute onward, score margin between -5 and +5): {info['money_time_riassunto']}", stili['Normal']
         ))
+        elementi.extend(_elementi_pdf_extra_stagione(df_gk_tot, lista, stili, identita_portiere=gk, df_tiro_portiere=df_tiro_portiere))
         elementi.append(_separatore())
 
     # 10-minute block performance (season cumulative)
@@ -12137,6 +12215,87 @@ with tab3:
             df_storico = pd.DataFrame(righe_storico)
             st.dataframe(df_storico, use_container_width=True, hide_index=True)
 
+            if modalita == "Team":
+                st.markdown("---")
+                st.subheader(f"🏟️ Team Overall — {squadra_scelta} (all goalkeepers combined)")
+                lista_squadra_sr = unisci_partite_squadra(dati_per_portiere)
+                info_sq = calcola_dettaglio_portiere(df_stagione_totale, lista_partite=lista_squadra_sr)
+                cA, cB, cC, cD, cE = st.columns(5)
+                cA.metric("Total GPI", f"{info_sq['gpi_totale']:+.1f}")
+                cB.metric("Saves", info_sq['parate'])
+                cC.metric("Goals Conceded", info_sq['gol'])
+                cD.metric("Save %", f"{info_sq['pct']:.1f}%")
+                cE.metric("Efficiency", f"{info_sq['eff']:.1f}%")
+                if round(info_sq['pct'], 1) != round(info_sq['pct_no_eg'], 1) or round(info_sq['eff'], 1) != round(info_sq['eff_no_eg'], 1):
+                    st.caption(f"Excluding Empty Goals — Save %: {info_sq['pct_no_eg']:.1f}% · Efficiency %: {info_sq['eff_no_eg']:.1f}%")
+
+                st.markdown("**Statistics by specific micro-zone (whole team)**")
+                st.dataframe(applica_colori_expected(info_sq['tabella_settore']), use_container_width=True, hide_index=True)
+                st.markdown("**Statistics by macro-zone (whole team)** (LW, RW, 7m, FB, Zone 1...3)")
+                st.dataframe(tabella_macro_zone_universale(df_stagione_totale, ruolo='portiere'), use_container_width=True, hide_index=True)
+                st.markdown("**Statistics by aggregated macro-sector (whole team)**")
+                st.dataframe(info_sq['tabella_macro'], use_container_width=True, hide_index=True)
+                st.markdown(f"**Money Time Performance:** {info_sq['money_time_riassunto']}")
+                st.markdown(f"**Home/Away Save %:** {formatta_riga_casa_trasferta(calcola_split_casa_trasferta(lista_squadra_sr, 'saves', 'tiri'))}")
+                df_sq_passivo = filtra_tiri_passivi(df_stagione_totale)
+                if not df_sq_passivo.empty:
+                    s_pas, g_pas, m_pas, pct_pas, eff_pas = calcola_metriche_gruppo(df_sq_passivo)
+                    st.markdown(f"**Passive Play:** Saves: {s_pas}  |  Goals Conceded: {g_pas}  |  "
+                                f"Save %: {pct_pas:.1f}%  |  Efficiency: {eff_pas:.1f}%")
+
+                st.markdown("**Team Shot Map (season, all goalkeepers)**")
+                chiave_sq_sicura = "TEAM_" + _chiave_css_sicura(squadra_scelta)
+                col_macro_sq, col_settore_sq = st.columns(2)
+                with col_macro_sq:
+                    macro_key_sq = selettore_macro_zona(key_prefix=f"gk_seasonal_{chiave_sq_sicura}")
+                with col_settore_sq:
+                    settore_key_sq = selettore_macro_settore(key_prefix=f"gk_seasonal_{chiave_sq_sicura}")
+                filtri_sq = selettore_filtri_avanzati(df_stagione_totale, key_prefix=f"gk_seasonal_{chiave_sq_sicura}")
+                df_sq_filtrato = applica_filtri_avanzati(df_stagione_totale, filtri_sq)
+                df_sq_filtrato = filtra_per_macro_zona(df_sq_filtrato, macro_key_sq)
+                df_sq_filtrato = filtra_per_macro_settore(df_sq_filtrato, settore_key_sq)
+
+                key_focus_sq = f"tasto_focus_gk_seasonal_{chiave_sq_sicura}"
+                if key_focus_sq not in st.session_state or st.session_state[key_focus_sq] not in TUTTI_I_TASTI_TIRATORI:
+                    st.session_state[key_focus_sq] = None
+                tasto_sel_sq = st.session_state[key_focus_sq]
+                if tasto_sel_sq:
+                    df_porta_sq = df_sq_filtrato[df_sq_filtrato['TIRO_CLEAN'].apply(_normalizza_zona) == tasto_sel_sq]
+                    s_sel_sq, _, _, pct_sel_sq, eff_sel_sq = calcola_metriche_gruppo(df_porta_sq)
+                    expected_sel_sq = ottieni_expected_pct(tasto_sel_sq)
+                    colore_cornice_sq = _colore_expected(eff_sel_sq if len(df_porta_sq) > 0 else None, expected_sel_sq)
+                else:
+                    df_porta_sq = df_sq_filtrato
+                    colore_cornice_sq = None
+                tot_porta_sq, salvate_porta_sq = costruisci_conteggi_porta(df_porta_sq, esiti_successo=('save', 's'))
+                fig_porta_sq = disegna_porta(tot_porta_sq, salvate_porta_sq, colore_cornice=colore_cornice_sq)
+                tot_tast_sq, salvate_tast_sq = costruisci_conteggi_tastiera(df_sq_filtrato, esiti_successo=('save', 's'))
+                col_porta_sq, col_tast_sq = st.columns([1, 2])
+                with col_porta_sq:
+                    st.pyplot(fig_porta_sq)
+                    if tasto_sel_sq:
+                        exp_txt_sq = f"{expected_sel_sq:.0f}%" if expected_sel_sq is not None else "n/a"
+                        if len(df_porta_sq) > 0:
+                            st.caption(f"Expected Save % for {tasto_sel_sq}: **{exp_txt_sq}**  |  Real: **{pct_sel_sq:.1f}%** ({s_sel_sq}/{len(df_porta_sq)})")
+                        else:
+                            st.caption(f"Expected Save % for {tasto_sel_sq}: **{exp_txt_sq}**  |  No shots from this sector.")
+                with col_tast_sq:
+                    tasto_cliccato_sq = pulsantiera_settori_campo(
+                        tot_tast_sq, salvate_tast_sq, tasto_sel_sq, key_prefix=f"gk_seasonal_pulsantiera_{chiave_sq_sicura}")
+                    if tasto_cliccato_sq:
+                        st.session_state[key_focus_sq] = None if tasto_cliccato_sq == tasto_sel_sq else tasto_cliccato_sq
+                        st.rerun()
+                    if tasto_sel_sq:
+                        if st.button("↺ Reset — show all sectors", key=f"reset_gk_seasonal_{chiave_sq_sicura}"):
+                            st.session_state[key_focus_sq] = None
+                            st.rerun()
+                if 'mappe_extra_pdf_stagione' not in st.session_state:
+                    st.session_state['mappe_extra_pdf_stagione'] = {}
+                titolo_mappa_sq = f"{squadra_scelta} (team) — {descrivi_filtri_attivi(macro_key_sq, tasto_sel_sq, filtri_sq, None, settore_key_sq)}"
+                pulsante_salva_mappa_pdf(
+                    st.session_state['mappe_extra_pdf_stagione'], titolo_report, titolo_mappa_sq,
+                    df_porta_sq, key=f"salva_mappa_gk_seasonal_{chiave_sq_sicura}")
+
             st.markdown("---")
             st.subheader("🧤 Detailed Season Statistics per Goalkeeper")
             dati_pdf_portieri_stagione = {}
@@ -12291,6 +12450,10 @@ with tab3:
             if st.button("📄 Generate Season PDF"):
                 with st.spinner("Generating PDF..."):
                     try:
+                        _chiavi_match_pdf_st = {(mm['nome'], str(mm['data'])) for mm in db_gk_filtrato}
+                        _fr_tp_pdf_st = [m['dati'] for m in st.session_state.get('db_tiro_portiere', [])
+                                         if (m['nome'], str(m['data'])) in _chiavi_match_pdf_st]
+                        df_tp_stagione_pdf = pd.concat(_fr_tp_pdf_st, ignore_index=True) if _fr_tp_pdf_st else pd.DataFrame(columns=['PORTIERE_ID', 'ESITO'])
                         logo_squadra_gk = st.session_state['loghi_squadre'].get(squadra_scelta) if modalita == "Team" else None
                         pdf_bytes_stagione = genera_pdf_stagione(
                             titolo_report=titolo_report,
@@ -12301,7 +12464,10 @@ with tab3:
                             df_stagione_totale=df_stagione_totale,
                             fig_blocchi=fig_blocchi_stagione,
                             logo_squadra_b64=logo_squadra_gk,
-                            mappe_extra=mappe_stagione_correnti
+                            mappe_extra=mappe_stagione_correnti,
+                            df_squadra_generale=(df_stagione_totale if modalita == "Team" else None),
+                            nome_squadra=(squadra_scelta if modalita == "Team" else None),
+                            df_tiro_portiere=df_tp_stagione_pdf
                         )
                         nome_file_pdf_stagione = f"Report_{titolo_report}".replace(' ', '_').replace('/', '-').replace('—', '-') + ".pdf"
                         st.download_button(
