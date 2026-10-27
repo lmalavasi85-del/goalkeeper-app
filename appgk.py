@@ -5187,7 +5187,7 @@ def _elementi_pdf_extra_stagione(df_tiri, lista_partite, stili, identita_portier
     df_passivo = filtra_tiri_passivi(df_tiri)
     if not df_passivo.empty:
         s_p, g_p, _, pct_p, eff_p = calcola_metriche_gruppo(df_passivo)
-        el.append(Paragraph(f"<b>Passive Play:</b> Saves: {s_p} | Goals Conceded: {g_p} | Save %: {pct_p:.1f}% | Efficiency: {eff_p:.1f}%", stili['Normal']))
+        el.append(Paragraph(f"<b>Passive Play:</b> {s_p} saves, {g_p} goals conceded | Save %: {pct_p:.1f}% | Efficiency: {eff_p:.1f}%", stili['Normal']))
         _, _, _, pct_pn, eff_pn = calcola_metriche_gruppo_no_eg(df_passivo)
         if round(pct_p, 1) != round(pct_pn, 1) or round(eff_p, 1) != round(eff_pn, 1):
             el.append(Paragraph(f"Excluding Empty Goals - Save %: {pct_pn:.1f}% | Efficiency: {eff_pn:.1f}%", stili['Normal']))
