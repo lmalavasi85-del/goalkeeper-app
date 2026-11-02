@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v86 - 2026-11-02 - Universal Stats: nuovo grafico \"Shooting vs. Goalkeeping Efficiency Map\" (efficacia al tiro contro efficacia concessa, una squadra per punto, solo squadre con dati tiratori e portieri, filtrabile per lega). Include v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -14331,6 +14331,80 @@ with tab7:
             squadra_scelta_us = None
             df_squadra_us = pd.DataFrame()
             st.info("No teams in this selection.")
+
+        # ============================================================
+        # SEZIONE: MAPPA EFFICACIA TIRO vs EFFICACIA CONCESSA (idea di Sergio Palazzi).
+        # Per ogni squadra con dati SIA tiratori SIA portieri: x = % gol sui tiri della squadra,
+        # y = % gol subiti sui tiri affrontati dai suoi portieri (asse invertito: in alto = meglio).
+        # ============================================================
+        st.markdown("---")
+        st.subheader("🎯 Shooting vs. Goalkeeping Efficiency Map")
+        st.caption("Each dot is a team: horizontal axis = Goal % of its own shooters (further right = better "
+                   "attack); vertical axis = Goal % conceded by its goalkeepers (axis reversed, so higher = "
+                   "fewer goals conceded = better). Top-right quadrant = best shooters AND best goalkeepers. "
+                   "Only teams with BOTH shooter and goalkeeper data are shown; it follows the filter selected "
+                   "up in '🔍 Filters' (to see a single league choose 'Championship').")
+        _c1, _c2, _c3 = st.columns(3)
+        with _c1:
+            _soglia_mappa = st.number_input("Minimum shots per side (shooting and goalkeeping)", min_value=1,
+                                            value=30, step=5, key="us_mappa_soglia")
+        with _c2:
+            _senza_eg_mappa = st.checkbox("Exclude Empty Goals (goalkeeper side)", value=False, key="us_mappa_no_eg")
+        with _c3:
+            _etichette_mappa = st.checkbox("Show team names", value=True, key="us_mappa_etichette")
+
+        def _gol_pct_e_tiri(df):
+            if df is None or df.empty:
+                return None, 0
+            esiti = df['RESULT_CLEAN'].astype(str).str.lower().str.strip()
+            n = int(esiti.isin(['goal', 'g', 'save', 's', 'miss', 'm']).sum())
+            g = int(esiti.isin(['goal', 'g']).sum())
+            return ((g / n * 100) if n else None), n
+
+        _dati_tir_sq, _dati_gk_sq = {}, {}
+        for _m in partite_tir_filtrate_us:
+            _dati_tir_sq.setdefault(_m['squadra'], []).append(_m['dati'])
+        for _m in partite_filtrate_us:
+            _d = _m['dati']
+            if _senza_eg_mappa and 'Is_Empty_Goal' in _d.columns:
+                _d = _d[~_d['Is_Empty_Goal'].fillna(False)]
+            _dati_gk_sq.setdefault(_m['squadra'], []).append(_d)
+
+        _righe_mappa = []
+        for _sq in sorted(set(_dati_tir_sq) & set(_dati_gk_sq)):
+            _px, _nx = _gol_pct_e_tiri(pd.concat(_dati_tir_sq[_sq], ignore_index=True))
+            _py, _ny = _gol_pct_e_tiri(pd.concat(_dati_gk_sq[_sq], ignore_index=True))
+            if _px is None or _py is None or _nx < _soglia_mappa or _ny < _soglia_mappa:
+                continue
+            _righe_mappa.append({'Team': _sq, 'Shooting Goal %': round(_px, 1), 'Goal % conceded': round(_py, 1),
+                                 'Shots taken': _nx, 'Shots faced': _ny})
+        df_mappa = pd.DataFrame(_righe_mappa)
+        if len(df_mappa) < 2:
+            st.info("Not enough teams with both shooter and goalkeeper data (and at least the minimum shots "
+                    "on each side) in this selection to draw the map. Lower the minimum or widen the filter.")
+        else:
+            _mx, _my = df_mappa['Shooting Goal %'].mean(), df_mappa['Goal % conceded'].mean()
+            _fig_mappa = px.scatter(
+                df_mappa, x='Shooting Goal %', y='Goal % conceded', color='Team',
+                text='Team' if _etichette_mappa else None,
+                hover_data={'Team': True, 'Shooting Goal %': ':.1f', 'Goal % conceded': ':.1f',
+                            'Shots taken': True, 'Shots faced': True})
+            _fig_mappa.update_traces(marker=dict(size=13, line=dict(width=1, color='white')),
+                                     textposition='top center')
+            _fig_mappa.add_vline(x=_mx, line_dash='dot', line_color='gray',
+                                 annotation_text=f"average {_mx:.1f}%", annotation_position='top')
+            _fig_mappa.add_hline(y=_my, line_dash='dot', line_color='gray',
+                                 annotation_text=f"average {_my:.1f}%", annotation_position='right')
+            _fig_mappa.update_yaxes(autorange='reversed', title='Goal % conceded (lower = better)')
+            _fig_mappa.update_xaxes(title='Shooting Goal % (higher = better)')
+            _fig_mappa.update_layout(height=620, showlegend=False,
+                                     title="Shooting vs. Goalkeeping Efficiency Map", margin=dict(t=60))
+            st.plotly_chart(_fig_mappa, use_container_width=True, key="us_mappa_efficienza")
+            st.caption(f"{len(df_mappa)} teams. Dotted lines = average of the teams shown. "
+                       "Top-right = strong shooters and strong goalkeepers.")
+            with st.expander("Data table"):
+                st.dataframe(df_mappa.sort_values('Shooting Goal %', ascending=False),
+                             use_container_width=True, hide_index=True)
 
         # ============================================================
         # SEZIONE 3: CLASSIFICHE DI RENDIMENTO (portieri e tiratori), stessi filtri di cui sopra
