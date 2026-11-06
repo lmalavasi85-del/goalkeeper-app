@@ -1169,7 +1169,9 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v97 - 2026-11-06 - Cache delle immagini di porta e campo legata alla versione: dopo ogni aggiornamento si rifanno sempre con la grafica nuova (settori e nomi tutti visibili). "
+APP_VERSION = ("v99 - 2026-11-06 - Campo a schermo più grande (pulsantiera cliccabile e mappa Expected Goals); i PDF non cambiano. "
+    "v98 - 2026-11-06 - Mappa Expected Goals visibile anche a schermo (Shooting Trend, vista Team), con tabella dei link video quando inseriti. "
+    "v97 - 2026-11-06 - Cache delle immagini di porta e campo legata alla versione: dopo ogni aggiornamento si rifanno sempre con la grafica nuova (settori e nomi tutti visibili). "
     "v96 - 2026-11-06 - Campo: i settori centrali senza tiri (7m, bt2, 9m2) mostrano sempre il nome. "
     "v95 - 2026-11-06 - Torte: grafica e dimensione di prima, frecce solo per le fette troppo strette; campo Expected Goals con lo stesso grigio degli altri campi. "
     "v94 - 2026-11-06 - Grafici a torta: etichette sempre senza sovrapposizioni (fette piccole fuori, in colonna con linea di collegamento). "
@@ -2396,7 +2398,7 @@ def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key)
         )
         return st.button(etichetta, key=key, disabled=disabilitato, use_container_width=True)
 
-def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix, altezza_px=470):
+def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix, altezza_px=720):
     """Il campo a 23 microsettori come vera pulsantiera: ogni microsettore è un pulsante cliccabile
     (stessa grafica e stessa heat map dell'immagine nei PDF). Restituisce il nome del tasto appena
     cliccato in questo rerun, o None. Se la versione di Streamlit non supporta i grafici cliccabili,
@@ -9756,13 +9758,9 @@ def _tabella_duelli_pdf(righe, link_duelli=None):
     ]))
     return t
 
-def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
-    """Pagina Expected Goals: il campo a 23 microsettori colorato secondo le soglie Expected Goal %
-    (vedi _colore_soglia_expected_goals; in ogni settore 'goal/tiri=%' e la % attesa S.P.).
-    Se sono stati inseriti dei link video per alcune zone, a destra del campo compare una piccola
-    tabella con un link cliccabile per ciascuna zona; se non ci sono link il campo resta da solo,
-    più grande."""
-    stili = getSampleStyleSheet()
+def _dati_expected_per_df(df):
+    """Per ogni microzona: tiri, gol e Expected Goal % (S.P.) — usato dalla mappa Expected Goals
+    (schermata e PDF)."""
     zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona) if not df.empty and 'TIRO_CLEAN' in df.columns else pd.Series(dtype=object)
     tot_z, goal_z, expected_z = {}, {}, {}
     for zona in TUTTI_I_TASTI_TIRATORI:
@@ -9770,6 +9768,68 @@ def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
         tot_z[zona] = len(df_z)
         goal_z[zona] = len(df_z[df_z['RESULT_CLEAN'].isin(['goal', 'g'])]) if len(df_z) > 0 else 0
         expected_z[zona] = ottieni_expected_goal_pct(zona)
+    return tot_z, goal_z, expected_z
+
+@st.cache_data(show_spinner=False)
+def _campo_expected_png_interno(tot_items, goal_items, expected_items, versione_grafica):
+    fig = disegna_tastiera(dict(tot_items), dict(goal_items), expected=dict(expected_items))
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=110, facecolor='white', bbox_inches='tight')
+    plt.close(fig)
+    return buf.getvalue()
+
+def _campo_expected_png(tot_z, goal_z, expected_z):
+    return _campo_expected_png_interno(tuple(sorted(tot_z.items())), tuple(sorted(goal_z.items())),
+                                       tuple(sorted(expected_z.items(), key=lambda kv: kv[0])), APP_VERSION)
+
+def _immagine_a_larghezza_piena(png):
+    try:
+        st.image(png, width='stretch')
+    except TypeError:
+        st.image(png, use_container_width=True)
+
+def mostra_mappa_expected_goals_schermo(df, link_per_zona=None):
+    """Mostra a schermo la stessa mappa Expected Goals del PDF: il campo colorato a soglie rispetto alla
+    % attesa (S.P.). Se ci sono link video, a destra compare la tabella con i link cliccabili; altrimenti il
+    campo resta da solo, più grande."""
+    tot_z, goal_z, expected_z = _dati_expected_per_df(df)
+    png = _campo_expected_png(tot_z, goal_z, expected_z)
+    link_validi = {z: str(u).strip() for z, u in (link_per_zona or {}).items()
+                   if z in TUTTI_I_TASTI_TIRATORI and str(u or '').strip()}
+    if not link_validi:
+        _immagine_a_larghezza_piena(png)
+    else:
+        col_campo, col_link = st.columns([4, 1.2])
+        with col_campo:
+            _immagine_a_larghezza_piena(png)
+        with col_link:
+            righe = ["| Zone | Goal | S.P. | Video |", "|---|---|---|---|"]
+            for zona in TUTTI_I_TASTI_TIRATORI:
+                if zona not in link_validi:
+                    continue
+                t, g, e = tot_z[zona], goal_z[zona], expected_z[zona]
+                testo_goal = f"{g}/{t}={g / t * 100:.0f}%" if t > 0 else "0/0"
+                testo_sp = f"{e:.0f}%" if e is not None else "n/a"
+                righe.append(f"| {zona} | {testo_goal} | {testo_sp} | [Watch video]({link_validi[zona]}) |")
+            st.markdown("\n".join(righe))
+    st.markdown(
+        "<div style='font-size:0.85rem;line-height:1.7'>"
+        "<span style='background:#d2d8e4;padding:0 9px;border-radius:3px'>&nbsp;</span> fewer than 5 shots &nbsp; "
+        "<span style='background:#eea59d;padding:0 9px;border-radius:3px'>&nbsp;</span> Goal % ≥ S.P. (dangerous) &nbsp; "
+        "<span style='background:#f6c795;padding:0 9px;border-radius:3px'>&nbsp;</span> S.P. to S.P. −5 &nbsp; "
+        "<span style='background:#f6e3a1;padding:0 9px;border-radius:3px'>&nbsp;</span> S.P. −5 to −10 &nbsp; "
+        "<span style='background:#a9d8ae;padding:0 9px;border-radius:3px'>&nbsp;</span> below S.P. −10 (safest)"
+        "</div>", unsafe_allow_html=True)
+    st.caption("S.P. = Expected Goal % of the active profile for that zone. Players unticked in \"Include in PDF\" are left out.")
+
+def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
+    """Pagina Expected Goals: il campo a 23 microsettori colorato secondo le soglie Expected Goal %
+    (vedi _colore_soglia_expected_goals; in ogni settore 'goal/tiri=%' e la % attesa S.P.).
+    Se sono stati inseriti dei link video per alcune zone, a destra del campo compare una piccola
+    tabella con un link cliccabile per ciascuna zona; se non ci sono link il campo resta da solo,
+    più grande."""
+    stili = getSampleStyleSheet()
+    tot_z, goal_z, expected_z = _dati_expected_per_df(df)
     link_validi = {z: u for z, u in (link_per_zona or {}).items() if z in TUTTI_I_TASTI_TIRATORI and str(u or '').strip()}
 
     if not link_validi:
@@ -12022,7 +12082,7 @@ with tab2:
                     fig_porta_gk = disegna_porta(tot_porta_gk, salvate_porta_gk, colore_cornice=colore_cornice_gk)
                     tot_tast_gk, salvate_tast_gk = costruisci_conteggi_tastiera(df_gk_filtrato, esiti_successo=('save', 's'))
 
-                    col_porta_gk, col_tast_gk = st.columns([1, 2])
+                    col_porta_gk, col_tast_gk = st.columns([1, 3])
                     with col_porta_gk:
                         st.pyplot(fig_porta_gk)
                         if tasto_sel_gk:
@@ -12311,7 +12371,7 @@ with tab2:
                 fig_porta_mt = disegna_porta(tot_porta_mt, goal_porta_mt, colore_cornice=colore_cornice_mt)
                 tot_tast_mt, goal_tast_mt = costruisci_conteggi_tastiera(df_mt_filtrato)
 
-                col_porta_mt, col_tast_mt = st.columns([1, 2])
+                col_porta_mt, col_tast_mt = st.columns([1, 3])
                 with col_porta_mt:
                     st.pyplot(fig_porta_mt)
                     if tasto_sel_mt:
@@ -12663,7 +12723,7 @@ with tab3:
                 tot_porta_sq, salvate_porta_sq = costruisci_conteggi_porta(df_porta_sq, esiti_successo=('save', 's'))
                 fig_porta_sq = disegna_porta(tot_porta_sq, salvate_porta_sq, colore_cornice=colore_cornice_sq)
                 tot_tast_sq, salvate_tast_sq = costruisci_conteggi_tastiera(df_sq_filtrato, esiti_successo=('save', 's'))
-                col_porta_sq, col_tast_sq = st.columns([1, 2])
+                col_porta_sq, col_tast_sq = st.columns([1, 3])
                 with col_porta_sq:
                     st.pyplot(fig_porta_sq)
                     if tasto_sel_sq:
@@ -12789,7 +12849,7 @@ with tab3:
                     fig_porta_gk_stag = disegna_porta(tot_porta_gk_stag, salvate_porta_gk_stag, colore_cornice=colore_cornice_gk_stag)
                     tot_tast_gk_stag, salvate_tast_gk_stag = costruisci_conteggi_tastiera(df_gk_stag_filtrato, esiti_successo=('save', 's'))
 
-                    col_porta_gk_stag, col_tast_gk_stag = st.columns([1, 2])
+                    col_porta_gk_stag, col_tast_gk_stag = st.columns([1, 3])
                     with col_porta_gk_stag:
                         st.pyplot(fig_porta_gk_stag)
                         if tasto_sel_gk_stag:
@@ -13237,7 +13297,7 @@ with tab4:
                 tot_p_sel, goal_p_sel = costruisci_conteggi_porta(df_porta_sel)
                 immagine_porta_sel_bytes = _porta_cacheable(tot_p_sel, goal_p_sel, colore_cornice=colore_cornice_sel)
 
-                col_porta_sel, col_tast_sel = st.columns([1, 2])
+                col_porta_sel, col_tast_sel = st.columns([1, 3])
                 with col_porta_sel:
                     st.image(immagine_porta_sel_bytes)
                     if tasto_scelto:
@@ -13349,7 +13409,7 @@ with tab4:
                             tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore_vista)
 
                             chiave_giocatore = _chiave_css_sicura(nome_giocatore)
-                            col_porta, col_tast = st.columns([1, 2])
+                            col_porta, col_tast = st.columns([1, 3])
                             with col_porta:
                                 st.image(immagine_porta_bytes)
                                 if tasto_scelto:
@@ -13574,7 +13634,8 @@ with tab4:
                         salva_competizioni_partite_su_disco(st.session_state['competizioni_partite'])
 
                 with st.expander("🎬 Video links per micro-zone (optional)"):
-                    st.caption("Attach a video link to any micro-zone button in the PDF's Expected Goals keyboard. "
+                    st.caption("Attach a video link to any micro-zone: when at least one is set, a table with the clickable "
+                               "links appears next to the Expected Goals map (below, and in the PDF). "
                                "Leave blank for zones with no video.")
                     link_zona_squadra_attuali = st.session_state['link_video_zone'].get(titolo_dashboard, {})
                     df_link_zone_editor = pd.DataFrame({
@@ -13587,6 +13648,14 @@ with tab4:
                     if nuovi_link_zona != link_zona_squadra_attuali:
                         st.session_state['link_video_zone'][titolo_dashboard] = nuovi_link_zona
                         salva_link_zone_su_disco(st.session_state['link_video_zone'])
+
+                if modalita_tir == "Team":
+                    st.markdown("**🎯 Expected Goals — Shot Zones** (same map as in the PDF)")
+                    _esclusi_vista = {g for g in giocatori_da_mostrare
+                                      if not st.session_state.get(f"include_pdf_{chiave_roster_ctx}_{_chiave_css_sicura(g)}", True)}
+                    _df_expected_vista = (df_selezione[~df_selezione['TIRATORE_ID'].isin(_esclusi_vista)]
+                                          if _esclusi_vista else df_selezione)
+                    mostra_mappa_expected_goals_schermo(_df_expected_vista, st.session_state['link_video_zone'].get(titolo_dashboard))
 
                 includi_note_sel = st.checkbox(
                     "Include coach's notes in the PDF", value=True, key="inc_note_pdf_selection",
@@ -14318,7 +14387,7 @@ with tab6:
                     immagine_porta_tg_bytes = _porta_cacheable(tot_porta_tg, goal_porta_tg, colore_cornice=colore_cornice_tg)
                     tot_tast_tg, goal_tast_tg = costruisci_conteggi_tastiera(df_tg_filtrato)
 
-                    col_p_tg, col_t_tg = st.columns([1, 2])
+                    col_p_tg, col_t_tg = st.columns([1, 3])
                     with col_p_tg:
                         st.image(immagine_porta_tg_bytes)
                     with col_t_tg:
@@ -14424,7 +14493,7 @@ with tab6:
                     immagine_porta_tg_gk_bytes = _porta_cacheable(tot_porta_tg_gk, salvate_porta_tg_gk, colore_cornice=colore_cornice_tg_gk)
                     tot_tast_tg_gk, salvate_tast_tg_gk = costruisci_conteggi_tastiera(df_tg_gk_filtrato, esiti_successo=('save', 's'))
 
-                    col_p_tg_gk, col_t_tg_gk = st.columns([1, 2])
+                    col_p_tg_gk, col_t_tg_gk = st.columns([1, 3])
                     with col_p_tg_gk:
                         st.image(immagine_porta_tg_gk_bytes)
                         if tasto_sel_tg_gk and len(df_porta_tg_gk) > 0:
