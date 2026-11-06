@@ -1169,7 +1169,8 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v99 - 2026-11-06 - Campo a schermo più grande (pulsantiera cliccabile e mappa Expected Goals); i PDF non cambiano. "
+APP_VERSION = ("v100 - 2026-11-06 - Campo a schermo un po' più grande (+20%), porta alle dimensioni di prima; i PDF non cambiano. "
+    "v99 - 2026-11-06 - Campo a schermo più grande (pulsantiera cliccabile e mappa Expected Goals); i PDF non cambiano. "
     "v98 - 2026-11-06 - Mappa Expected Goals visibile anche a schermo (Shooting Trend, vista Team), con tabella dei link video quando inseriti. "
     "v97 - 2026-11-06 - Cache delle immagini di porta e campo legata alla versione: dopo ogni aggiornamento si rifanno sempre con la grafica nuova (settori e nomi tutti visibili). "
     "v96 - 2026-11-06 - Campo: i settori centrali senza tiri (7m, bt2, 9m2) mostrano sempre il nome. "
@@ -2398,7 +2399,7 @@ def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key)
         )
         return st.button(etichetta, key=key, disabled=disabilitato, use_container_width=True)
 
-def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix, altezza_px=720):
+def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix, altezza_px=580):
     """Il campo a 23 microsettori come vera pulsantiera: ogni microsettore è un pulsante cliccabile
     (stessa grafica e stessa heat map dell'immagine nei PDF). Restituisce il nome del tasto appena
     cliccato in questo rerun, o None. Se la versione di Streamlit non supporta i grafici cliccabili,
@@ -12082,7 +12083,7 @@ with tab2:
                     fig_porta_gk = disegna_porta(tot_porta_gk, salvate_porta_gk, colore_cornice=colore_cornice_gk)
                     tot_tast_gk, salvate_tast_gk = costruisci_conteggi_tastiera(df_gk_filtrato, esiti_successo=('save', 's'))
 
-                    col_porta_gk, col_tast_gk = st.columns([1, 3])
+                    col_porta_gk, col_tast_gk = st.columns([1, 2])
                     with col_porta_gk:
                         st.pyplot(fig_porta_gk)
                         if tasto_sel_gk:
@@ -12371,7 +12372,7 @@ with tab2:
                 fig_porta_mt = disegna_porta(tot_porta_mt, goal_porta_mt, colore_cornice=colore_cornice_mt)
                 tot_tast_mt, goal_tast_mt = costruisci_conteggi_tastiera(df_mt_filtrato)
 
-                col_porta_mt, col_tast_mt = st.columns([1, 3])
+                col_porta_mt, col_tast_mt = st.columns([1, 2])
                 with col_porta_mt:
                     st.pyplot(fig_porta_mt)
                     if tasto_sel_mt:
@@ -12723,7 +12724,7 @@ with tab3:
                 tot_porta_sq, salvate_porta_sq = costruisci_conteggi_porta(df_porta_sq, esiti_successo=('save', 's'))
                 fig_porta_sq = disegna_porta(tot_porta_sq, salvate_porta_sq, colore_cornice=colore_cornice_sq)
                 tot_tast_sq, salvate_tast_sq = costruisci_conteggi_tastiera(df_sq_filtrato, esiti_successo=('save', 's'))
-                col_porta_sq, col_tast_sq = st.columns([1, 3])
+                col_porta_sq, col_tast_sq = st.columns([1, 2])
                 with col_porta_sq:
                     st.pyplot(fig_porta_sq)
                     if tasto_sel_sq:
@@ -12849,7 +12850,7 @@ with tab3:
                     fig_porta_gk_stag = disegna_porta(tot_porta_gk_stag, salvate_porta_gk_stag, colore_cornice=colore_cornice_gk_stag)
                     tot_tast_gk_stag, salvate_tast_gk_stag = costruisci_conteggi_tastiera(df_gk_stag_filtrato, esiti_successo=('save', 's'))
 
-                    col_porta_gk_stag, col_tast_gk_stag = st.columns([1, 3])
+                    col_porta_gk_stag, col_tast_gk_stag = st.columns([1, 2])
                     with col_porta_gk_stag:
                         st.pyplot(fig_porta_gk_stag)
                         if tasto_sel_gk_stag:
@@ -13297,7 +13298,7 @@ with tab4:
                 tot_p_sel, goal_p_sel = costruisci_conteggi_porta(df_porta_sel)
                 immagine_porta_sel_bytes = _porta_cacheable(tot_p_sel, goal_p_sel, colore_cornice=colore_cornice_sel)
 
-                col_porta_sel, col_tast_sel = st.columns([1, 3])
+                col_porta_sel, col_tast_sel = st.columns([1, 2])
                 with col_porta_sel:
                     st.image(immagine_porta_sel_bytes)
                     if tasto_scelto:
@@ -13409,7 +13410,7 @@ with tab4:
                             tot_tast, goal_tast = costruisci_conteggi_tastiera(df_giocatore_vista)
 
                             chiave_giocatore = _chiave_css_sicura(nome_giocatore)
-                            col_porta, col_tast = st.columns([1, 3])
+                            col_porta, col_tast = st.columns([1, 2])
                             with col_porta:
                                 st.image(immagine_porta_bytes)
                                 if tasto_scelto:
@@ -14387,7 +14388,7 @@ with tab6:
                     immagine_porta_tg_bytes = _porta_cacheable(tot_porta_tg, goal_porta_tg, colore_cornice=colore_cornice_tg)
                     tot_tast_tg, goal_tast_tg = costruisci_conteggi_tastiera(df_tg_filtrato)
 
-                    col_p_tg, col_t_tg = st.columns([1, 3])
+                    col_p_tg, col_t_tg = st.columns([1, 2])
                     with col_p_tg:
                         st.image(immagine_porta_tg_bytes)
                     with col_t_tg:
@@ -14493,7 +14494,7 @@ with tab6:
                     immagine_porta_tg_gk_bytes = _porta_cacheable(tot_porta_tg_gk, salvate_porta_tg_gk, colore_cornice=colore_cornice_tg_gk)
                     tot_tast_tg_gk, salvate_tast_tg_gk = costruisci_conteggi_tastiera(df_tg_gk_filtrato, esiti_successo=('save', 's'))
 
-                    col_p_tg_gk, col_t_tg_gk = st.columns([1, 3])
+                    col_p_tg_gk, col_t_tg_gk = st.columns([1, 2])
                     with col_p_tg_gk:
                         st.image(immagine_porta_tg_gk_bytes)
                         if tasto_sel_tg_gk and len(df_porta_tg_gk) > 0:
