@@ -12,6 +12,7 @@ import uuid
 import os
 import pickle
 import io
+import math
 import tempfile
 import time
 import base64
@@ -1168,7 +1169,9 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v89 - 2026-11-06 - Shooting report PDF: foto dei giocatori sempre presenti in \"Shooters by Shot Volume\" (dimensione adattiva), tabelle senza voci (es. Money Time) omesse, tabelle di seguito alla mappa generale per ridurre gli spazi bianchi. Include v88 - Matches Analyzed: tabella modificabile anche senza spunta Includi, base fissa durante la scrittura. (v87) Shooting report, pagina \"Matches Analyzed\" del PDF: nuova spunta \"Edit\": spuntata, la tabella si modifica liberamente a mano (cancellare o scrivere righe, senza che le righe automatiche tornino); tolta, la tabella torna a calcolarsi in automatico. Include v86 - 2026-11-02 - Universal Stats: nuovo grafico \"Shooting vs. Goalkeeping Efficiency Map\" (efficacia al tiro contro efficacia concessa, una squadra per punto, solo squadre con dati tiratori e portieri, filtrabile per lega). Include v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v91 - 2026-11-06 - Pagina Expected Goals del PDF con il campo nuovo; se ci sono link video compare accanto la tabella dei link, altrimenti il campo resta più grande. "
+    "v90 - 2026-11-06 - Nuova grafica: porta con cornice rossa/bianca e divisori, campo a 23 microsettori simmetrico (schermate, PDF, Seasonal Report) con settori cliccabili. "
+    "v89 - 2026-11-06 - Shooting report PDF: foto dei giocatori sempre presenti in \"Shooters by Shot Volume\" (dimensione adattiva), tabelle senza voci (es. Money Time) omesse, tabelle di seguito alla mappa generale per ridurre gli spazi bianchi. Include v88 - Matches Analyzed: tabella modificabile anche senza spunta Includi, base fissa durante la scrittura. (v87) Shooting report, pagina \"Matches Analyzed\" del PDF: nuova spunta \"Edit\": spuntata, la tabella si modifica liberamente a mano (cancellare o scrivere righe, senza che le righe automatiche tornino); tolta, la tabella torna a calcolarsi in automatico. Include v86 - 2026-11-02 - Universal Stats: nuovo grafico \"Shooting vs. Goalkeeping Efficiency Map\" (efficacia al tiro contro efficacia concessa, una squadra per punto, solo squadre con dati tiratori e portieri, filtrabile per lega). Include v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -2295,7 +2298,55 @@ def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key)
         )
         return st.button(etichetta, key=key, disabled=disabilitato, use_container_width=True)
 
-def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix):
+def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix, altezza_px=470):
+    """Il campo a 23 microsettori come vera pulsantiera: ogni microsettore è un pulsante cliccabile
+    (stessa grafica e stessa heat map dell'immagine nei PDF). Restituisce il nome del tasto appena
+    cliccato in questo rerun, o None. Se la versione di Streamlit non supporta i grafici cliccabili,
+    torna alla vecchia griglia di pulsanti."""
+    selezionati = tuple(_come_lista(tasto_selezionato))
+    try:
+        png = _campo_png_bytes(tuple(sorted(conteggi_totali.items())), tuple(sorted(conteggi_goal.items())), selezionati)
+        uri = "data:image/png;base64," + base64.b64encode(png).decode('ascii')
+        xs, ys, nomi = _campo_punti_click()
+        fig = go.Figure()
+        fig.add_layout_image(dict(source=uri, xref='x', yref='y', x=-2, y=486, sizex=713, sizey=488,
+                                  xanchor='left', yanchor='top', sizing='stretch', layer='below'))
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode='markers', customdata=nomi,
+                                 marker=dict(size=13, color='rgba(0,0,0,0)', line=dict(width=0)),
+                                 hoverinfo='none', showlegend=False,
+                                 selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0))))
+        fig.update_xaxes(range=[-2, 711], visible=False, fixedrange=True)
+        fig.update_yaxes(range=[-2, 486], visible=False, fixedrange=True, scaleanchor='x', scaleratio=1, constrain='domain')
+        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=altezza_px, dragmode=False,
+                          clickmode='event+select', paper_bgcolor='white', plot_bgcolor='white', hoverdistance=18)
+        chiave_n = f"{key_prefix}__campo_n"
+        n = st.session_state.get(chiave_n, 0)
+        evento = st.plotly_chart(fig, key=f"{key_prefix}__campo_{n}", on_select="rerun", selection_mode="points",
+                                 use_container_width=True, config={'displayModeBar': False})
+    except TypeError:
+        return _pulsantiera_settori_campo_bottoni(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix)
+    punti = []
+    try:
+        punti = (evento or {}).get('selection', {}).get('points', []) or []
+    except Exception:
+        punti = []
+    if not punti:
+        return None
+    p = punti[0]
+    nome = p.get('customdata')
+    if isinstance(nome, (list, tuple)):
+        nome = nome[0] if nome else None
+    if nome is None:
+        idx = p.get('point_index', p.get('point_number'))
+        nome = nomi[idx] if idx is not None and 0 <= idx < len(nomi) else None
+    st.session_state[chiave_n] = n + 1   # azzera la selezione del grafico: il prossimo clic funziona di nuovo
+    if nome is None or conteggi_totali.get(nome, 0) == 0:
+        st.rerun()
+        return None
+    return nome
+
+
+def _pulsantiera_settori_campo_bottoni(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix):
     """Disegna l'intera tastiera dei settori di campo come griglia di pulsanti cliccabili veri
     (stesso layout piramidale e stessa heat map a 4 colori dell'immagine statica), pensata per
     stare affiancata alla porta in una colonna stretta. Restituisce il nome del tasto appena
@@ -3482,41 +3533,56 @@ def _colori_heatmap_porta(conteggi):
                 colori[k] = '#7fb8e0'
     return colori
 
+# --- Porta v90: copia della grafica scelta (cornice rossa/bianca, 9 settori blu con divisori bianchi) ---
+_PORTA_TRAVERSA = [(18, 51, 1), (52, 76, 0), (77, 100, 1), (101, 125, 0), (126, 150, 1), (151, 174, 0), (175, 199, 1),
+                   (200, 223, 0), (224, 248, 1), (249, 272, 0), (273, 297, 1), (298, 322, 0), (323, 346, 1),
+                   (347, 371, 0), (372, 405, 1)]
+_PORTA_PALO = [(22, 62, 1), (63, 90, 0), (91, 117, 1), (118, 144, 0), (145, 171, 1), (172, 199, 0), (200, 226, 1),
+               (227, 253, 0), (254, 281, 1), (282, 308, 0)]
+
+def _luminosita_hex(colore_hex):
+    h = colore_hex.lstrip('#')
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
 def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=None):
-    """Disegna la porta con i 9 settori (T1-T9): sotto ogni settore, 'goal/totale = pct%'.
-    Ogni settore è colorato con una heat map a 4 toni di blu in base alla frequenza dei tiri.
-    colore_cornice: se fornito ('#rrggbb'), colora il bordo esterno (usato quando è selezionato
-    un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
-    fig, ax = plt.subplots(figsize=(2.9, 2.5), dpi=150)
-    margine_cornice = 0.22
-    ax.set_xlim(-margine_cornice, 3 + margine_cornice)
-    ax.set_ylim(-margine_cornice, 3 + margine_cornice)
-    ax.set_aspect('equal')
-    ax.axis('off')
-
-    bordo = colore_cornice if colore_cornice else '#2c4a6e'
+    """Disegna la porta con i 9 settori (T1-T9): in ogni settore 'T#' e 'goal/totale=pct%'.
+    Cornice a strisce rosse/bianche (traversa e pali, con il 'sette' in rosso), settori colorati con
+    la heat map a toni di blu in base alla frequenza dei tiri, separati da divisori bianchi.
+    colore_cornice: se fornito ('#rrggbb'), colora il contorno esterno della porta (usato quando è
+    selezionato un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
+    rosso = '#e0231d'
+    fig, ax = plt.subplots(figsize=(5.5, 4.15), dpi=150)
+    ax.set_xlim(-4, 429); ax.set_ylim(325, -4); ax.set_aspect('equal'); ax.axis('off')
     fig.patch.set_facecolor('white')
-    ax.add_patch(plt.Rectangle((-margine_cornice, -margine_cornice), 3 + 2 * margine_cornice, 3 + 2 * margine_cornice,
-                                facecolor=bordo, edgecolor='none', zorder=0))
-
+    ax.add_patch(plt.Rectangle((0, 0), 425, 321, facecolor='#6d8fd0', edgecolor='none', zorder=0))
+    ax.add_patch(plt.Rectangle((0, 0), 425, 321, facecolor='none', edgecolor=colore_cornice or '#243462',
+                                linewidth=7 if colore_cornice else 2, zorder=8))
+    for x0, x1, r in _PORTA_TRAVERSA:
+        ax.add_patch(plt.Rectangle((x0, 22), x1 - x0 + 1, 14, facecolor=rosso if r else 'white', edgecolor='none', zorder=2))
+    for y0, y1, r in _PORTA_PALO:
+        for xp in (18, 392):
+            ax.add_patch(plt.Rectangle((xp, y0), 14, y1 - y0 + 1, facecolor=rosso if r else 'white', edgecolor='none', zorder=2))
     colori_heat = _colori_heatmap_porta(conteggi_totali)
+    larg_c, alt_c = 120.0, 272.0 / 3
     for r, riga in enumerate(ORDINE_PORTA):
         for c, sett in enumerate(riga):
-            x0 = c
-            y0 = 2 - r
+            x0, y0 = 32 + c * larg_c, 36 + r * alt_c
             tot = conteggi_totali.get(sett, 0)
             goal = conteggi_goal.get(sett, 0)
-            pct = (goal / tot * 100) if tot > 0 else None
             colore_cella = colori_heat.get(sett, '#e9edf3')
-            testo_colore = '#1a1a1a' if colore_cella in ('#7fb8e0', '#e9edf3') else 'white'
-            ax.add_patch(plt.Rectangle((x0, y0), 1, 1, facecolor=colore_cella, edgecolor='white', linewidth=1.5, zorder=1))
-            ax.text(x0 + 0.5, y0 + 0.62, sett, ha='center', va='center', fontsize=8.5,
-                    color=testo_colore, fontweight='bold', zorder=2)
-            testo_val = f"{goal}/{tot}={pct:.0f}%" if tot > 0 else "0/0"
-            ax.text(x0 + 0.5, y0 + 0.30, testo_val, ha='center', va='center', fontsize=7.3,
-                    color=testo_colore, zorder=2)
+            testo_colore = '#14213d' if _luminosita_hex(colore_cella) > 150 else 'white'
+            ax.add_patch(plt.Rectangle((x0, y0), larg_c, alt_c, facecolor=colore_cella, edgecolor='none', zorder=4))
+            ax.text(x0 + larg_c / 2, y0 + alt_c * 0.40, sett, ha='center', va='center', fontsize=11,
+                    fontweight='bold', color=testo_colore, zorder=6)
+            testo_val = f"{goal}/{tot}={goal / tot * 100:.0f}%" if tot > 0 else "0/0"
+            ax.text(x0 + larg_c / 2, y0 + alt_c * 0.68, testo_val, ha='center', va='center', fontsize=7.6,
+                    color=testo_colore, zorder=6)
+    for i in (1, 2):
+        ax.plot([32 + i * larg_c] * 2, [36, 308], color='white', linewidth=3.2, zorder=5, solid_capstyle='butt')
+        ax.plot([32, 392], [36 + i * alt_c] * 2, color='white', linewidth=3.2, zorder=5, solid_capstyle='butt')
     if titolo:
-        ax.set_title(titolo, fontsize=11, color='#15304f', pad=10)
+        ax.set_title(titolo, fontsize=11, color='#15304f', pad=8)
     fig.tight_layout()
     return fig
 
@@ -3561,47 +3627,259 @@ def _colori_heatmap_frequenza(conteggi):
                 colori[k] = '#f2d24b'
     return colori
 
-def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None):
-    """Disegna la tastiera dei settori di campo per i PDF, con lo stesso stile 'a barre larghe'
-    della pulsantiera interattiva a schermo (una riga per fascia, celle rettangolari a piena
-    larghezza): più leggibile della vecchia griglia quadrata, che non aveva spazio per le
-    percentuali più lunghe. Heat map a 4 colori (frequenza tiri); il tasto eventualmente
-    selezionato viene evidenziato con un bordo nero spesso."""
-    colori_heat = _colori_heatmap_frequenza(conteggi_totali)
-    n_righe = len(ORDINE_TASTIERA_TIRATORI)
-    larghezza_totale = 10  # unità arbitrarie: ogni riga occupa sempre l'intera larghezza
-    altezza_cella = 0.62
-    spazio_riga = 1.0
+# ============================================================
+# CAMPO v90: disegno dei 23 microsettori copiato dalla grafica scelta (simmetrico, sinistra/destra
+# speculari). Geometria precalcolata: poligoni dei settori, posizione dei nomi nell'area bianca e
+# "spazi utili" (rettangoli ruotati) dentro ogni settore dove far stare le scritte. Le scritte si
+# adattano da sole: si prova la dimensione più grande che sta DENTRO il settore, senza uscire mai dai
+# bordi; i settori omologhi (es. bt1 e bt3) hanno sempre la stessa dimensione e posizione speculare.
+# ============================================================
+_CAMPO = json.loads(r"""{"poly":{"lw1":[[0,0],[0,51],[14,50],[89,36],[92,34],[88,18],[86,0]],"rw1":[[709.0,0],[709.0,51],[695.0,50],[620.0,36],[617.0,34],[621.0,18],[623.0,0]],"lw2":[[92,35],[89,37],[14,51],[0,52],[0,112],[8,111],[109,73],[110,71],[99,52]],"rw2":[[617.0,35],[620.0,37],[695.0,51],[709.0,52],[709.0,112],[701.0,111],[600.0,73],[599.0,71],[610.0,52]],"6m1":[[112,73],[129,97],[154,122],[172,136],[175,137],[195,115],[162,84],[145,60]],"6m3":[[597.0,73],[580.0,97],[555.0,122],[537.0,136],[534.0,137],[514.0,115],[547.0,84],[564.0,60]],"6m1,5":[[176,137],[178,140],[193,149],[229,165],[251,171],[276,174],[276,144],[265,144],[235,136],[212,125],[197,115]],"6m2,5":[[533.0,137],[531.0,140],[516.0,149],[480.0,165],[458.0,171],[433.0,174],[433.0,144],[444.0,144],[474.0,136],[497.0,125],[512.0,115]],"bt1":[[36,101],[57,132],[76,154],[97,174],[122,194],[174,138],[154,123],[128,97],[111,73]],"bt3":[[673.0,101],[652.0,132],[633.0,154],[612.0,174],[587.0,194],[535.0,138],[555.0,123],[581.0,97],[598.0,73]],"bt1,5":[[123,193],[129,199],[162,219],[200,236],[242,248],[261,251],[275,250],[276,175],[251,172],[229,166],[193,150],[175,138]],"bt2,5":[[586.0,193],[580.0,199],[547.0,219],[509.0,236],[467.0,248],[448.0,251],[434.0,250],[433.0,175],[458.0,172],[480.0,166],[516.0,150],[534.0,138]],"9m1":[[35,101],[8,112],[0,113],[0,321],[4,321],[121,195],[119,192],[97,175],[75,154],[56,132]],"9m3":[[674.0,101],[701.0,112],[709.0,113],[709.0,321],[705.0,321],[588.0,195],[590.0,192],[612.0,175],[634.0,154],[653.0,132]],"9m1,5":[[0,322],[0,431],[271,431],[275,260],[274,252],[253,251],[208,240],[162,220],[122,195],[5,321]],"9m2,5":[[709.0,322],[709.0,431],[438.0,431],[434.0,260],[435.0,252],[456.0,251],[501.0,240],[547.0,220],[587.0,195],[704.0,321]],"fb1":[[0,441],[0,484],[236,484],[237,479],[236,441]],"fb3":[[709.0,441],[709.0,484],[473.0,484],[472.0,479],[473.0,441]],"7m":[[418.0,92.0],[418.0,39.0],[354.5,38.5],[291.0,39.0],[291.0,92.0]],"6m2":[[431.0,173.0],[430.0,144.0],[279.0,144.0],[278.0,173.0]],"bt2":[[433.0,252.0],[431.0,174.0],[278.0,174.0],[276.0,252.0]],"9m2":[[276.0,260.0],[272.1,425.7],[273.0,431.0],[436.0,431.0],[436.9,425.7],[433.0,260.0],[433.1,259.0],[433.0,253.0],[276.0,253.0],[275.9,259.0]],"fb2":[[471.0,484.0],[471.0,441.0],[238.0,441.0],[238.0,484.0]],"AREA":[[111.0,72.0],[139.0,61.0],[146.0,60.0],[167.0,88.0],[184.0,104.0],[201.0,117.0],[232.4,133.7],[259.8,141.5],[270.9,143.0],[354.5,143.5],[438.1,143.0],[449.2,141.5],[476.6,133.7],[508.0,117.0],[525.0,104.0],[542.0,88.0],[563.0,60.0],[570.0,61.0],[598.0,72.0],[607.4,54.9],[614.0,37.0],[616.0,35.0],[622.0,0.0],[87.0,0.0],[93.0,35.0],[95.0,37.0],[101.6,54.9]]},"white":{"lw1":[104,14],"rw1":[605.0,14],"lw2":[114,40],"rw2":[595.0,40],"6m1":[178,72],"6m3":[531.0,72],"6m1,5":[244,118],"6m2,5":[465.0,118],"6m2":[354.5,128]},"slots":{"lw1":{"al":0.0,"s":[[19.0,23.0,14.3,20.5],[24.0,22.0,19.5,19.5],[28.0,22.0,24.0,18.5],[33.0,20.0,29.7,17.5],[41.0,19.0,36.3,16.5],[41.0,19.0,38.5,12.8],[43.0,24.0,40.5,10.1],[43.0,24.0,40.5,8.1],[45.0,22.0,40.5,5.8],[45.0,22.0,40.5,4.0],[45.0,22.0,40.5,2.9]]},"lw2":{"al":0.0,"s":[[27.0,74.0,14.3,20.5],[27.0,74.0,19.5,19.5],[27.0,74.0,22.7,17.5],[35.0,71.0,28.0,16.5],[35.0,70.0,32.5,14.8],[42.0,69.0,37.5,12.5],[45.0,67.0,42.5,10.6],[45.0,70.0,42.5,8.5],[50.0,69.0,45.5,6.5],[50.0,69.0,47.5,4.7],[50.0,69.0,47.5,3.4]]},"6m1":{"al":-45.0,"s":[[152.0,97.0,9.0,12.9],[152.0,97.0,13.1,13.1],[152.0,97.0,17.2,13.2],[152.0,97.0,20.9,12.3],[155.0,99.0,26.4,12.0],[156.0,99.0,35.5,11.8],[155.0,99.0,36.4,9.1],[152.0,100.0,37.0,7.4],[152.0,100.0,37.7,5.4],[152.0,100.0,38.2,3.8],[149.0,102.0,38.9,2.8]]},"6m1,5":{"al":-21.0,"s":[[228.0,149.0,7.7,10.9],[231.0,150.0,11.2,11.2],[229.0,148.0,13.2,10.2],[229.0,148.0,17.3,10.2],[229.0,148.0,22.4,10.2],[229.0,148.0,30.5,10.2],[227.0,147.0,38.0,9.5],[230.0,147.0,43.1,8.6],[229.0,148.0,43.7,6.2],[229.0,148.0,44.5,4.4],[229.0,151.0,45.9,3.3]]},"bt1":{"al":-44.0,"s":[[106.0,128.0,23.7,33.8],[106.0,128.0,33.6,33.6],[107.0,131.0,40.3,31.0],[105.0,135.0,44.8,26.3],[104.0,135.0,48.3,22.0],[100.0,138.0,50.8,16.9],[99.0,137.0,51.8,12.9],[98.0,137.0,52.4,10.5],[100.0,135.0,52.4,7.5],[100.0,135.0,52.3,5.2],[100.0,135.0,52.4,3.7]]},"bt1,5":{"al":-20.0,"s":[[210.0,198.0,23.5,33.5],[210.0,198.0,33.2,33.2],[210.0,197.0,42.0,32.3],[211.0,197.0,53.8,31.7],[210.0,198.0,57.8,26.3],[207.0,204.0,62.4,20.8],[206.0,206.0,64.9,16.2],[204.0,210.0,67.0,13.4],[204.0,213.0,69.3,9.9],[203.0,215.0,71.4,7.1],[203.0,215.0,72.1,5.1]]},"9m1":{"al":0.0,"s":[[40.9,202.3,29.6,42.3],[43.0,199.0,36.5,36.5],[43.0,199.0,40.5,31.1],[47.0,199.0,42.5,25.0],[49.0,199.0,45.1,20.5],[49.0,199.0,46.5,15.5],[52.0,199.0,49.5,12.4],[53.0,199.0,50.5,10.1],[55.0,197.0,52.5,7.5],[56.0,195.0,53.5,5.3],[56.0,195.0,53.5,3.8]]},"9m1,5":{"al":0.0,"s":[[142.9,334.9,63.3,90.4],[161.0,333.0,81.5,81.5],[170.0,331.0,99.4,76.5],[163.0,334.0,106.5,62.6],[157.0,330.0,109.5,49.8],[152.0,330.0,115.5,38.5],[149.0,332.0,121.5,30.4],[142.9,334.9,123.4,24.7],[142.9,334.9,127.6,18.2],[140.0,333.0,129.5,12.9],[139.0,333.0,131.5,9.4]]},"7m":{"al":0.0,"s":[[354.5,65.0,17.1,24.5],[354.5,65.0,24.5,24.5],[354.5,65.0,31.8,24.5],[354.5,65.0,41.6,24.5],[354.5,65.0,53.9,24.5],[354.5,65.0,61.0,20.3],[354.5,65.0,61.0,15.2],[354.5,65.0,61.0,12.2],[354.5,65.0,61.0,8.7],[354.5,65.0,61.0,6.1],[354.5,65.0,61.0,4.4]]},"6m2":{"al":0.0,"s":[[354.5,158.5,8.4,12.0],[354.5,158.5,12.0,12.0],[354.5,158.5,15.6,12.0],[354.5,158.5,20.4,12.0],[354.5,158.5,26.4,12.0],[354.5,158.5,36.0,12.0],[354.5,158.5,48.0,12.0],[354.5,158.5,60.0,12.0],[354.5,158.5,73.0,10.4],[354.5,158.5,73.0,7.3],[354.5,158.5,73.0,5.2]]},"bt2":{"al":0.0,"s":[[354.5,213.0,25.5,36.5],[354.5,213.0,36.5,36.5],[354.5,213.0,47.4,36.5],[354.5,213.0,62.0,36.5],[354.5,213.0,74.0,33.6],[354.5,213.0,74.0,24.7],[354.5,213.0,74.0,18.5],[354.5,213.0,75.0,15.0],[354.5,213.0,75.0,10.7],[354.5,213.0,75.0,7.5],[354.5,213.0,75.0,5.4]]},"9m2":{"al":0.0,"s":[[354.5,342.0,60.5,86.5],[354.5,342.0,76.0,76.0],[354.5,342.0,76.0,58.5],[354.5,342.0,77.0,45.3],[354.5,342.0,77.0,35.0],[354.5,342.0,77.0,25.7],[354.5,342.0,77.0,19.2],[354.5,342.0,77.0,15.4],[354.5,342.0,77.0,11.0],[354.5,342.0,77.0,7.7],[354.5,342.0,77.0,5.5]]}}}""")
+_CAMPO_POLI = _CAMPO['poly']
+_CAMPO_BIANCO = _CAMPO['white']
+_CAMPO_SLOT = _CAMPO['slots']
+_CAMPO_CX2 = 709.0
+_CAMPO_COPPIE = {'lw1': 'rw1', 'lw2': 'rw2', '6m1': '6m3', '6m1,5': '6m2,5', 'bt1': 'bt3', 'bt1,5': 'bt2,5',
+                 '9m1': '9m3', '9m1,5': '9m2,5'}
+_CAMPO_NOMI_FUORI = ('lw1', 'lw2', 'rw1', 'rw2', '6m1', '6m1,5', '6m2', '6m2,5', '6m3')
+_CAMPO_FS = [17, 15, 13.5, 12, 11, 10, 9, 8.2, 7.4, 6.8, 6.2]
+_CAMPO_PAL = {'alto': '#eea59d', 'medio': '#f6c795', 'basso': '#f6e3a1', 'nullo': '#d2d8e4',
+             'bianco': '#eef1f6', 'rosso': '#eea59d', 'arancio': '#f6c795', 'giallo': '#f6e3a1', 'verde': '#a9d8ae'}
+_CAMPO_TXT = '#1f2a44'
+_CAMPO_NOME = '#5a6683'
+_CAMPO_LIVELLO_DA_COLORE = {'#d13b2e': 'alto', '#f0872b': 'medio', '#f2d24b': 'basso', '#e9edf3': 'nullo'}
+_CAMPO_SEL = '#16203a'
+_campo_misura_cache = {}
+_campo_misura_ctx = {}
 
-    fig, ax = plt.subplots(figsize=(9.5, 5.6), dpi=150)
-    ax.set_xlim(0, larghezza_totale)
-    ax.set_ylim(0, n_righe * spazio_riga)
-    ax.axis('off')
+def _campo_misura(testo, fs, grassetto):
+    """Larghezza e altezza (in unità del disegno) di una scritta, con il font reale di matplotlib."""
+    chiave = (testo, fs, grassetto)
+    if chiave in _campo_misura_cache:
+        return _campo_misura_cache[chiave]
+    if 'ax' not in _campo_misura_ctx:
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        f = Figure(figsize=(9.5, 6.502), dpi=100)
+        FigureCanvasAgg(f)
+        a = f.add_axes([0, 0, 1, 1])
+        a.set_xlim(-2, 711); a.set_ylim(486, -2); a.axis('off')
+        _campo_misura_ctx['fig'], _campo_misura_ctx['ax'] = f, a
+    f, a = _campo_misura_ctx['fig'], _campo_misura_ctx['ax']
+    t = a.text(0, 0, testo, fontsize=fs, fontweight='bold' if grassetto else 'normal')
+    bb = t.get_window_extent(f.canvas.get_renderer())
+    t.remove()
+    inv = a.transData.inverted()
+    (x0, y0), (x1, y1) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y1)])
+    r = (abs(x1 - x0), abs(y1 - y0))
+    _campo_misura_cache[chiave] = r
+    return r
+
+def _campo_slot_di(k):
+    """(angolo, lista spazi utili [cx, cy, semi-larghezza, semi-altezza]) del settore k; i settori di
+    destra sono lo specchio esatto dei loro omologhi di sinistra."""
+    if k in _CAMPO_SLOT:
+        return _CAMPO_SLOT[k]['al'], _CAMPO_SLOT[k]['s']
+    for sx, dx in _CAMPO_COPPIE.items():
+        if dx == k:
+            sl = _CAMPO_SLOT[sx]
+            return -sl['al'], [[_CAMPO_CX2 - s[0], s[1], s[2], s[3]] for s in sl['s']]
+    return 0.0, []
+
+def _campo_testi(goal, tot, sp=None):
+    """Le due righe di numeri di un settore. Normale: '88%' e '(14/16)'. Modo Expected Goals
+    (sp = testo S.P.): '14/16=88%' e 'S.P. 25%'."""
+    if sp is None:
+        return f"{goal / tot * 100:.0f}%", f"({goal}/{tot})"
+    return f"{goal}/{tot}={goal / tot * 100:.0f}%", sp
+
+def _campo_dim(k, goal, tot, fs, layout, sp=None):
+    pct, sub = _campo_testi(goal, tot, sp)
+    if layout == 'tre':
+        wn, hn = _campo_misura(k, fs * 0.62, True)
+        w1, h1 = _campo_misura(pct, fs, True)
+        w2, h2 = _campo_misura(sub, fs * 0.68, False)
+        g = h1 * 0.1
+        return max(wn, w1, w2), hn + g + h1 + g * 0.6 + h2, (hn, h1, h2, g)
+    if layout == 'due':
+        w1, h1 = _campo_misura(pct, fs, True)
+        w2, h2 = _campo_misura(sub, fs * 0.68, False)
+        g = h1 * 0.12
+        return max(w1, w2), h1 + g + h2, (0, h1, h2, g)
+    w1, h1 = _campo_misura(f"{pct} {sub}", fs, True)
+    return w1, h1, (0, h1, 0, 0)
+
+def _campo_scegli_slot(slots, larg, alt):
+    """Lo spazio utile in cui il testo (larg x alt) sta con più margine; None se non entra."""
+    migliore, punteggio = None, 1.0
+    for s in slots:
+        rapporto = min(s[2] / (larg / 2.0), s[3] / (alt / 2.0))
+        if rapporto >= punteggio:
+            migliore, punteggio = s, rapporto
+    return migliore
+
+def _campo_trova(chiavi, dati, layouts, sp_txt=None):
+    """Dimensione/layout comuni a uno o due settori omologhi (stessa dimensione, posizione speculare).
+    Restituisce (fs, layout, {chiave: (cx, cy, angolo, parti, altezza)}) o None."""
+    k0 = chiavi[0]
+    al0, slots0 = _campo_slot_di(k0)
+    for fs in _CAMPO_FS:
+        for layout in layouts:
+            dims = [_campo_dim(k, dati[k][0], dati[k][1], fs, layout, (sp_txt or {}).get(k)) for k in chiavi]
+            larg = max(d[0] for d in dims)
+            alt = max(d[1] for d in dims)
+            s = _campo_scegli_slot(slots0, larg, alt)
+            if s is None:
+                continue
+            ris = {}
+            for k, d in zip(chiavi, dims):
+                if k == k0:
+                    ris[k] = (s[0], s[1], al0, d[2], d[1])
+                else:
+                    ris[k] = (_CAMPO_CX2 - s[0], s[1], -al0, d[2], d[1])
+            return fs, layout, ris
+    return None
+
+def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, expected=None):
+    """Disegna il campo con i 23 microsettori (stessa heat map a 4 livelli di frequenza tiri):
+    in ogni settore la percentuale e (goal/tiri). Il 7m è sempre il più scuro se ha tiri. Il tasto (o i
+    tasti) selezionato viene evidenziato con un contorno scuro. Nomi: minuscoli; quelli di ali e 6 metri
+    stanno nell'area bianca, gli altri dentro il settore."""
+    from matplotlib.patches import Polygon as _MPoly
+    if tasto_selezionato is None:
+        selezionati = []
+    elif isinstance(tasto_selezionato, (list, tuple, set)):
+        selezionati = list(tasto_selezionato)
+    else:
+        selezionati = [tasto_selezionato]
+    sp_txt = None
+    if expected is None:
+        colori_heat = _colori_heatmap_frequenza(conteggi_totali)
+        livello = {k: _CAMPO_LIVELLO_DA_COLORE.get(colori_heat.get(k, '#e9edf3'), 'nullo') for k in _CAMPO_POLI if k != 'AREA'}
+        if conteggi_totali.get('7m', 0) > 0:
+            livello['7m'] = 'alto'
+    else:
+        # modo Expected Goals: colori a soglia rispetto alla % attesa (S.P.) di ciascuna zona
+        livello, sp_txt = {}, {}
+        for k in _CAMPO_POLI:
+            if k == 'AREA':
+                continue
+            t, g, e = conteggi_totali.get(k, 0), conteggi_goal.get(k, 0), expected.get(k)
+            p = g / t * 100 if t else 0
+            sp_txt[k] = f"S.P. {e:.0f}%" if e is not None else "S.P. n/a"
+            if t < 5 or e is None:
+                livello[k] = 'bianco'
+            else:
+                livello[k] = 'rosso' if p >= e else 'arancio' if p >= e - 5 else 'giallo' if p >= e - 10 else 'verde'
+    dati = {k: (conteggi_goal.get(k, 0), conteggi_totali.get(k, 0)) for k in livello}
+
+    fig = plt.figure(figsize=(9.5, 6.502), dpi=150)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(-2, 711); ax.set_ylim(486, -2); ax.axis('off')
     fig.patch.set_facecolor('white')
+    ax.add_patch(_MPoly(_CAMPO_POLI['AREA'], closed=True, facecolor='white', edgecolor='white', linewidth=3, zorder=1))
+    ax.add_patch(plt.Rectangle((312, 0), 83, 3, facecolor='#b9c2d3', edgecolor='none', zorder=1))
+    for k, (x, y) in _CAMPO_BIANCO.items():
+        ax.text(x, y, k, ha='center', va='center', fontsize=9.5, fontweight='bold', color=_CAMPO_NOME, zorder=5)
+    for k in livello:
+        ax.add_patch(_MPoly(_CAMPO_POLI[k], closed=True, facecolor=_CAMPO_PAL[livello[k]], edgecolor='white',
+                            linewidth=3.0, zorder=2, joinstyle='round'))
 
-    for r, riga in enumerate(ORDINE_TASTIERA_TIRATORI):
-        larghezza_cella = larghezza_totale / len(riga)
-        y0 = (n_righe - 1 - r) * spazio_riga + (spazio_riga - altezza_cella) / 2
-        for c, tasto in enumerate(riga):
-            x0 = c * larghezza_cella
-            tot = conteggi_totali.get(tasto, 0)
-            goal = conteggi_goal.get(tasto, 0)
-            pct = (goal / tot * 100) if tot > 0 else None
-            colore = colori_heat.get(tasto, '#e9edf3')
-            bordo_larghezza = 2.6 if tasto == tasto_selezionato else 1.2
-            colore_bordo = 'black' if tasto == tasto_selezionato else 'white'
-            margine = larghezza_cella * 0.04
-            ax.add_patch(plt.Rectangle((x0 + margine, y0), larghezza_cella - 2 * margine, altezza_cella,
-                                        facecolor=colore, edgecolor=colore_bordo, linewidth=bordo_larghezza, zorder=1))
-            testo_colore = '#222222' if colore in ('#f2d24b', '#e9edf3') else 'white'
-            centro_x = x0 + larghezza_cella / 2
-            testo_val = f"{goal}/{tot}={pct:.0f}%" if tot > 0 else "0/0"
-            ax.text(centro_x, y0 + altezza_cella * 0.66, tasto, ha='center', va='center', fontsize=10,
-                    color=testo_colore, fontweight='bold', zorder=2)
-            ax.text(centro_x, y0 + altezza_cella * 0.27, testo_val, ha='center', va='center', fontsize=9,
-                    color=testo_colore, zorder=2)
-    fig.tight_layout()
+    def _scrivi(k, cx, cy, al, layout, fs, parti, alt):
+        goal, tot = dati[k]
+        hn, h1, h2, g = parti
+        u = (math.cos(math.radians(al)), -math.sin(math.radians(al)))
+        v = (math.sin(math.radians(al)), math.cos(math.radians(al)))
+        def T(off, s, size, bold, col):
+            ax.text(cx + v[0] * off, cy + v[1] * off, s, ha='center', va='center', fontsize=size,
+                    fontweight='bold' if bold else 'normal', color=col, rotation=al, rotation_mode='anchor', zorder=4)
+        pct, sub = _campo_testi(goal, tot, (sp_txt or {}).get(k))
+        if layout == 'tre':
+            o = -alt / 2
+            T(o + hn / 2, k, fs * 0.62, True, _CAMPO_NOME); o += hn + g
+            T(o + h1 / 2, pct, fs, True, _CAMPO_TXT); o += h1 + g * 0.6
+            T(o + h2 / 2, sub, fs * 0.68, False, _CAMPO_TXT)
+        elif layout == 'due':
+            o = -alt / 2
+            T(o + h1 / 2, pct, fs, True, _CAMPO_TXT); o += h1 + g
+            T(o + h2 / 2, sub, fs * 0.68, False, _CAMPO_TXT)
+        else:
+            T(0, f"{pct} {sub}", fs, True, _CAMPO_TXT)
+
+    def _posiziona(chiavi, layouts):
+        r = _campo_trova(chiavi, dati, layouts, sp_txt)
+        if r is None:
+            return
+        fs, layout, ris = r
+        for k, (cx, cy, al, parti, alt) in ris.items():
+            _scrivi(k, cx, cy, al, layout, fs, parti, alt)
+
+    # settori centrali
+    if dati['7m'][1] > 0: _posiziona(['7m'], ('tre',))
+    if dati['6m2'][1] > 0: _posiziona(['6m2'], ('una',))
+    if dati['bt2'][1] > 0: _posiziona(['bt2'], ('tre',))
+    if dati['9m2'][1] > 0: _posiziona(['9m2'], ('tre',))
+    # coppie di settori omologhi
+    for sx, dx in _CAMPO_COPPIE.items():
+        fuori = sx in _CAMPO_NOMI_FUORI
+        layouts = (('una', 'due') if sx.startswith('6m') else ('due', 'una')) if fuori else ('tre', 'una')
+        con_tiri = [k for k in (sx, dx) if dati[k][1] > 0]
+        if con_tiri:
+            _posiziona(con_tiri if len(con_tiri) == 2 else con_tiri, layouts)
+        if not fuori:
+            for k in (sx, dx):
+                if dati[k][1] == 0:   # nessun tiro: solo il nome, piccolo, dentro il settore
+                    al, slots = _campo_slot_di(k)
+                    if slots:
+                        s = slots[min(1, len(slots) - 1)]
+                        ax.text(s[0], s[1], k, ha='center', va='center', fontsize=8.5, fontweight='bold',
+                                color=_CAMPO_NOME, rotation=al, rotation_mode='anchor', zorder=4)
+    # fila fb
+    for k in ('fb1', 'fb2', 'fb3'):
+        xs = [p[0] for p in _CAMPO_POLI[k]]; ys = [p[1] for p in _CAMPO_POLI[k]]
+        cxx, cyy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+        goal, tot = dati[k]
+        ax.text(cxx, cyy - 9 if tot > 0 else cyy, k, ha='center', va='center', fontsize=9, fontweight='bold',
+                color=_CAMPO_NOME, zorder=4)
+        if tot > 0:
+            _p, _s = _campo_testi(goal, tot, sp_txt.get(k) if sp_txt else None)
+            ax.text(cxx, cyy + 8, f"{_p}  {_s}" if sp_txt is None else f"{_p}   {_s}", ha='center', va='center',
+                    fontsize=11.5 if sp_txt is None else 11, fontweight='bold', color=_CAMPO_TXT, zorder=4)
+    for k in selezionati:
+        if k in _CAMPO_POLI:
+            ax.add_patch(_MPoly(_CAMPO_POLI[k], closed=True, facecolor='none', edgecolor=_CAMPO_SEL,
+                                linewidth=3.4, zorder=7, joinstyle='round'))
     return fig
+
+@st.cache_data(show_spinner=False)
+def _campo_png_bytes(tot_items, goal_items, selezionati):
+    """PNG (bytes) del campo, in cache: serve come sfondo della pulsantiera cliccabile."""
+    fig = disegna_tastiera(dict(tot_items), dict(goal_items), tasto_selezionato=list(selezionati))
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=110, facecolor='white')
+    plt.close(fig)
+    return buf.getvalue()
+
+_campo_punti_cache = {}
+
+def _campo_punti_click():
+    """Punti 'invisibili' fitti dentro ogni settore: toccando un punto si seleziona quel microsettore."""
+    if 'p' in _campo_punti_cache:
+        return _campo_punti_cache['p']
+    from matplotlib.path import Path as _MPath
+    xs_tot, ys_tot, nomi = [], [], []
+    gx, gy = np.meshgrid(np.arange(0, 710, 9.0), np.arange(0, 486, 9.0))
+    griglia = np.column_stack([gx.ravel(), gy.ravel()])
+    for k, poli in _CAMPO_POLI.items():
+        if k == 'AREA':
+            continue
+        dentro = griglia[_MPath(np.array(poli)).contains_points(griglia)]
+        if len(dentro) == 0:
+            dentro = np.array([np.mean(np.array(poli), axis=0)])
+        for x, y in dentro:
+            xs_tot.append(float(x)); ys_tot.append(484.0 - float(y)); nomi.append(k)
+    _campo_punti_cache['p'] = (xs_tot, ys_tot, nomi)
+    return _campo_punti_cache['p']
 
 # ============================================================
 # PORTIERI: PARSING FILE (stessa identica logica prima incorporata nel loop di upload,
@@ -9364,44 +9642,48 @@ def _tabella_duelli_pdf(righe, link_duelli=None):
     return t
 
 def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
-    """Costruisce la pulsantiera come TABELLA reportlab (non immagine, per poter avere link
-    cliccabili), colorata secondo le soglie Expected Goal % (vedi _colore_soglia_expected_goals),
-    con testo opzionalmente cliccabile per micro-zona (link_per_zona: dict zona->url)."""
+    """Pagina Expected Goals: il campo a 23 microsettori colorato secondo le soglie Expected Goal %
+    (vedi _colore_soglia_expected_goals; in ogni settore 'goal/tiri=%' e la % attesa S.P.).
+    Se sono stati inseriti dei link video per alcune zone, a destra del campo compare una piccola
+    tabella con un link cliccabile per ciascuna zona; se non ci sono link il campo resta da solo,
+    più grande."""
     stili = getSampleStyleSheet()
-    stile_cella = ParagraphStyle('CellaPulsantieraExp', parent=stili['Normal'], fontSize=7.5,
-                                  alignment=TA_CENTER, textColor=colors.white, fontName='Helvetica-Bold', leading=9.5)
     zona_normalizzata = df['TIRO_CLEAN'].apply(_normalizza_zona) if not df.empty and 'TIRO_CLEAN' in df.columns else pd.Series(dtype=object)
-    blocco_righe = []
-    for riga_zone in ORDINE_TASTIERA_TIRATORI:
-        riga_celle, colori_riga = [], []
-        for zona in riga_zone:
-            df_z = df[zona_normalizzata == zona] if not df.empty else df.iloc[0:0]
-            tot = len(df_z)
-            goal = len(df_z[df_z['RESULT_CLEAN'].isin(['goal', 'g'])]) if tot > 0 else 0
-            pct = (goal / tot * 100) if tot > 0 else 0.0
-            expected = ottieni_expected_goal_pct(zona)
-            colore_sfondo = _colore_soglia_expected_goals(pct, tot, expected)
-            testo_expected = f"(S.P. {expected:.0f}%)" if expected is not None else "(S.P. n/a)"
-            testo_cella = f"{zona}<br/>{goal}/{tot} = {pct:.0f}%<br/>{testo_expected}" if tot > 0 else f"{zona}<br/>0/0<br/>{testo_expected}"
-            url = (link_per_zona or {}).get(zona)
-            colore_testo_hex = '#ffffff' if colore_sfondo != colors.HexColor('#ffffff') else '#333333'
-            if url:
-                testo_cella = f'<a href="{url}" color="{colore_testo_hex}"><u>{testo_cella}</u></a>'
-            stile_cella_riga = ParagraphStyle(f'CellaExp_{zona}', parent=stile_cella, textColor=colors.HexColor(colore_testo_hex))
-            riga_celle.append(Paragraph(testo_cella, stile_cella_riga))
-            colori_riga.append(colore_sfondo)
-        larghezza_cella = 25.5 * cm / len(riga_zone)
-        t = Table([riga_celle], colWidths=[larghezza_cella] * len(riga_zone))
-        stile_t = [('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, -1), 4),
-                   ('BOTTOMPADDING', (0, 0), (-1, -1), 4), ('BOX', (0, 0), (-1, -1), 0.5, colors.white),
-                   ('INNERGRID', (0, 0), (-1, -1), 1.5, colors.white)]
-        for idx_c, colore in enumerate(colori_riga):
-            stile_t.append(('BACKGROUND', (idx_c, 0), (idx_c, 0), colore))
-        t.setStyle(TableStyle(stile_t))
-        t.hAlign = 'CENTER'
-        blocco_righe.append(t)
-        blocco_righe.append(Spacer(1, 0.08 * cm))
-    return blocco_righe
+    tot_z, goal_z, expected_z = {}, {}, {}
+    for zona in TUTTI_I_TASTI_TIRATORI:
+        df_z = df[zona_normalizzata == zona] if not df.empty else df.iloc[0:0]
+        tot_z[zona] = len(df_z)
+        goal_z[zona] = len(df_z[df_z['RESULT_CLEAN'].isin(['goal', 'g'])]) if len(df_z) > 0 else 0
+        expected_z[zona] = ottieni_expected_goal_pct(zona)
+    link_validi = {z: u for z, u in (link_per_zona or {}).items() if z in TUTTI_I_TASTI_TIRATORI and str(u or '').strip()}
+
+    if not link_validi:
+        fig = disegna_tastiera(tot_z, goal_z, expected=expected_z)
+        return [_immagine_da_figura_matplotlib(fig, 17.5, 12.2)]
+
+    fig = disegna_tastiera(tot_z, goal_z, expected=expected_z)
+    img = _immagine_da_figura_matplotlib(fig, 15.8, 11.0)
+    stile_c = ParagraphStyle('CellaLinkExp', parent=stili['Normal'], fontSize=8.5, leading=11)
+    righe = [[Paragraph('<b>Zone</b>', stile_c), Paragraph('<b>Goal</b>', stile_c),
+              Paragraph('<b>S.P.</b>', stile_c), Paragraph('<b>Video</b>', stile_c)]]
+    for zona in TUTTI_I_TASTI_TIRATORI:
+        if zona not in link_validi:
+            continue
+        t, g, e = tot_z[zona], goal_z[zona], expected_z[zona]
+        testo_goal = f"{g}/{t}={g / t * 100:.0f}%" if t > 0 else "0/0"
+        testo_sp = f"{e:.0f}%" if e is not None else "n/a"
+        url = str(link_validi[zona]).strip().replace('&', '&amp;')
+        righe.append([Paragraph(zona, stile_c), Paragraph(testo_goal, stile_c), Paragraph(testo_sp, stile_c),
+                      Paragraph(f'<a href="{url}" color="#1a56c4"><u>Watch video</u></a>', stile_c)])
+    tabella = Table(righe, colWidths=[1.6 * cm, 2.4 * cm, 1.5 * cm, 2.6 * cm], repeatRows=1)
+    tabella.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e3e8f2')),
+        ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#c9d0de')),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    blocco = Table([[img, tabella]], colWidths=[16.2 * cm, 9.5 * cm])
+    blocco.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
+    return [blocco]
 
 def legenda_expected_goals_pdf():
     """Legenda dei colori della pulsantiera Expected Goals."""
@@ -9412,7 +9694,7 @@ def legenda_expected_goals_pdf():
     nota_sp = Paragraph(
         "<b>S.P.</b> = Expected Goal % for that zone, from the currently active profile (S.P. Value, "
         "based on Sergio Palazzi's video analysis, unless a different profile has been selected or created "
-        "in Upload Match Sheets). Shown on each button for reference, alongside the team's real Goal %.",
+        "in Upload Match Sheets). Shown in each zone for reference, alongside the team's real Goal %.",
         stile_nota_sp
     )
     voci = [
