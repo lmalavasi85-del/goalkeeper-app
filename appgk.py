@@ -25,7 +25,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.utils import ImageReader
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak, KeepTogether, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak, KeepTogether, HRFlowable, CondPageBreak
 
 # Timer globale: misura quanto impiega l'INTERO script ad ogni esecuzione (Streamlit riesegue
 # tutto il file ad ogni interazione, tab compresi — vedi il caption in sidebar più sotto), utile
@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v88 - 2026-11-06 - Matches Analyzed: tabella modificabile anche senza spunta Includi, base fissa durante la scrittura. (v87) Shooting report, pagina \"Matches Analyzed\" del PDF: nuova spunta \"Edit\": spuntata, la tabella si modifica liberamente a mano (cancellare o scrivere righe, senza che le righe automatiche tornino); tolta, la tabella torna a calcolarsi in automatico. Include v86 - 2026-11-02 - Universal Stats: nuovo grafico \"Shooting vs. Goalkeeping Efficiency Map\" (efficacia al tiro contro efficacia concessa, una squadra per punto, solo squadre con dati tiratori e portieri, filtrabile per lega). Include v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v89 - 2026-11-06 - Shooting report PDF: foto dei giocatori sempre presenti in \"Shooters by Shot Volume\" (dimensione adattiva), tabelle senza voci (es. Money Time) omesse, tabelle di seguito alla mappa generale per ridurre gli spazi bianchi. Include v88 - Matches Analyzed: tabella modificabile anche senza spunta Includi, base fissa durante la scrittura. (v87) Shooting report, pagina \"Matches Analyzed\" del PDF: nuova spunta \"Edit\": spuntata, la tabella si modifica liberamente a mano (cancellare o scrivere righe, senza che le righe automatiche tornino); tolta, la tabella torna a calcolarsi in automatico. Include v86 - 2026-11-02 - Universal Stats: nuovo grafico \"Shooting vs. Goalkeeping Efficiency Map\" (efficacia al tiro contro efficacia concessa, una squadra per punto, solo squadre con dati tiratori e portieri, filtrabile per lega). Include v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -9506,7 +9506,6 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         riga_mappa = Table([[img_p_sq, img_t_sq]], colWidths=[11.5 * cm, 16.5 * cm])
         riga_mappa.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
         pagina1.append(riga_mappa)
-        blocchi_pagine.append(pagina1)
 
         # Pagina 2: tiratori per volume di tiro (tabelle affiancate). Dimensioni scelte in base al
         # numero di giocatori, per restare SEMPRE su una sola pagina senza mai rompere il PDF: con
@@ -9518,59 +9517,56 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         df_volume_mt_pdf = classifica_tiratori_per_volume(df_squadra_riepilogo, solo_money_time=True)
         n_righe_max_volume = max(len(df_volume_tot_pdf), len(df_volume_mt_pdf))
 
-        # Soglie ricalibrate su un budget di altezza reale (foglio landscape, ~18cm utili sotto
-        # titolo+intestazioni): le foto (1.8cm/riga) sono molto più ingombranti del solo testo,
-        # quindi il numero di righe con foto a piena dimensione deve restare basso per avere
-        # sempre margine, altrimenti titolo e tabella rischiano di finire su pagine diverse.
-        if n_righe_max_volume <= 7:
-            font_vol, foto_vol, con_foto = 10, 1.8, True
-        elif n_righe_max_volume <= 10:
-            font_vol, foto_vol, con_foto = 9, 1.3, True
-        elif n_righe_max_volume <= 14:
-            font_vol, foto_vol, con_foto = 8, 1.0, True
-        elif n_righe_max_volume <= 30:
-            font_vol, padding_vol, con_foto = 7, 2, False
-        else:
-            font_vol, padding_vol, con_foto = 6, 1, False
+        # v89: le foto dei giocatori compaiono SEMPRE. La dimensione di foto e testo si adatta al
+        # numero di righe (più righe = foto più piccole, minimo 0,9 cm) così la tabella sta in una
+        # pagina quando possibile; se non basta, scorre sulla pagina dopo. Le tabelle senza voci
+        # (es. Money Time quando la timeline non è stata taggata) non vengono proprio inserite.
+        def _foto_e_font_adattivi(n_righe, budget_cm=16.0):
+            for _f in (1.8, 1.6, 1.4, 1.2, 1.0):
+                if n_righe * _f + 1.0 <= budget_cm:
+                    break
+            else:
+                _f = 0.9
+            _fs = 10 if _f >= 1.6 else 9 if _f >= 1.2 else 8 if _f >= 1.0 else 7
+            return _f, _fs
 
         stile_intestazione_volume = ParagraphStyle('IntVol', parent=stili['Heading3'], fontSize=12, spaceAfter=4, textColor=COLORE_ACCENTO)
-        intest_volume_tot = Paragraph("By total shot volume", stile_intestazione_volume)
-        intest_volume_mt = Paragraph("By Money Time shot volume", stile_intestazione_volume)
-        if con_foto:
-            tabella_volume_tot = _tabella_giocatori_con_foto(df_volume_tot_pdf.to_dict('records'), font_size=font_vol, larghezza_foto_cm=foto_vol)
-            tabella_volume_mt = _tabella_giocatori_con_foto(df_volume_mt_pdf.to_dict('records'), font_size=font_vol, larghezza_foto_cm=foto_vol)
-        else:
-            tabella_volume_tot = _df_to_reportlab_table(df_volume_tot_pdf, font_size=font_vol, padding_verticale=padding_vol)
-            tabella_volume_mt = _df_to_reportlab_table(df_volume_mt_pdf, font_size=font_vol, padding_verticale=padding_vol)
+        _n_vol_tot = len(df_volume_tot_pdf)
+        _n_vol_mt = len(df_volume_mt_pdf)
+        if _n_vol_tot or _n_vol_mt:
+            foto_vol, font_vol = _foto_e_font_adattivi(_n_vol_tot + _n_vol_mt)
+            # Le voci seguono la mappa generale nella STESSA pagina (niente pagina mezza vuota):
+            # CondPageBreak sposta il titolo sulla pagina dopo solo se resterebbe da solo in fondo.
+            pagina1.append(Spacer(1, 0.3 * cm))
+            pagina1.append(CondPageBreak(4.5 * cm))
+            pagina1.append(Paragraph("Shooters by Shot Volume", sezione_stile))
+            pagina1.append(Spacer(1, 0.15 * cm))
+            if _n_vol_tot:
+                pagina1.append(Paragraph("By total shot volume", stile_intestazione_volume))
+                pagina1.append(_tabella_giocatori_con_foto(df_volume_tot_pdf.to_dict('records'), font_size=font_vol, larghezza_foto_cm=foto_vol))
+            if _n_vol_mt:
+                pagina1.append(Spacer(1, 0.4 * cm))
+                pagina1.append(CondPageBreak(4.5 * cm))
+                pagina1.append(Paragraph("By Money Time shot volume", stile_intestazione_volume))
+                pagina1.append(_tabella_giocatori_con_foto(df_volume_mt_pdf.to_dict('records'), font_size=font_vol, larghezza_foto_cm=foto_vol))
 
-        # Ogni tabella nella sua riga, mai due affiancate: una tabella già dimensionata per
-        # l'intera larghezza della pagina, se infilata in metà colonna accanto a un'altra,
-        # sfora oltre la pagina invece di restringersi — meglio impilarle verticalmente, sempre
-        # leggibili qualunque sia la loro larghezza naturale.
-        blocchi_pagine.append([KeepTogether([
-            Paragraph("Shooters by Shot Volume", sezione_stile), Spacer(1, 0.15 * cm),
-            intest_volume_tot, tabella_volume_tot
-        ])])
-        blocchi_pagine[-1].append(Spacer(1, 0.4 * cm))
-        blocchi_pagine[-1].append(KeepTogether([intest_volume_mt, tabella_volume_mt]))
-
-        # Passive Play va nella STESSA pagina (nessun nuovo blocco = nessun salto pagina): lo
-        # appendo alla lista interna dell'ultimo blocco appena creato, non con un nuovo
-        # blocchi_pagine.append (che avrebbe forzato una pagina a parte). Con le foto dei
-        # giocatori, come tutte le altre tabelle che elencano un nome.
+        # Passive Play: di seguito, senza pagina a parte, con foto adattive; tabelle vuote omesse.
         df_passivo_vol_pdf, df_passivo_pct_pdf = tabelle_passivo_tiratori(df_squadra_riepilogo)
         if not df_passivo_vol_pdf.empty:
-            tabella_passivo_vol = _tabella_giocatori_con_foto(df_passivo_vol_pdf.to_dict('records'), font_size=10, larghezza_foto_cm=1.8)
-            tabella_passivo_pct = _tabella_giocatori_con_foto(df_passivo_pct_pdf.to_dict('records'), font_size=10, larghezza_foto_cm=1.8)
-            blocchi_pagine[-1].append(Spacer(1, 0.4 * cm))
-            blocchi_pagine[-1].append(KeepTogether([
-                Paragraph("Passive Play", sezione_stile), Spacer(1, 0.15 * cm),
-                Paragraph("By shot volume", stile_intestazione_volume), tabella_passivo_vol
-            ]))
-            blocchi_pagine[-1].append(Spacer(1, 0.4 * cm))
-            blocchi_pagine[-1].append(KeepTogether([
-                Paragraph("By Goal %", stile_intestazione_volume), tabella_passivo_pct
-            ]))
+            foto_pas, font_pas = _foto_e_font_adattivi(len(df_passivo_vol_pdf) + len(df_passivo_pct_pdf))
+            pagina1.append(Spacer(1, 0.4 * cm))
+            pagina1.append(CondPageBreak(5 * cm))
+            pagina1.append(Paragraph("Passive Play", sezione_stile))
+            pagina1.append(Spacer(1, 0.15 * cm))
+            pagina1.append(Paragraph("By shot volume", stile_intestazione_volume))
+            pagina1.append(_tabella_giocatori_con_foto(df_passivo_vol_pdf.to_dict('records'), font_size=font_pas, larghezza_foto_cm=foto_pas))
+            if not df_passivo_pct_pdf.empty:
+                pagina1.append(Spacer(1, 0.4 * cm))
+                pagina1.append(CondPageBreak(4.5 * cm))
+                pagina1.append(Paragraph("By Goal %", stile_intestazione_volume))
+                pagina1.append(_tabella_giocatori_con_foto(df_passivo_pct_pdf.to_dict('records'), font_size=font_pas, larghezza_foto_cm=foto_pas))
+
+        blocchi_pagine.append(pagina1)
 
         # Pagina 3: statistiche per macro-zona di squadra (ingrandita), più sotto la stessa
         # scomposizione a macro-settore (7m/LW/RW/6M/9M/BT/FB) usata in Universal Stats — stessa
