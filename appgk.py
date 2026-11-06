@@ -1168,7 +1168,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v87 - 2026-11-06 - Shooting report, pagina \"Matches Analyzed\" del PDF: nuova spunta \"Edit the list by hand\" per modificare a mano l'elenco (cancellare righe automatiche, scrivere le partite singole) senza che le righe automatiche tornino; pulsanti \"Re-fill from this selection\" e \"Add missing matches\". Include v86 - 2026-11-02 - Universal Stats: nuovo grafico \"Shooting vs. Goalkeeping Efficiency Map\" (efficacia al tiro contro efficacia concessa, una squadra per punto, solo squadre con dati tiratori e portieri, filtrabile per lega). Include v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
+APP_VERSION = ("v87 - 2026-11-06 - Shooting report, pagina \"Matches Analyzed\" del PDF: nuova spunta \"Edit\": spuntata, la tabella si modifica liberamente a mano (cancellare o scrivere righe, senza che le righe automatiche tornino); tolta, la tabella torna a calcolarsi in automatico. Include v86 - 2026-11-02 - Universal Stats: nuovo grafico \"Shooting vs. Goalkeeping Efficiency Map\" (efficacia al tiro contro efficacia concessa, una squadra per punto, solo squadre con dati tiratori e portieri, filtrabile per lega). Include v85 - 2026-11-02 - Shooting Trend Analysis: sotto il titolo \"Shot Map\" di una squadra compare una riga riassuntiva con tiri totali, % realizzativa, goal, save e miss (con % sul totale) per le partite selezionate. Include v84 - 2026-10-27 - Seasonal Report per squadra: nuova sezione \"Team Overall\" (tutti i portieri insieme) con mappa dei tiri, tabelle micro-zone / macro-zone / macro-settori, Money Time, Home/Away e Passive Play. Il PDF stagionale ora contiene anche tutte le mappe dei tiri (squadra e ogni portiere) e le stesse informazioni mostrate a schermo. Include v83 - 2026-10-26 - Shooting Trend: i filtri macro-zone, macro-sector e micro-settori (porta/campo) ora sono a selezione multipla: scegli più valori insieme (nei micro-settori basta cliccare più tasti; clic di nuovo per togliere). Include v82 - 2026-10-18 - Ranking portieri (Universal Stats e lega): ordine Save %, Efficiency %, Save % senza EG, Efficiency % senza EG, tiri subiti — confronti sui valori mostrati (interi), non sui decimali nascosti. Include v81 - 2026-10-18 - Disambiguate Players: le partite appena caricate (Save & Process, Bulk Zone-Only Import, ripristino backup, categorie separate) ricevono subito i codici (es. Garcia#001) invece che solo al riavvio dell'app. Include v80 - Money Time corretto (scarto prima del tiro tra -5 e +5, anche sulle partite già in memoria). Include v79 - 2026-10-14 - Universal Stats: soglie dei ranking portieri (default 100 tiri subiti) e tiratori (default 20 tiri effettuati) modificabili con qualsiasi valore da 1. Include v78 - 2026-10-13 - Shooters by Shot Volume (app e PDF): colonne \"Shots / (7m)\", \"Goals / (7m)\" e \"Goal % / Goal % no 7m\". Include v77 - 2026-10-13 - Shooting Trend PDF: pagina \"Matches Analyzed\" senza più pagina bianca: logo + partite in pagina 1 (anche su 2 colonne, carattere ridotto); se le partite sono troppe, pagina 1 = solo logo grande e pagina 2 = tutto l'elenco (1-5 colonne). Include v76 - 2026-10-12 - Session groups: un gruppo non presente nell'elenco non viene più cancellato dalle sessioni (le riportava a \"no group\" e lo salvava); i gruppi usati dalle sessioni si ripristinano nell'elenco; salvataggio gruppo con rilettura di controllo e messaggio ✅/⚠️. Include v75 - 2026-10-11 - GK Method Comparison: la lista \"GK Method goalkeepers to include in THIS comparison\" si riempie sempre con tutti gli idonei quando cambi filtro/lega/soglia (anche soglia 1) + pulsante \"Reselect all eligible\". Include v74 - 2026-10-09 - Nuovi grafici: scarto gol + parate (partita singola), parate per situazione di punteggio (vantaggio/parità/svantaggio: torta + storico) nel Seasonal Report e nell'area Portieri, con filtro per date; inclusi nei PDF. Include v73 - 2026-10-05 - Nuova icona GPIA per la scheda del browser e la barra delle app aperte (prima compariva il logo dell'associazione, che resta invece nei PDF e nella schermata iniziale). Include anche la correzione di v72: nell'elenco \"My Shots on Video\" i tiri a porta vuota mostrano \"eg\" invece di \"nan\"")
 st.sidebar.caption(f"🔧 App version: {APP_VERSION}")
 st.sidebar.caption("If you don't see this version, the app hasn't been restarted correctly.")
 
@@ -13102,8 +13102,8 @@ with tab4:
                                                          key=f"includi_matches_analyzed_tir_{chiave_contesto_ma}")
                 st.caption("Match and Date are pre-filled automatically from the matches in this selection — "
                            "if it's a Bulk Zone-Only import (no individual matches known), the list may be "
-                           "empty or show the aggregated import name instead. To delete an automatic row or "
-                           "write the actual matches yourself, tick \"Edit the list by hand\" below. "
+                           "empty or show the aggregated import name instead. To delete rows or write the "
+                           "actual matches yourself, tick \"Edit\" below the title. "
                            "Competition is entirely optional free text (friendly match, "
                            "European Championship, a tournament's own name...) — once set for a real match, "
                            "it's remembered permanently and pre-filled again automatically next time.")
@@ -13111,66 +13111,69 @@ with tab4:
                 # squadra/selezione (incluse quelle scritte a mano, che altrimenti sparirebbero
                 # ad ogni nuova sessione, essendo assenti da match_filtrati), poi aggiungo
                 # eventuali partite reali automatiche non ancora presenti in quell'elenco.
-                # v87: modalità "a mano". Con la spunta attiva l'elenco è ESATTAMENTE quello che
-                # scrive l'utente (nessuna riga automatica viene rimessa dopo averla cancellata); il
-                # flag è salvato nello stesso dizionario permanente sotto una chiave speciale.
+                # v87: spunta "Edit". Spuntata: la tabella è una copia TUA, liberamente modificabile (righe
+                # da cancellare, righe da scrivere a mano, tutte le colonne) e resta salvata in modo
+                # permanente. Tolta: la tabella torna a calcolarsi da sola dalle partite della selezione
+                # (solo Competition resta scrivibile). Il flag è salvato nello stesso dizionario
+                # permanente sotto una chiave speciale.
                 chiave_flag_ma = f"__MANUALE__|{titolo_dashboard}"
                 flag_salvato_ma = bool(st.session_state['matches_analyzed_manuali'].get(chiave_flag_ma))
                 modo_manuale_ma = st.checkbox(
-                    "✏️ Edit the list by hand (stop automatic filling)", value=flag_salvato_ma,
-                    key=f"ma_manuale_{chiave_contesto_ma}",
-                    help="With this ticked the list below is exactly what you write: rows you delete or "
-                         "rewrite are never put back automatically. Untick it to go back to the automatic "
-                         "list. The buttons below let you re-fill it from the selection at any time.")
-                if modo_manuale_ma != flag_salvato_ma:
-                    if modo_manuale_ma:
-                        st.session_state['matches_analyzed_manuali'][chiave_flag_ma] = [{'Match': 'manual'}]
-                    else:
-                        st.session_state['matches_analyzed_manuali'].pop(chiave_flag_ma, None)
-                    salva_matches_analyzed_manuali_su_disco(st.session_state['matches_analyzed_manuali'])
-                righe_salvate_ma = st.session_state['matches_analyzed_manuali'].get(titolo_dashboard, [])
+                    "✏️ Edit", value=flag_salvato_ma, key=f"ma_manuale_{chiave_contesto_ma}",
+                    help="Tick it to edit the table by hand: delete any row, change any cell, add rows. "
+                         "Untick it and the table is calculated automatically again from the matches of "
+                         "the selection.")
                 righe_auto_ma = []
                 for m in sorted(match_filtrati, key=lambda m: str(m['data'])):
                     righe_auto_ma.append({
                         'Match': m['nome'], 'Date': str(m['data']),
                         'Competition': st.session_state['competizioni_partite'].get(f"{m['nome']}|{m['data']}", '')
                     })
+                righe_salvate_ma = st.session_state['matches_analyzed_manuali'].get(titolo_dashboard, [])
+                if modo_manuale_ma != flag_salvato_ma:
+                    if modo_manuale_ma:
+                        st.session_state['matches_analyzed_manuali'][chiave_flag_ma] = [{'Match': 'manual'}]
+                        if not righe_salvate_ma:
+                            st.session_state['matches_analyzed_manuali'][titolo_dashboard] = righe_auto_ma or [{'Match': '', 'Date': '', 'Competition': ''}]
+                    else:
+                        st.session_state['matches_analyzed_manuali'].pop(chiave_flag_ma, None)
+                        st.session_state['matches_analyzed_manuali'].pop(titolo_dashboard, None)
+                    salva_matches_analyzed_manuali_su_disco(st.session_state['matches_analyzed_manuali'])
+                    st.rerun()
                 if modo_manuale_ma:
                     righe_base_ma = list(righe_salvate_ma) if righe_salvate_ma else list(righe_auto_ma)
-                    col_ma1, col_ma2, _col_ma3 = st.columns([2, 2, 3])
-                    if col_ma1.button("🔄 Re-fill from this selection", key=f"ma_rifai_{chiave_contesto_ma}",
-                                      help="Replaces the list with the matches of the current selection."):
-                        st.session_state['matches_analyzed_manuali'][titolo_dashboard] = righe_auto_ma or [{'Match': '', 'Date': '', 'Competition': ''}]
-                        salva_matches_analyzed_manuali_su_disco(st.session_state['matches_analyzed_manuali'])
-                        st.rerun()
-                    if col_ma2.button("➕ Add missing matches", key=f"ma_aggiungi_{chiave_contesto_ma}",
-                                      help="Adds the selection's matches that are not in the list yet, keeping what you wrote."):
-                        _gia = {(r.get('Match', ''), r.get('Date', '')) for r in righe_base_ma}
-                        _nuove = [r for r in righe_auto_ma if (r['Match'], r['Date']) not in _gia]
-                        _base_pulita = [r for r in righe_base_ma if str(r.get('Match', '')).strip() or str(r.get('Date', '')).strip()]
-                        st.session_state['matches_analyzed_manuali'][titolo_dashboard] = _base_pulita + _nuove
-                        salva_matches_analyzed_manuali_su_disco(st.session_state['matches_analyzed_manuali'])
-                        st.rerun()
                 else:
-                    chiavi_gia_presenti_ma = {(r.get('Match', ''), r.get('Date', '')) for r in righe_salvate_ma}
-                    righe_base_ma = list(righe_salvate_ma)
-                    for r_auto in righe_auto_ma:
-                        if (r_auto['Match'], r_auto['Date']) not in chiavi_gia_presenti_ma:
-                            righe_base_ma.append(r_auto)
+                    righe_base_ma = list(righe_auto_ma)
                 if not righe_base_ma:
                     righe_base_ma = [{'Match': '', 'Date': '', 'Competition': ''}]
                 df_matches_editor_base = pd.DataFrame(righe_base_ma)
-                df_matches_editor = st.data_editor(
-                    df_matches_editor_base, hide_index=True, use_container_width=True, num_rows="dynamic",
-                    key=f"editor_matches_analyzed_{chiave_contesto_ma}", disabled=not includi_matches_analyzed
-                )
-                # Salvo SEMPRE l'intero contenuto corrente dell'editor in modo permanente (non
-                # solo la Competition): così anche le righe scritte a mano restano dopo aver
-                # chiuso e riaperto l'app, non solo finché dura la sessione del browser.
-                righe_editor_attuali = df_matches_editor.to_dict('records')
-                if righe_editor_attuali != st.session_state['matches_analyzed_manuali'].get(titolo_dashboard, []):
-                    st.session_state['matches_analyzed_manuali'][titolo_dashboard] = righe_editor_attuali
-                    salva_matches_analyzed_manuali_su_disco(st.session_state['matches_analyzed_manuali'])
+                if modo_manuale_ma:
+                    df_matches_editor = st.data_editor(
+                        df_matches_editor_base, hide_index=True, use_container_width=True, num_rows="dynamic",
+                        key=f"editor_matches_analyzed_{chiave_contesto_ma}_man", disabled=not includi_matches_analyzed
+                    )
+                    righe_editor_attuali = df_matches_editor.to_dict('records')
+                    if righe_editor_attuali != st.session_state['matches_analyzed_manuali'].get(titolo_dashboard, []):
+                        st.session_state['matches_analyzed_manuali'][titolo_dashboard] = righe_editor_attuali
+                        salva_matches_analyzed_manuali_su_disco(st.session_state['matches_analyzed_manuali'])
+                else:
+                    df_matches_editor = st.data_editor(
+                        df_matches_editor_base, hide_index=True, use_container_width=True, num_rows="fixed",
+                        key=f"editor_matches_analyzed_{chiave_contesto_ma}_auto",
+                        disabled=True if not includi_matches_analyzed else ['Match', 'Date']
+                    )
+                    # In modalità automatica solo la Competition è scrivibile: la ricordo subito per quella partita.
+                    _cambiata_comp = False
+                    for _, _r in df_matches_editor.iterrows():
+                        _n, _d, _c = str(_r.get('Match', '') or '').strip(), str(_r.get('Date', '') or '').strip(), str(_r.get('Competition', '') or '').strip()
+                        if _n and _d:
+                            _k = f"{_n}|{_d}"
+                            if _c and st.session_state['competizioni_partite'].get(_k) != _c:
+                                st.session_state['competizioni_partite'][_k] = _c; _cambiata_comp = True
+                            elif not _c and _k in st.session_state['competizioni_partite']:
+                                del st.session_state['competizioni_partite'][_k]; _cambiata_comp = True
+                    if _cambiata_comp:
+                        salva_competizioni_partite_su_disco(st.session_state['competizioni_partite'])
 
                 with st.expander("🎬 Video links per micro-zone (optional)"):
                     st.caption("Attach a video link to any micro-zone button in the PDF's Expected Goals keyboard. "
