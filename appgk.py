@@ -1169,7 +1169,8 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v102 - 2026-11-06 - Mappa Expected Goals a schermo ridotta: poco più grande della mappa generale, intera in una schermata. "
+APP_VERSION = ("v103 - 2026-11-06 - Mappa Expected Goals: un po' più grande a schermo e valore S.P. sempre sotto il dato percentuale. "
+    "v102 - 2026-11-06 - Mappa Expected Goals a schermo ridotta: poco più grande della mappa generale, intera in una schermata. "
     "v101 - 2026-11-06 - Colori del campo in base alla frequenza reale di tiro (5 tonalità, 9m2 con 43 tiri non è più uguale a 9m1,5 con 8); mappa Expected Goals a schermo grande come la mappa generale. "
     "v100 - 2026-11-06 - Campo a schermo un po' più grande (+20%), porta alle dimensioni di prima; i PDF non cambiano. "
     "v99 - 2026-11-06 - Campo a schermo più grande (pulsantiera cliccabile e mappa Expected Goals); i PDF non cambiano. "
@@ -3823,12 +3824,12 @@ def _campo_scegli_slot(slots, larg, alt):
             migliore, punteggio = s, rapporto
     return migliore
 
-def _campo_trova(chiavi, dati, layouts, sp_txt=None):
+def _campo_trova(chiavi, dati, layouts, sp_txt=None, fs_list=None):
     """Dimensione/layout comuni a uno o due settori omologhi (stessa dimensione, posizione speculare).
     Restituisce (fs, layout, {chiave: (cx, cy, angolo, parti, altezza)}) o None."""
     k0 = chiavi[0]
     al0, slots0 = _campo_slot_di(k0)
-    for fs in _CAMPO_FS:
+    for fs in (fs_list or _CAMPO_FS):
         for layout in layouts:
             dims = [_campo_dim(k, dati[k][0], dati[k][1], fs, layout, (sp_txt or {}).get(k)) for k in chiavi]
             larg = max(d[0] for d in dims)
@@ -3912,7 +3913,14 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
             T(0, f"{pct} {sub}", fs, True, _CAMPO_TXT)
 
     def _posiziona(chiavi, layouts):
-        r = _campo_trova(chiavi, dati, layouts, sp_txt)
+        r = None
+        if sp_txt is not None:
+            # modo Expected Goals: il valore S.P. sta SEMPRE sotto il dato percentuale (mai sulla stessa riga):
+            # si provano solo i layout a più righe, anche con scritte più piccole; la riga unica resta
+            # solo come ultima risorsa se il settore è davvero troppo stretto.
+            r = _campo_trova(chiavi, dati, tuple(l for l in layouts if l != 'una'), sp_txt, _CAMPO_FS + [5.6, 5.0])
+        if r is None:
+            r = _campo_trova(chiavi, dati, layouts, sp_txt)
         if r is None:
             return
         fs, layout, ris = r
@@ -3921,7 +3929,7 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
 
     # settori centrali
     if dati['7m'][1] > 0: _posiziona(['7m'], ('tre',))
-    if dati['6m2'][1] > 0: _posiziona(['6m2'], ('una',))
+    if dati['6m2'][1] > 0: _posiziona(['6m2'], ('due', 'una') if sp_txt is not None else ('una',))
     if dati['bt2'][1] > 0: _posiziona(['bt2'], ('tre',))
     if dati['9m2'][1] > 0: _posiziona(['9m2'], ('tre',))
     for k in ('7m', 'bt2', '9m2'):
@@ -3951,6 +3959,13 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
         xs = [p[0] for p in _CAMPO_POLI[k]]; ys = [p[1] for p in _CAMPO_POLI[k]]
         cxx, cyy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
         goal, tot = dati[k]
+        if sp_txt is not None and tot > 0:
+            # Expected Goals: nome, dato e S.P. su tre righe (S.P. sempre sotto il dato)
+            _p, _s = _campo_testi(goal, tot, sp_txt.get(k))
+            ax.text(cxx, cyy - 13, k, ha='center', va='center', fontsize=7.5, fontweight='bold', color=_CAMPO_NOME, zorder=4)
+            ax.text(cxx, cyy + 0.5, _p, ha='center', va='center', fontsize=10, fontweight='bold', color=_CAMPO_TXT, zorder=4)
+            ax.text(cxx, cyy + 13, _s, ha='center', va='center', fontsize=7.5, color=_CAMPO_TXT, zorder=4)
+            continue
         ax.text(cxx, cyy - 9 if tot > 0 else cyy, k, ha='center', va='center', fontsize=9, fontweight='bold',
                 color=_CAMPO_NOME, zorder=4)
         if tot > 0:
@@ -9798,7 +9813,7 @@ def mostra_mappa_expected_goals_schermo(df, link_per_zona=None):
     col_sx, col_campo = st.columns([1, 2])
     with col_campo:
         try:
-            st.image(png, width=920)
+            st.image(png, width=1020)
         except TypeError:
             st.image(png)
     with col_sx:
