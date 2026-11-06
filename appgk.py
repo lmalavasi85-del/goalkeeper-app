@@ -1169,7 +1169,8 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v93 - 2026-11-06 - PDF di squadra: i giocatori con \"Include in PDF\" tolto spariscono anche dalle pagine riepilogative (mappa, tabelle per volume, duelli). "
+APP_VERSION = ("v94 - 2026-11-06 - Grafici a torta: etichette sempre senza sovrapposizioni (fette piccole fuori, in colonna con linea di collegamento). "
+    "v93 - 2026-11-06 - PDF di squadra: i giocatori con \"Include in PDF\" tolto spariscono anche dalle pagine riepilogative (mappa, tabelle per volume, duelli). "
     "v92 - 2026-11-06 - Porta nuova ovunque: svuotata la cache delle immagini della porta (Shooting Trend, Seasonal Report, mappe) che mostravano ancora la vecchia. "
     "v91 - 2026-11-06 - Pagina Expected Goals del PDF con il campo nuovo; se ci sono link video compare accanto la tabella dei link, altrimenti il campo resta più grande. "
     "v90 - 2026-11-06 - Nuova grafica: porta con cornice rossa/bianca e divisori, campo a 23 microsettori simmetrico (schermate, PDF, Seasonal Report) con settori cliccabili. "
@@ -1421,6 +1422,55 @@ def applica_colori_expected_micro_tiratori(df_micro):
 
     return df_micro.style.apply(_colora_riga, axis=1)
 
+def _etichette_torta_senza_sovrapposizioni(ax, wedges, interni, esterni, percentuali, soglia, fs_int, fs_est,
+                                           colori_interni=None, raggio_int=0.68, sep_gradi=None):
+    """Mette le etichette di una torta in modo che NON si sovrappongano mai. Le fette abbastanza grandi
+    (>= soglia %) hanno il testo dentro; le piccole lo hanno fuori. Le etichette esterne stanno in due
+    colonne (destra e sinistra della torta), impilate con uno spazio minimo tra una e l'altra, e collegate
+    alla loro fetta da una linea sottile: anche con tante fette minuscole vicine il testo non si tocca mai."""
+    import math as _mm
+    esterne = []   # [angolo, testo, y_ideale, lato]
+    for i, w in enumerate(wedges):
+        ang = ((w.theta1 + w.theta2) / 2.0) % 360
+        c, sn = _mm.cos(_mm.radians(ang)), _mm.sin(_mm.radians(ang))
+        dentro = interni[i] is not None and (percentuali[i] >= soglia or len(wedges) == 1)
+        if dentro:
+            r = raggio_int if len(wedges) > 1 else 0.0
+            ax.text(r * c, r * sn, interni[i], ha='center', va='center', fontsize=fs_int,
+                    fontweight='bold' if colori_interni else 'normal',
+                    color=colori_interni[i] if colori_interni else 'black', zorder=5)
+            testo = esterni[i]
+        else:
+            _int = interni[i] or ''
+            if '\n' in _int:
+                _a, _b = _int.split('\n', 1)
+                _int = f"{_a} ({_b})"
+            testo = ((esterni[i] + '  ') if esterni[i] else '') + _int
+        if testo:
+            esterne.append([ang, testo, 1.12 * sn, 1 if c >= 0 else -1])
+    dy = fs_est * 1.9 / 72.0 / (ax.figure.get_size_inches()[1] * 0.72) * 3.0   # altezza di una riga in unità del grafico
+    for lato in (1, -1):
+        col = sorted([e for e in esterne if e[3] == lato], key=lambda e: e[2])
+        if not col:
+            continue
+        ys = [e[2] for e in col]
+        for k in range(1, len(ys)):                  # impila verso l'alto
+            ys[k] = max(ys[k], ys[k - 1] + dy)
+        eccesso = ys[-1] - 1.38
+        if eccesso > 0:                              # troppo in alto: scendi e ridistribuisci verso il basso
+            ys = [y - eccesso for y in ys]
+            for k in range(len(ys) - 2, -1, -1):
+                ys[k] = min(ys[k], ys[k + 1] - dy)
+        for e, y in zip(col, ys):
+            ang = e[0]
+            xv, yv = _mm.cos(_mm.radians(ang)), _mm.sin(_mm.radians(ang))
+            x_gomito = lato * max(1.12, abs(y) * 0.0 + 1.12)
+            ax.plot([xv * 0.99, x_gomito, lato * 1.2], [yv * 0.99, y, y], color='#8a8a8a', linewidth=0.8, zorder=4)
+            ax.text(lato * 1.23, y, e[1], ha='left' if lato > 0 else 'right', va='center', fontsize=fs_est,
+                    color='black', zorder=5)
+    ax.set_xlim(-2.15, 2.15)
+    ax.set_ylim(-1.55, 1.55)
+
 def disegna_torta_macro_universale(df_distribuzione, titolo=None):
     """Grafico a torta della distribuzione del VOLUME di tiri per macro-settore (non della %
     realizzativa, che è già nella tabella accanto)."""
@@ -1432,8 +1482,14 @@ def disegna_torta_macro_universale(df_distribuzione, titolo=None):
         ax.axis('off')
     else:
         colori = [colori_torta.get(m, '#cccccc') for m in df_distribuzione['Macro-Sector']]
-        ax.pie(df_distribuzione['Shots'], labels=df_distribuzione['Macro-Sector'], autopct='%1.1f%%',
-               colors=colori, startangle=90, textprops={'fontsize': 11})
+        valori_t = [float(v) for v in df_distribuzione['Shots']]
+        tot_t = sum(valori_t) or 1.0
+        perc_t = [v / tot_t * 100 for v in valori_t]
+        wedges_t, _ = ax.pie(valori_t, colors=colori, startangle=90, wedgeprops=dict(edgecolor='white', linewidth=1))
+        _etichette_torta_senza_sovrapposizioni(
+            ax, wedges_t, [f"{p:.1f}%" for p in perc_t], [str(m) for m in df_distribuzione['Macro-Sector']],
+            perc_t, soglia=6.0, fs_int=11, fs_est=11)
+        ax.set_aspect('equal')
     if titolo:
         ax.set_title(titolo, fontsize=13, color='#15304f', fontweight='bold')
     fig.tight_layout()
@@ -3299,12 +3355,10 @@ def _torta_su_ax(ax, totali, titolo=None, colonne_legenda=None):
     idx = [i for i, v in enumerate(valori) if v > 0]
     wedges, _ = ax.pie([valori[i] for i in idx], colors=[colori[i] for i in idx], startangle=90,
                         counterclock=False, wedgeprops=dict(edgecolor='white', linewidth=2))
-    for w, i in zip(wedges, idx):
-        ang = (w.theta2 + w.theta1) / 2.0
-        r = 0.62 if len(idx) > 1 else 0.0
-        ax.text(r * _m.cos(_m.radians(ang)), r * _m.sin(_m.radians(ang)),
-                f"{valori[i]}\n{valori[i] / totale * 100:.0f}%", ha='center', va='center',
-                fontsize=13, fontweight='bold', color='black' if i == 1 else 'white')
+    _etichette_torta_senza_sovrapposizioni(
+        ax, wedges, [f"{valori[i]}\n{valori[i] / totale * 100:.0f}%" for i in idx], [None] * len(idx),
+        [valori[i] / totale * 100 for i in idx], soglia=9.0, fs_int=13, fs_est=11,
+        colori_interni=['black' if i == 1 else 'white' for i in idx], raggio_int=0.62)
     ax.legend(wedges, [f"{nomi[i]} ({valori[i]})" for i in idx], loc='upper center',
               bbox_to_anchor=(0.5, -0.02), ncol=colonne_legenda or len(idx), frameon=False, fontsize=10)
     ax.set_title(titolo or 'Saves by score situation', fontsize=12, fontweight='bold')
