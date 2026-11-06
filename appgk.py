@@ -1169,7 +1169,8 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v96 - 2026-11-06 - Campo: i settori centrali senza tiri (7m, bt2, 9m2) mostrano sempre il nome. "
+APP_VERSION = ("v97 - 2026-11-06 - Cache delle immagini di porta e campo legata alla versione: dopo ogni aggiornamento si rifanno sempre con la grafica nuova (settori e nomi tutti visibili). "
+    "v96 - 2026-11-06 - Campo: i settori centrali senza tiri (7m, bt2, 9m2) mostrano sempre il nome. "
     "v95 - 2026-11-06 - Torte: grafica e dimensione di prima, frecce solo per le fette troppo strette; campo Expected Goals con lo stesso grigio degli altri campi. "
     "v94 - 2026-11-06 - Grafici a torta: etichette sempre senza sovrapposizioni (fette piccole fuori, in colonna con linea di collegamento). "
     "v93 - 2026-11-06 - PDF di squadra: i giocatori con \"Include in PDF\" tolto spariscono anche dalle pagine riepilogative (mappa, tabelle per volume, duelli). "
@@ -3683,7 +3684,7 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
     return fig
 
 @st.cache_data(show_spinner=False)
-def _porta_cacheable(conteggi_totali, conteggi_goal, colore_cornice=None, versione_grafica='porta-v92'):
+def _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, versione_grafica):
     """Wrapper cacheable attorno a disegna_porta: restituisce i bytes PNG del grafico invece
     della Figure matplotlib direttamente, così Streamlit può riusare il risultato tra un rerun
     e l'altro se gli stessi identici dati vengono richiesti di nuovo. Pensato per i punti che
@@ -3700,6 +3701,11 @@ def _porta_cacheable(conteggi_totali, conteggi_goal, colore_cornice=None, versio
     plt.close(fig)
     buf.seek(0)
     return buf.getvalue()
+
+def _porta_cacheable(conteggi_totali, conteggi_goal, colore_cornice=None):
+    """Immagine (PNG, bytes) della porta, in cache. La versione dell'app fa parte della chiave di cache: ad
+    ogni aggiornamento le immagini vecchie vengono scartate e rifatte con la grafica nuova."""
+    return _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, APP_VERSION)
 
 def _colori_heatmap_frequenza(conteggi):
     """Assegna a ciascun settore uno dei 4 livelli della heat map in base alla frequenza dei tiri
@@ -3957,13 +3963,17 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
     return fig
 
 @st.cache_data(show_spinner=False)
-def _campo_png_bytes(tot_items, goal_items, selezionati):
+def _campo_png_bytes_interno(tot_items, goal_items, selezionati, versione_grafica):
     """PNG (bytes) del campo, in cache: serve come sfondo della pulsantiera cliccabile."""
     fig = disegna_tastiera(dict(tot_items), dict(goal_items), tasto_selezionato=list(selezionati))
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=110, facecolor='white')
     plt.close(fig)
     return buf.getvalue()
+
+def _campo_png_bytes(tot_items, goal_items, selezionati):
+    """Come sopra, con la versione dell'app nella chiave di cache (vedi _porta_cacheable)."""
+    return _campo_png_bytes_interno(tot_items, goal_items, selezionati, APP_VERSION)
 
 _campo_punti_cache = {}
 
