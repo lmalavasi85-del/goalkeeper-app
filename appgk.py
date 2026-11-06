@@ -1169,7 +1169,9 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v94 - 2026-11-06 - Grafici a torta: etichette sempre senza sovrapposizioni (fette piccole fuori, in colonna con linea di collegamento). "
+APP_VERSION = ("v96 - 2026-11-06 - Campo: i settori centrali senza tiri (7m, bt2, 9m2) mostrano sempre il nome. "
+    "v95 - 2026-11-06 - Torte: grafica e dimensione di prima, frecce solo per le fette troppo strette; campo Expected Goals con lo stesso grigio degli altri campi. "
+    "v94 - 2026-11-06 - Grafici a torta: etichette sempre senza sovrapposizioni (fette piccole fuori, in colonna con linea di collegamento). "
     "v93 - 2026-11-06 - PDF di squadra: i giocatori con \"Include in PDF\" tolto spariscono anche dalle pagine riepilogative (mappa, tabelle per volume, duelli). "
     "v92 - 2026-11-06 - Porta nuova ovunque: svuotata la cache delle immagini della porta (Shooting Trend, Seasonal Report, mappe) che mostravano ancora la vecchia. "
     "v91 - 2026-11-06 - Pagina Expected Goals del PDF con il campo nuovo; se ci sono link video compare accanto la tabella dei link, altrimenti il campo resta più grande. "
@@ -1423,53 +1425,88 @@ def applica_colori_expected_micro_tiratori(df_micro):
     return df_micro.style.apply(_colora_riga, axis=1)
 
 def _etichette_torta_senza_sovrapposizioni(ax, wedges, interni, esterni, percentuali, soglia, fs_int, fs_est,
-                                           colori_interni=None, raggio_int=0.68, sep_gradi=None):
-    """Mette le etichette di una torta in modo che NON si sovrappongano mai. Le fette abbastanza grandi
-    (>= soglia %) hanno il testo dentro; le piccole lo hanno fuori. Le etichette esterne stanno in due
-    colonne (destra e sinistra della torta), impilate con uno spazio minimo tra una e l'altra, e collegate
-    alla loro fetta da una linea sottile: anche con tante fette minuscole vicine il testo non si tocca mai."""
+                                           colori_interni=None, raggio_int=0.68, raggio_nome=1.1, sep_gradi=None):
+    """Etichette di una torta senza sovrapposizioni, con la grafica classica: percentuale DENTRO la fetta e
+    nome fuori, vicino alla fetta. Solo le fette troppo strette per contenere il testo (verificato misurando
+    il testo vero) perdono l'etichetta interna e ricevono invece un'etichetta fuori, collegata da una linea a
+    freccia, messa nel punto libero più vicino (mai sopra altro testo)."""
     import math as _mm
-    esterne = []   # [angolo, testo, y_ideale, lato]
+    fig = ax.figure
+    rend = fig.canvas.get_renderer()
+    n = len(wedges)
+
+    def _nel_settore(x, y, w):
+        if _mm.hypot(x, y) > 0.97:
+            return False
+        a = _mm.degrees(_mm.atan2(y, x)) % 360
+        t1, t2 = w.theta1 % 360, w.theta2 % 360
+        return (t1 <= a <= t2) if t1 <= t2 else (a >= t1 or a <= t2)
+
+    def _bbox_dati(t):
+        bb = t.get_window_extent(rend)
+        inv = ax.transData.inverted()
+        (x0, y0), (x1, y1) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y1)])
+        return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+
+    def _sovrappone(b, altri, pad=0.03):
+        return any(not (b[2] + pad < o[0] or o[2] + pad < b[0] or b[3] + pad < o[1] or o[3] + pad < b[1]) for o in altri)
+
+    occupati, piccole = [], []
     for i, w in enumerate(wedges):
         ang = ((w.theta1 + w.theta2) / 2.0) % 360
         c, sn = _mm.cos(_mm.radians(ang)), _mm.sin(_mm.radians(ang))
-        dentro = interni[i] is not None and (percentuali[i] >= soglia or len(wedges) == 1)
-        if dentro:
-            r = raggio_int if len(wedges) > 1 else 0.0
-            ax.text(r * c, r * sn, interni[i], ha='center', va='center', fontsize=fs_int,
-                    fontweight='bold' if colori_interni else 'normal',
-                    color=colori_interni[i] if colori_interni else 'black', zorder=5)
-            testo = esterni[i]
+        t_int = None
+        if interni[i] is not None:
+            r = raggio_int if n > 1 else 0.0
+            t_int = ax.text(r * c, r * sn, interni[i], ha='center', va='center', fontsize=fs_int,
+                            fontweight='bold' if colori_interni else 'normal',
+                            color=colori_interni[i] if colori_interni else 'black', zorder=5)
+        t_nome = None
+        if esterni[i]:
+            t_nome = ax.text(raggio_nome * c, raggio_nome * sn, esterni[i], ha='left' if c > 0.1 else 'right' if c < -0.1 else 'center',
+                             va='bottom' if sn > 0.5 else 'top' if sn < -0.5 else 'center', fontsize=fs_est, color='black', zorder=5)
+        entra = True
+        if n > 1 and t_int is not None:
+            x0, y0, x1, y1 = _bbox_dati(t_int)
+            entra = all(_nel_settore(x, y, w) for x, y in ((x0, y0), (x0, y1), (x1, y0), (x1, y1)))
+        if n > 1 and not entra:
+            testo = (esterni[i] + '  ' if esterni[i] else '') + ((interni[i] or '').replace('\n', ' ') if '\n' not in (interni[i] or '')
+                    else (lambda a_, b_: f"{a_} ({b_})")(*(interni[i] or '\n').split('\n', 1)))
+            if t_int is not None:
+                t_int.remove()
+            if t_nome is not None:
+                t_nome.remove()
+            piccole.append((i, ang, testo))
         else:
-            _int = interni[i] or ''
-            if '\n' in _int:
-                _a, _b = _int.split('\n', 1)
-                _int = f"{_a} ({_b})"
-            testo = ((esterni[i] + '  ') if esterni[i] else '') + _int
-        if testo:
-            esterne.append([ang, testo, 1.12 * sn, 1 if c >= 0 else -1])
-    dy = fs_est * 1.9 / 72.0 / (ax.figure.get_size_inches()[1] * 0.72) * 3.0   # altezza di una riga in unità del grafico
-    for lato in (1, -1):
-        col = sorted([e for e in esterne if e[3] == lato], key=lambda e: e[2])
-        if not col:
-            continue
-        ys = [e[2] for e in col]
-        for k in range(1, len(ys)):                  # impila verso l'alto
-            ys[k] = max(ys[k], ys[k - 1] + dy)
-        eccesso = ys[-1] - 1.38
-        if eccesso > 0:                              # troppo in alto: scendi e ridistribuisci verso il basso
-            ys = [y - eccesso for y in ys]
-            for k in range(len(ys) - 2, -1, -1):
-                ys[k] = min(ys[k], ys[k + 1] - dy)
-        for e, y in zip(col, ys):
-            ang = e[0]
-            xv, yv = _mm.cos(_mm.radians(ang)), _mm.sin(_mm.radians(ang))
-            x_gomito = lato * max(1.12, abs(y) * 0.0 + 1.12)
-            ax.plot([xv * 0.99, x_gomito, lato * 1.2], [yv * 0.99, y, y], color='#8a8a8a', linewidth=0.8, zorder=4)
-            ax.text(lato * 1.23, y, e[1], ha='left' if lato > 0 else 'right', va='center', fontsize=fs_est,
-                    color='black', zorder=5)
-    ax.set_xlim(-2.15, 2.15)
-    ax.set_ylim(-1.55, 1.55)
+            for t in (t_int, t_nome):
+                if t is not None:
+                    occupati.append(_bbox_dati(t))
+    for i, ang, testo in piccole:
+        w = wedges[i]
+        xv, yv = _mm.cos(_mm.radians(ang)), _mm.sin(_mm.radians(ang))
+        cand = sorted(((abs(sh), r_, sh) for sh in range(-70, 71, 4) for r_ in (1.22, 1.4, 1.6, 1.8)), key=lambda t: (t[0] + (t[1] - 1.22) * 25, t[0]))
+        scelta = None
+        for _, r_, sh in cand:
+            a2 = _mm.radians(ang + sh)
+            xt, yt = r_ * _mm.cos(a2), r_ * _mm.sin(a2)
+            ha = 'left' if xt > 0.05 else 'right'
+            t = ax.text(xt, yt, testo, ha=ha, va='center', fontsize=fs_est, color='black', zorder=5)
+            b = _bbox_dati(t)
+            if not _sovrappone(b, occupati):
+                scelta = (t, b, xt, yt)
+                break
+            t.remove()
+        if scelta is None:   # ultima risorsa: lontano in orizzontale
+            xt = 1.9 if xv >= 0 else -1.9
+            t = ax.text(xt, yv * 1.2, testo, ha='left' if xv >= 0 else 'right', va='center', fontsize=fs_est, color='black', zorder=5)
+            scelta = (t, _bbox_dati(t), xt, yv * 1.2)
+        t, b, xt, yt = scelta
+        occupati.append(b)
+        # la freccia parte dal bordo della fetta e arriva al lato vicino del testo
+        xf = b[0] - 0.02 if xt > 0.05 else b[2] + 0.02
+        ax.annotate('', xy=(xv * 0.995, yv * 0.995), xytext=(xf, yt),
+                    arrowprops=dict(arrowstyle='->', color='#6b6b6b', lw=0.9, shrinkA=0, shrinkB=0, mutation_scale=8),
+                    annotation_clip=False, zorder=4)
 
 def disegna_torta_macro_universale(df_distribuzione, titolo=None):
     """Grafico a torta della distribuzione del VOLUME di tiri per macro-settore (non della %
@@ -1490,9 +1527,11 @@ def disegna_torta_macro_universale(df_distribuzione, titolo=None):
             ax, wedges_t, [f"{p:.1f}%" for p in perc_t], [str(m) for m in df_distribuzione['Macro-Sector']],
             perc_t, soglia=6.0, fs_int=11, fs_est=11)
         ax.set_aspect('equal')
+        fig.subplots_adjust(left=0.04, right=0.96, bottom=0.04, top=0.94 if titolo else 0.96)
     if titolo:
         ax.set_title(titolo, fontsize=13, color='#15304f', fontweight='bold')
-    fig.tight_layout()
+    if df_distribuzione.empty:
+        fig.tight_layout()
     return fig
 
 # ============================================================
@@ -3355,6 +3394,7 @@ def _torta_su_ax(ax, totali, titolo=None, colonne_legenda=None):
     idx = [i for i, v in enumerate(valori) if v > 0]
     wedges, _ = ax.pie([valori[i] for i in idx], colors=[colori[i] for i in idx], startangle=90,
                         counterclock=False, wedgeprops=dict(edgecolor='white', linewidth=2))
+    ax.set_aspect('equal')
     _etichette_torta_senza_sovrapposizioni(
         ax, wedges, [f"{valori[i]}\n{valori[i] / totale * 100:.0f}%" for i in idx], [None] * len(idx),
         [valori[i] / totale * 100 for i in idx], soglia=9.0, fs_int=13, fs_est=11,
@@ -3702,7 +3742,7 @@ _CAMPO_COPPIE = {'lw1': 'rw1', 'lw2': 'rw2', '6m1': '6m3', '6m1,5': '6m2,5', 'bt
 _CAMPO_NOMI_FUORI = ('lw1', 'lw2', 'rw1', 'rw2', '6m1', '6m1,5', '6m2', '6m2,5', '6m3')
 _CAMPO_FS = [17, 15, 13.5, 12, 11, 10, 9, 8.2, 7.4, 6.8, 6.2]
 _CAMPO_PAL = {'alto': '#eea59d', 'medio': '#f6c795', 'basso': '#f6e3a1', 'nullo': '#d2d8e4',
-             'bianco': '#eef1f6', 'rosso': '#eea59d', 'arancio': '#f6c795', 'giallo': '#f6e3a1', 'verde': '#a9d8ae'}
+             'bianco': '#d2d8e4', 'rosso': '#eea59d', 'arancio': '#f6c795', 'giallo': '#f6e3a1', 'verde': '#a9d8ae'}
 _CAMPO_TXT = '#1f2a44'
 _CAMPO_NOME = '#5a6683'
 _CAMPO_LIVELLO_DA_COLORE = {'#d13b2e': 'alto', '#f0872b': 'medio', '#f2d24b': 'basso', '#e9edf3': 'nullo'}
@@ -3877,6 +3917,13 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
     if dati['6m2'][1] > 0: _posiziona(['6m2'], ('una',))
     if dati['bt2'][1] > 0: _posiziona(['bt2'], ('tre',))
     if dati['9m2'][1] > 0: _posiziona(['9m2'], ('tre',))
+    for k in ('7m', 'bt2', '9m2'):
+        if dati[k][1] == 0:   # nessun tiro: solo il nome, piccolo, al centro del settore
+            _al, _slots = _campo_slot_di(k)
+            if _slots:
+                _s = _slots[min(1, len(_slots) - 1)]
+                ax.text(_s[0], _s[1], k, ha='center', va='center', fontsize=8.5, fontweight='bold',
+                        color=_CAMPO_NOME, zorder=4)
     # coppie di settori omologhi
     for sx, dx in _CAMPO_COPPIE.items():
         fuori = sx in _CAMPO_NOMI_FUORI
@@ -9756,7 +9803,7 @@ def legenda_expected_goals_pdf():
         stile_nota_sp
     )
     voci = [
-        ('#ffffff', 'Fewer than 5 shots — not enough data'),
+        ('#d2d8e4', 'Fewer than 5 shots — not enough data'),
         ('#e53935', 'Goal % ≥ Expected Goal % (S.P.) — dangerous zone'),
         ('#fb8c00', 'Goal % between S.P. and S.P. -5'),
         ('#fdd835', 'Goal % between S.P. -5 and S.P. -10'),
