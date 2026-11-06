@@ -1169,7 +1169,9 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v100 - 2026-11-06 - Campo a schermo un po' più grande (+20%), porta alle dimensioni di prima; i PDF non cambiano. "
+APP_VERSION = ("v102 - 2026-11-06 - Mappa Expected Goals a schermo ridotta: poco più grande della mappa generale, intera in una schermata. "
+    "v101 - 2026-11-06 - Colori del campo in base alla frequenza reale di tiro (5 tonalità, 9m2 con 43 tiri non è più uguale a 9m1,5 con 8); mappa Expected Goals a schermo grande come la mappa generale. "
+    "v100 - 2026-11-06 - Campo a schermo un po' più grande (+20%), porta alle dimensioni di prima; i PDF non cambiano. "
     "v99 - 2026-11-06 - Campo a schermo più grande (pulsantiera cliccabile e mappa Expected Goals); i PDF non cambiano. "
     "v98 - 2026-11-06 - Mappa Expected Goals visibile anche a schermo (Shooting Trend, vista Team), con tabella dei link video quando inseriti. "
     "v97 - 2026-11-06 - Cache delle immagini di porta e campo legata alla versione: dopo ogni aggiornamento si rifanno sempre con la grafica nuova (settori e nomi tutti visibili). "
@@ -2351,7 +2353,7 @@ def _pulsante_colorato(etichetta, colore_sfondo, disabilitato, selezionato, key)
     """Renderizza un singolo pulsante Streamlit colorato in modo puntuale via CSS, con un look
     'a tessera' (bordi squadrati, nessuna ombra) che replica la grafica della heat map originale.
     Restituisce True se il pulsante è stato premuto in questo rerun."""
-    colore_testo = '#1a1a1a' if colore_sfondo in ('#f2d24b', '#e9edf3') else 'white'
+    colore_testo = '#1a1a1a' if _luminosita_hex(colore_sfondo) > 150 else 'white'
     bordo = '3px solid #111111' if selezionato else f'2px solid {colore_sfondo}'
     key_sicura = _chiave_css_sicura(key)
     regole_base = (
@@ -3710,28 +3712,24 @@ def _porta_cacheable(conteggi_totali, conteggi_goal, colore_cornice=None):
     ogni aggiornamento le immagini vecchie vengono scartate e rifatte con la grafica nuova."""
     return _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, APP_VERSION)
 
+# Scala a 5 tonalità per la frequenza di tiro (dal più frequente al meno frequente)
+_TONALITA_FREQUENZA = ['#c9362b', '#e0604a', '#f0872b', '#f4b04a', '#f6dc7a']
+
 def _colori_heatmap_frequenza(conteggi):
-    """Assegna a ciascun settore uno dei 4 livelli della heat map in base alla frequenza dei tiri
-    (quartili sui settori con almeno un tiro): rosso = più ricorrenti, arancio, giallo, sfondo = nessun tiro."""
-    valori = sorted(set(v for v in conteggi.values() if v > 0), reverse=True)
-    colori = {}
-    if not valori:
+    """Assegna a ciascun settore una di 5 tonalità in base alla FREQUENZA REALE di tiro, in proporzione al
+    settore più tirato (scala graduale a radice quadrata): un settore con 43 tiri e uno con 8 non hanno
+    mai lo stesso colore. Rosso scuro = volumi altissimi ... giallo chiaro = pochi tiri; sfondo = nessun tiro."""
+    massimo = max([v for v in conteggi.values() if v > 0], default=0)
+    if massimo <= 0:
         return {k: '#e9edf3' for k in conteggi}
-    soglie = valori[max(0, len(valori)//3 - 1)] if len(valori) >= 3 else valori[0]
-    soglia_alta = valori[0]
-    soglia_media = valori[len(valori)//3] if len(valori) > 3 else (valori[1] if len(valori) > 1 else valori[0])
-    soglia_bassa = valori[-1]
+    colori = {}
     for k, v in conteggi.items():
         if v <= 0:
             colori[k] = '#e9edf3'
-        else:
-            rank_pct = 1 - (sorted(valori, reverse=True).index(v) / max(1, len(valori) - 1)) if len(valori) > 1 else 1
-            if rank_pct >= 0.66 or v == soglia_alta:
-                colori[k] = '#d13b2e'
-            elif rank_pct >= 0.33:
-                colori[k] = '#f0872b'
-            else:
-                colori[k] = '#f2d24b'
+            continue
+        r = (v / massimo) ** 0.5
+        t = _TONALITA_FREQUENZA
+        colori[k] = t[0] if r >= 0.75 else t[1] if r >= 0.5 else t[2] if r >= 0.35 else t[3] if r >= 0.2 else t[4]
     return colori
 
 # ============================================================
@@ -3750,11 +3748,11 @@ _CAMPO_COPPIE = {'lw1': 'rw1', 'lw2': 'rw2', '6m1': '6m3', '6m1,5': '6m2,5', 'bt
                  '9m1': '9m3', '9m1,5': '9m2,5'}
 _CAMPO_NOMI_FUORI = ('lw1', 'lw2', 'rw1', 'rw2', '6m1', '6m1,5', '6m2', '6m2,5', '6m3')
 _CAMPO_FS = [17, 15, 13.5, 12, 11, 10, 9, 8.2, 7.4, 6.8, 6.2]
-_CAMPO_PAL = {'alto': '#eea59d', 'medio': '#f6c795', 'basso': '#f6e3a1', 'nullo': '#d2d8e4',
+_CAMPO_PAL = {'a5': '#e8857b', 'a4': '#eea59d', 'a3': '#f6c795', 'a2': '#f8dca0', 'a1': '#fbefc8', 'nullo': '#d2d8e4',
              'bianco': '#d2d8e4', 'rosso': '#eea59d', 'arancio': '#f6c795', 'giallo': '#f6e3a1', 'verde': '#a9d8ae'}
 _CAMPO_TXT = '#1f2a44'
 _CAMPO_NOME = '#5a6683'
-_CAMPO_LIVELLO_DA_COLORE = {'#d13b2e': 'alto', '#f0872b': 'medio', '#f2d24b': 'basso', '#e9edf3': 'nullo'}
+_CAMPO_LIVELLO_DA_COLORE = {'#c9362b': 'a5', '#e0604a': 'a4', '#f0872b': 'a3', '#f4b04a': 'a2', '#f6dc7a': 'a1', '#e9edf3': 'nullo'}
 _CAMPO_SEL = '#16203a'
 _campo_misura_cache = {}
 _campo_misura_ctx = {}
@@ -3863,8 +3861,8 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
     if expected is None:
         colori_heat = _colori_heatmap_frequenza(conteggi_totali)
         livello = {k: _CAMPO_LIVELLO_DA_COLORE.get(colori_heat.get(k, '#e9edf3'), 'nullo') for k in _CAMPO_POLI if k != 'AREA'}
-        if conteggi_totali.get('7m', 0) > 0:
-            livello['7m'] = 'alto'
+        if conteggi_totali.get('7m', 0) > 0 and livello['7m'] != 'a5':
+            livello['7m'] = 'a4'   # il 7m resta sempre rosso (mai più chiaro del rosso pastello)
     else:
         # modo Expected Goals: colori a soglia rispetto alla % attesa (S.P.) di ciascuna zona
         livello, sp_txt = {}, {}
@@ -9783,27 +9781,28 @@ def _campo_expected_png(tot_z, goal_z, expected_z):
     return _campo_expected_png_interno(tuple(sorted(tot_z.items())), tuple(sorted(goal_z.items())),
                                        tuple(sorted(expected_z.items(), key=lambda kv: kv[0])), APP_VERSION)
 
-def _immagine_a_larghezza_piena(png):
+def _immagine_a_larghezza_piena(png):  # (non piu' usata dalla mappa Expected)
     try:
         st.image(png, width='stretch')
     except TypeError:
         st.image(png, use_container_width=True)
 
 def mostra_mappa_expected_goals_schermo(df, link_per_zona=None):
-    """Mostra a schermo la stessa mappa Expected Goals del PDF: il campo colorato a soglie rispetto alla
-    % attesa (S.P.). Se ci sono link video, a destra compare la tabella con i link cliccabili; altrimenti il
-    campo resta da solo, più grande."""
+    """Mostra a schermo la stessa mappa Expected Goals del PDF, delle stesse dimensioni della mappa generale
+    in alto (campo a destra, stessa colonna): a sinistra la legenda dei colori e, se ci sono link video, la
+    tabella con i link cliccabili."""
     tot_z, goal_z, expected_z = _dati_expected_per_df(df)
     png = _campo_expected_png(tot_z, goal_z, expected_z)
     link_validi = {z: str(u).strip() for z, u in (link_per_zona or {}).items()
                    if z in TUTTI_I_TASTI_TIRATORI and str(u or '').strip()}
-    if not link_validi:
-        _immagine_a_larghezza_piena(png)
-    else:
-        col_campo, col_link = st.columns([4, 1.2])
-        with col_campo:
-            _immagine_a_larghezza_piena(png)
-        with col_link:
+    col_sx, col_campo = st.columns([1, 2])
+    with col_campo:
+        try:
+            st.image(png, width=920)
+        except TypeError:
+            st.image(png)
+    with col_sx:
+        if link_validi:
             righe = ["| Zone | Goal | S.P. | Video |", "|---|---|---|---|"]
             for zona in TUTTI_I_TASTI_TIRATORI:
                 if zona not in link_validi:
@@ -9811,17 +9810,16 @@ def mostra_mappa_expected_goals_schermo(df, link_per_zona=None):
                 t, g, e = tot_z[zona], goal_z[zona], expected_z[zona]
                 testo_goal = f"{g}/{t}={g / t * 100:.0f}%" if t > 0 else "0/0"
                 testo_sp = f"{e:.0f}%" if e is not None else "n/a"
-                righe.append(f"| {zona} | {testo_goal} | {testo_sp} | [Watch video]({link_validi[zona]}) |")
+                righe.append(f"| {zona} | {testo_goal} | {testo_sp} | [Open]({link_validi[zona]}) |")
             st.markdown("\n".join(righe))
-    st.markdown(
-        "<div style='font-size:0.85rem;line-height:1.7'>"
-        "<span style='background:#d2d8e4;padding:0 9px;border-radius:3px'>&nbsp;</span> fewer than 5 shots &nbsp; "
-        "<span style='background:#eea59d;padding:0 9px;border-radius:3px'>&nbsp;</span> Goal % ≥ S.P. (dangerous) &nbsp; "
-        "<span style='background:#f6c795;padding:0 9px;border-radius:3px'>&nbsp;</span> S.P. to S.P. −5 &nbsp; "
-        "<span style='background:#f6e3a1;padding:0 9px;border-radius:3px'>&nbsp;</span> S.P. −5 to −10 &nbsp; "
-        "<span style='background:#a9d8ae;padding:0 9px;border-radius:3px'>&nbsp;</span> below S.P. −10 (safest)"
-        "</div>", unsafe_allow_html=True)
-    st.caption("S.P. = Expected Goal % of the active profile for that zone. Players unticked in \"Include in PDF\" are left out.")
+        voci = [('#d2d8e4', 'fewer than 5 shots'), ('#eea59d', 'Goal % ≥ S.P. (dangerous)'),
+                ('#f6c795', 'S.P. to S.P. −5'), ('#f6e3a1', 'S.P. −5 to −10'), ('#a9d8ae', 'below S.P. −10 (safest)')]
+        st.markdown(
+            "<div style='font-size:0.85rem;line-height:1.9'>" +
+            "".join(f"<div><span style='background:{c};padding:0 11px;border-radius:3px;margin-right:6px'>&nbsp;</span>{t}</div>"
+                    for c, t in voci) + "</div>", unsafe_allow_html=True)
+        st.caption("S.P. = Expected Goal % of the active profile for that zone. Players unticked in "
+                   "\"Include in PDF\" are left out.")
 
 def costruisci_pulsantiera_expected_pdf(df, link_per_zona=None):
     """Pagina Expected Goals: il campo a 23 microsettori colorato secondo le soglie Expected Goal %
