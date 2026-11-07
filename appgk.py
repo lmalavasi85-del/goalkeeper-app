@@ -1169,7 +1169,8 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
+APP_VERSION = ("v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+    "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
     "v103 - 2026-11-06 - Mappa Expected Goals più grande a schermo e S.P. sempre sotto la percentuale. "
@@ -5498,19 +5499,48 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
 
     liste_mappe_extra = [(m['titolo'], m['df']) for m in (mappe_extra or []) if not m['df'].empty]
 
+    # Un solo portiere ha giocato: mappa generale e mappa individuale coincidono, quindi ne basta una
+    # (con una riga che lo dice) e non si stampa la seconda, che sarebbe solo un doppione.
+    gk_unico_coincide = None
+    if (includi_mappa_generale and not df_match.empty and len(liste_mappe_gk) == 1
+            and len(liste_mappe_gk[0][1]) == len(df_match)):
+        gk_unico_coincide = liste_mappe_gk[0][0].replace("Shot Map — ", "", 1)
+        liste_mappe_gk = []
+
     if (includi_mappa_generale and not df_match.empty) or liste_mappe_gk or liste_mappe_extra:
         titolo_shot_maps = Paragraph("Shot Maps", sezione_stile)
         titolo_gia_posizionato = False
 
         if includi_mappa_generale and not df_match.empty:
+            if gk_unico_coincide:
+                titolo_gen = f"General Shot Map = Individual Shot Map — {gk_unico_coincide}"
+            elif liste_mappe_gk:
+                titolo_gen = "General Shot Map (all shots, all goalkeepers)"
+            else:
+                titolo_gen = "General Shot Map (all shots)"
             blocco_generale = _blocco_porta_tastiera_pdf(
-                df_match, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo="General Shot Map (all shots, all goalkeepers)",
+                df_match, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=titolo_gen,
                 larghezza_porta_cm=9, larghezza_tastiera_cm=13
             )
             blocco_generale.hAlign = 'CENTER'
-            elementi.append(KeepTogether([titolo_shot_maps, blocco_generale]))
+            parti_generale = [titolo_shot_maps, blocco_generale]
+            if gk_unico_coincide:
+                nota_unico_stile = ParagraphStyle('NotaMappaUnica', parent=stili['Normal'], fontSize=9.5,
+                                                   textColor=colors.HexColor('#555555'), alignment=1,
+                                                   spaceBefore=4)
+                parti_generale.append(Paragraph(
+                    f"Only one goalkeeper played: the general shot map and the individual shot map of "
+                    f"{gk_unico_coincide} coincide.", nota_unico_stile))
+            elementi.append(KeepTogether(parti_generale))
             titolo_gia_posizionato = True
             elementi.append(Spacer(1, 0.4 * cm))
+            if liste_mappe_gk:
+                # Due o più portieri: la mappa generale ha la sua pagina, i singoli portieri la pagina seguente.
+                while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
+                    elementi.pop()
+                elementi.append(PageBreak())
+                titolo_shot_maps = Paragraph("Shot Maps — Individual Goalkeepers", sezione_stile)
+                titolo_gia_posizionato = False
 
         if liste_mappe_gk:
             n_gk = len(liste_mappe_gk)
@@ -5547,10 +5577,14 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             else:
                 elementi.append(KeepTogether([blocco_extra, Spacer(1, 0.3 * cm)]))
 
-        elementi.append(_separatore())
-
     # Detailed statistics per goalkeeper — sempre su una pagina nuova per ciascun portiere.
+    # Prima del salto pagina tolgo separatori e spazi finali: se l'ultimo elemento riempie la pagina,
+    # sconfinerebbero da soli su una pagina nuova e ne uscirebbe una bianca.
+    while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
+        elementi.pop()
     for indice_gk, (gk, info) in enumerate(dati_portieri.items()):
+        while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
+            elementi.pop()
         elementi.append(PageBreak())
         gk_raw_foto = gk.split(' ', 1)[1] if ' ' in gk else gk
         foto_gk_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk_raw_foto))
