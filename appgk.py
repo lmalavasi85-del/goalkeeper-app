@@ -1169,7 +1169,10 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v103 - 2026-11-06 - Mappa Expected Goals: un po' più grande a schermo e valore S.P. sempre sotto il dato percentuale. "
+APP_VERSION = ("v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
+    "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
+    "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
+    "v103 - 2026-11-06 - Mappa Expected Goals più grande a schermo e S.P. sempre sotto la percentuale. "
     "v102 - 2026-11-06 - Mappa Expected Goals a schermo ridotta: poco più grande della mappa generale, intera in una schermata. "
     "v101 - 2026-11-06 - Colori del campo in base alla frequenza reale di tiro (5 tonalità, 9m2 con 43 tiri non è più uguale a 9m1,5 con 8); mappa Expected Goals a schermo grande come la mappa generale. "
     "v100 - 2026-11-06 - Campo a schermo un po' più grande (+20%), porta alle dimensioni di prima; i PDF non cambiano. "
@@ -3603,6 +3606,29 @@ def _disegna_grafico_blocchi_pdf(df_blocchi, output_path):
 # ============================================================
 ORDINE_PORTA = [['T1', 'T2', 'T3'], ['T4', 'T5', 'T6'], ['T7', 'T8', 'T9']]
 
+class _ConteggiPorta(dict):
+    """Dizionario settore-porta -> totale tiri, con in più l'attributo gsm: settore -> (gol, parate, fuori).
+    Serve a disegna_porta per scrivere 'Xg Ys Zm' in ogni riquadro e il totale sopra la porta."""
+    gsm = None
+
+def _testo_gsm(g, s_, m):
+    return f"{g}g {s_}s {m}m"
+
+# Per i portieri porta e campo contano TUTTI i tiri e, come esito 'riuscito' per il portiere, le parate
+# più i tiri sbagliati dal tiratore (fuori): è l'efficienza del portiere (Efficiency %).
+ESITI_EFFICIENZA_PORTIERE = ('save', 's', 'miss', 'm')
+
+def _didascalia_expected_efficiency(zona, expected_pct, df_zona):
+    """Testo sotto la porta del portiere: Expected efficiency del microsettore e valore reale
+    (parate + tiri fuori) / tutti i tiri."""
+    exp_txt = f"{expected_pct:.0f}%" if expected_pct is not None else "n/a"
+    base = f"Expected efficiency per il microsettore {zona} = **{exp_txt}**"
+    if df_zona is None or len(df_zona) == 0:
+        return base + "  /  Nessun tiro da questo settore."
+    ok = int(df_zona['RESULT_CLEAN'].isin(ESITI_EFFICIENZA_PORTIERE).sum())
+    tot = len(df_zona)
+    return base + f"  /  Real = **{ok / tot * 100:.1f}%** ({ok}/{tot})".replace('.', ',')
+
 def _colore_expected(reale_pct, expected_pct):
     """Verde se il tiratore è sopra la media attesa, giallo se coincide, rosso se sotto."""
     if reale_pct is None or expected_pct is None:
@@ -3648,13 +3674,14 @@ def _luminosita_hex(colore_hex):
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return 0.299 * r + 0.587 * g + 0.114 * b
 
-def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=None):
+def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=None, gsm=None):
     """Disegna la porta con i 9 settori (T1-T9): in ogni settore 'T#' e 'goal/totale=pct%'.
     Cornice a strisce rosse/bianche (traversa e pali, con il 'sette' in rosso), settori colorati con
     la heat map a toni di blu in base alla frequenza dei tiri, separati da divisori bianchi.
     colore_cornice: se fornito ('#rrggbb'), colora il contorno esterno della porta (usato quando è
     selezionato un settore di campo specifico, in base al confronto con l'Expected Goal %)."""
     rosso = '#e0231d'
+    gsm = gsm if gsm is not None else getattr(conteggi_totali, 'gsm', None)
     fig, ax = plt.subplots(figsize=(5.5, 4.15), dpi=150)
     ax.set_xlim(-4, 429); ax.set_ylim(325, -4); ax.set_aspect('equal'); ax.axis('off')
     fig.patch.set_facecolor('white')
@@ -3676,21 +3703,32 @@ def disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=None, titolo=No
             colore_cella = colori_heat.get(sett, '#e9edf3')
             testo_colore = '#14213d' if _luminosita_hex(colore_cella) > 150 else 'white'
             ax.add_patch(plt.Rectangle((x0, y0), larg_c, alt_c, facecolor=colore_cella, edgecolor='none', zorder=4))
-            ax.text(x0 + larg_c / 2, y0 + alt_c * 0.40, sett, ha='center', va='center', fontsize=11,
+            ax.text(x0 + larg_c / 2, y0 + alt_c * (0.33 if gsm else 0.40), sett, ha='center', va='center', fontsize=11,
                     fontweight='bold', color=testo_colore, zorder=6)
             testo_val = f"{goal}/{tot}={goal / tot * 100:.0f}%" if tot > 0 else "0/0"
-            ax.text(x0 + larg_c / 2, y0 + alt_c * 0.68, testo_val, ha='center', va='center', fontsize=7.6,
+            ax.text(x0 + larg_c / 2, y0 + alt_c * (0.59 if gsm else 0.68), testo_val, ha='center', va='center', fontsize=7.6,
                     color=testo_colore, zorder=6)
+            if gsm and tot > 0:
+                ax.text(x0 + larg_c / 2, y0 + alt_c * 0.80, _testo_gsm(*gsm.get(sett, (0, 0, 0))), ha='center',
+                        va='center', fontsize=6.4, color=testo_colore, zorder=6)
     for i in (1, 2):
         ax.plot([32 + i * larg_c] * 2, [36, 308], color='white', linewidth=3.2, zorder=5, solid_capstyle='butt')
         ax.plot([32, 392], [36 + i * alt_c] * 2, color='white', linewidth=3.2, zorder=5, solid_capstyle='butt')
+    riga_totale = None
+    if gsm:
+        riga_totale = "Totale: " + _testo_gsm(sum(v[0] for v in gsm.values()), sum(v[1] for v in gsm.values()),
+                                              sum(v[2] for v in gsm.values()))
     if titolo:
-        ax.set_title(titolo, fontsize=11, color='#15304f', pad=8)
+        ax.set_title(titolo, fontsize=11, color='#15304f', pad=24 if riga_totale else 8)
+        if riga_totale:
+            ax.text(212, -3.5, riga_totale, ha='center', va='bottom', fontsize=9, color='#15304f', zorder=9)
+    elif riga_totale:
+        ax.set_title(riga_totale, fontsize=9.5, color='#15304f', pad=6)
     fig.tight_layout()
     return fig
 
 @st.cache_data(show_spinner=False)
-def _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, versione_grafica):
+def _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, versione_grafica, gsm_tuple=None):
     """Wrapper cacheable attorno a disegna_porta: restituisce i bytes PNG del grafico invece
     della Figure matplotlib direttamente, così Streamlit può riusare il risultato tra un rerun
     e l'altro se gli stessi identici dati vengono richiesti di nuovo. Pensato per i punti che
@@ -3701,7 +3739,8 @@ def _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, ver
     affatto cambiati dal giro precedente."""
     # 'versione_grafica' fa parte della chiave di cache: cambiandola, le immagini della porta vecchia
     # già in memoria vengono scartate e rifatte con la grafica nuova.
-    fig = disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=colore_cornice)
+    gsm = dict(gsm_tuple) if gsm_tuple else None
+    fig = disegna_porta(conteggi_totali, conteggi_goal, colore_cornice=colore_cornice, gsm=gsm)
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
     plt.close(fig)
@@ -3711,7 +3750,9 @@ def _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, ver
 def _porta_cacheable(conteggi_totali, conteggi_goal, colore_cornice=None):
     """Immagine (PNG, bytes) della porta, in cache. La versione dell'app fa parte della chiave di cache: ad
     ogni aggiornamento le immagini vecchie vengono scartate e rifatte con la grafica nuova."""
-    return _porta_cacheable_interno(conteggi_totali, conteggi_goal, colore_cornice, APP_VERSION)
+    gsm = getattr(conteggi_totali, 'gsm', None)
+    return _porta_cacheable_interno(dict(conteggi_totali), conteggi_goal, colore_cornice, APP_VERSION,
+                                    tuple(sorted(gsm.items())) if gsm else None)
 
 # Scala a 5 tonalità per la frequenza di tiro (dal più frequente al meno frequente)
 _TONALITA_FREQUENZA = ['#c9362b', '#e0604a', '#f0872b', '#f4b04a', '#f6dc7a']
@@ -3914,8 +3955,8 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
 
     def _posiziona(chiavi, layouts):
         r = None
-        if sp_txt is not None:
-            # modo Expected Goals: il valore S.P. sta SEMPRE sotto il dato percentuale (mai sulla stessa riga):
+        if True:
+            # (tutti i modi) il secondo dato, (g/t) o S.P.: il valore S.P. sta SEMPRE sotto il dato percentuale (mai sulla stessa riga):
             # si provano solo i layout a più righe, anche con scritte più piccole; la riga unica resta
             # solo come ultima risorsa se il settore è davvero troppo stretto.
             r = _campo_trova(chiavi, dati, tuple(l for l in layouts if l != 'una'), sp_txt, _CAMPO_FS + [5.6, 5.0])
@@ -3929,7 +3970,7 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
 
     # settori centrali
     if dati['7m'][1] > 0: _posiziona(['7m'], ('tre',))
-    if dati['6m2'][1] > 0: _posiziona(['6m2'], ('due', 'una') if sp_txt is not None else ('una',))
+    if dati['6m2'][1] > 0: _posiziona(['6m2'], ('due', 'una'))
     if dati['bt2'][1] > 0: _posiziona(['bt2'], ('tre',))
     if dati['9m2'][1] > 0: _posiziona(['9m2'], ('tre',))
     for k in ('7m', 'bt2', '9m2'):
@@ -3959,9 +4000,9 @@ def disegna_tastiera(conteggi_totali, conteggi_goal, tasto_selezionato=None, exp
         xs = [p[0] for p in _CAMPO_POLI[k]]; ys = [p[1] for p in _CAMPO_POLI[k]]
         cxx, cyy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
         goal, tot = dati[k]
-        if sp_txt is not None and tot > 0:
-            # Expected Goals: nome, dato e S.P. su tre righe (S.P. sempre sotto il dato)
-            _p, _s = _campo_testi(goal, tot, sp_txt.get(k))
+        if tot > 0:
+            # nome, dato e secondo valore su tre righe (S.P. sempre sotto il dato)
+            _p, _s = _campo_testi(goal, tot, sp_txt.get(k) if sp_txt else None)
             ax.text(cxx, cyy - 13, k, ha='center', va='center', fontsize=7.5, fontweight='bold', color=_CAMPO_NOME, zorder=4)
             ax.text(cxx, cyy + 0.5, _p, ha='center', va='center', fontsize=10, fontweight='bold', color=_CAMPO_TXT, zorder=4)
             ax.text(cxx, cyy + 13, _s, ha='center', va='center', fontsize=7.5, color=_CAMPO_TXT, zorder=4)
@@ -4730,16 +4771,21 @@ def costruisci_conteggi_porta(df, esiti_successo=('goal', 'g')):
     per i portieri si passa esiti_successo=('save','s') per contare le parate). Se il dataframe
     non ha GOAL_SECTOR_CLEAN (partite portieri caricate prima che questa colonna esistesse per
     loro), restituisce tutti zeri invece di sollevare un errore."""
-    tot, successo = {}, {}
+    tot, successo = _ConteggiPorta(), {}
+    tot.gsm = {}
     if 'GOAL_SECTOR_CLEAN' not in df.columns:
         for sett in [t for riga in ORDINE_PORTA for t in riga]:
             tot[sett] = 0
             successo[sett] = 0
+            tot.gsm[sett] = (0, 0, 0)
         return tot, successo
     for sett in [t for riga in ORDINE_PORTA for t in riga]:
         df_s = df[df['GOAL_SECTOR_CLEAN'] == sett]
         tot[sett] = len(df_s)
         successo[sett] = len(df_s[df_s['RESULT_CLEAN'].isin(esiti_successo)])
+        tot.gsm[sett] = (int(df_s['RESULT_CLEAN'].isin(('goal', 'g')).sum()),
+                         int(df_s['RESULT_CLEAN'].isin(('save', 's')).sum()),
+                         int(df_s['RESULT_CLEAN'].isin(('miss', 'm')).sum()))
     return tot, successo
 
 def costruisci_conteggi_tastiera(df, esiti_successo=('goal', 'g')):
@@ -5458,7 +5504,7 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
 
         if includi_mappa_generale and not df_match.empty:
             blocco_generale = _blocco_porta_tastiera_pdf(
-                df_match, esiti_successo=('save', 's'), titolo="General Shot Map (all shots, all goalkeepers)",
+                df_match, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo="General Shot Map (all shots, all goalkeepers)",
                 larghezza_porta_cm=9, larghezza_tastiera_cm=13
             )
             blocco_generale.hAlign = 'CENTER'
@@ -5492,7 +5538,7 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             elementi.append(Spacer(1, 0.4 * cm))
 
         for i_extra, (titolo_mappa, df_mappa) in enumerate(liste_mappe_extra):
-            blocco_extra = _blocco_porta_tastiera_pdf(df_mappa, esiti_successo=('save', 's'), titolo=titolo_mappa,
+            blocco_extra = _blocco_porta_tastiera_pdf(df_mappa, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=titolo_mappa,
                                                         larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
             blocco_extra.hAlign = 'CENTER'
             if not titolo_gia_posizionato and i_extra == 0:
@@ -5739,7 +5785,7 @@ def genera_pdf_stagione(titolo_report, righe_gpi_stagione, df_storico, dati_port
         for mappa in mappe_extra:
             if mappa['df'].empty:
                 continue
-            blocco_mappa = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=('save', 's'), titolo=mappa['titolo'],
+            blocco_mappa = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=mappa['titolo'],
                                                         larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
             blocco_mappa.hAlign = 'CENTER'
             if primo:
@@ -9407,7 +9453,7 @@ def genera_pdf_tag_go_portieri(nome_analisi, dati_per_portiere, note_dict=None, 
             continue
         s, g, m, pct, eff = calcola_metriche_gruppo(df_gk)
         _, _, _, pct_no_eg, eff_no_eg = calcola_metriche_gruppo_no_eg(df_gk)
-        blocco = _blocco_porta_tastiera_pdf(df_gk, esiti_successo=('save', 's'), titolo=gk, larghezza_porta_cm=7, larghezza_tastiera_cm=10)
+        blocco = _blocco_porta_tastiera_pdf(df_gk, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=gk, larghezza_porta_cm=7, larghezza_tastiera_cm=10)
         blocco.hAlign = 'CENTER'
         _testo_metriche_tg_gk = [f"Saves: {s}  |  Goals Conceded: {g}  |  Miss: {m}  |  Save %: {pct:.1f}%  |  Efficiency: {eff:.1f}%"]
         if round(pct, 1) != round(pct_no_eg, 1) or round(eff, 1) != round(eff_no_eg, 1):
@@ -9432,7 +9478,7 @@ def genera_pdf_tag_go_portieri(nome_analisi, dati_per_portiere, note_dict=None, 
         titolo_mappe_tag_go = Paragraph("Saved Shot Maps", sezione_stile)
         primo_tag_go = True
         for mappa in mappe_valide:
-            blocco_m = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=('save', 's'), titolo=mappa['titolo'],
+            blocco_m = _blocco_porta_tastiera_pdf(mappa['df'], esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=mappa['titolo'],
                                                     larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
             blocco_m.hAlign = 'CENTER'
             if primo_tag_go:
@@ -12092,20 +12138,15 @@ with tab2:
                         df_per_porta_gk = df_gk_filtrato
                         colore_cornice_gk = None
 
-                    tot_porta_gk, salvate_porta_gk = costruisci_conteggi_porta(df_per_porta_gk, esiti_successo=('save', 's'))
+                    tot_porta_gk, salvate_porta_gk = costruisci_conteggi_porta(df_per_porta_gk, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
                     fig_porta_gk = disegna_porta(tot_porta_gk, salvate_porta_gk, colore_cornice=colore_cornice_gk)
-                    tot_tast_gk, salvate_tast_gk = costruisci_conteggi_tastiera(df_gk_filtrato, esiti_successo=('save', 's'))
+                    tot_tast_gk, salvate_tast_gk = costruisci_conteggi_tastiera(df_gk_filtrato, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
 
                     col_porta_gk, col_tast_gk = st.columns([1, 2])
                     with col_porta_gk:
                         st.pyplot(fig_porta_gk)
                         if tasto_sel_gk:
-                            expected_testo_gk = f"{expected_sel_gk:.0f}%" if expected_sel_gk is not None else "n/a"
-                            if len(df_per_porta_gk) > 0:
-                                st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  "
-                                           f"Real: **{pct_sel_gk:.1f}%** ({s_sel_gk}/{len(df_per_porta_gk)})")
-                            else:
-                                st.caption(f"Expected Save % for {tasto_sel_gk}: **{expected_testo_gk}**  |  No shots from this sector.")
+                            st.caption(_didascalia_expected_efficiency(tasto_sel_gk, expected_sel_gk, df_per_porta_gk))
                     with col_tast_gk:
                         tasto_cliccato_gk = pulsantiera_settori_campo(
                             tot_tast_gk, salvate_tast_gk, tasto_sel_gk, key_prefix=f"gk_single_pulsantiera_{chiave_gk_sicura}"
@@ -12734,18 +12775,14 @@ with tab3:
                 else:
                     df_porta_sq = df_sq_filtrato
                     colore_cornice_sq = None
-                tot_porta_sq, salvate_porta_sq = costruisci_conteggi_porta(df_porta_sq, esiti_successo=('save', 's'))
+                tot_porta_sq, salvate_porta_sq = costruisci_conteggi_porta(df_porta_sq, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
                 fig_porta_sq = disegna_porta(tot_porta_sq, salvate_porta_sq, colore_cornice=colore_cornice_sq)
-                tot_tast_sq, salvate_tast_sq = costruisci_conteggi_tastiera(df_sq_filtrato, esiti_successo=('save', 's'))
+                tot_tast_sq, salvate_tast_sq = costruisci_conteggi_tastiera(df_sq_filtrato, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
                 col_porta_sq, col_tast_sq = st.columns([1, 2])
                 with col_porta_sq:
                     st.pyplot(fig_porta_sq)
                     if tasto_sel_sq:
-                        exp_txt_sq = f"{expected_sel_sq:.0f}%" if expected_sel_sq is not None else "n/a"
-                        if len(df_porta_sq) > 0:
-                            st.caption(f"Expected Save % for {tasto_sel_sq}: **{exp_txt_sq}**  |  Real: **{pct_sel_sq:.1f}%** ({s_sel_sq}/{len(df_porta_sq)})")
-                        else:
-                            st.caption(f"Expected Save % for {tasto_sel_sq}: **{exp_txt_sq}**  |  No shots from this sector.")
+                        st.caption(_didascalia_expected_efficiency(tasto_sel_sq, expected_sel_sq, df_porta_sq))
                 with col_tast_sq:
                     tasto_cliccato_sq = pulsantiera_settori_campo(
                         tot_tast_sq, salvate_tast_sq, tasto_sel_sq, key_prefix=f"gk_seasonal_pulsantiera_{chiave_sq_sicura}")
@@ -12859,20 +12896,15 @@ with tab3:
                         df_per_porta_gk_stag = df_gk_stag_filtrato
                         colore_cornice_gk_stag = None
 
-                    tot_porta_gk_stag, salvate_porta_gk_stag = costruisci_conteggi_porta(df_per_porta_gk_stag, esiti_successo=('save', 's'))
+                    tot_porta_gk_stag, salvate_porta_gk_stag = costruisci_conteggi_porta(df_per_porta_gk_stag, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
                     fig_porta_gk_stag = disegna_porta(tot_porta_gk_stag, salvate_porta_gk_stag, colore_cornice=colore_cornice_gk_stag)
-                    tot_tast_gk_stag, salvate_tast_gk_stag = costruisci_conteggi_tastiera(df_gk_stag_filtrato, esiti_successo=('save', 's'))
+                    tot_tast_gk_stag, salvate_tast_gk_stag = costruisci_conteggi_tastiera(df_gk_stag_filtrato, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
 
                     col_porta_gk_stag, col_tast_gk_stag = st.columns([1, 2])
                     with col_porta_gk_stag:
                         st.pyplot(fig_porta_gk_stag)
                         if tasto_sel_gk_stag:
-                            expected_testo_stag = f"{expected_sel_stag:.0f}%" if expected_sel_stag is not None else "n/a"
-                            if len(df_per_porta_gk_stag) > 0:
-                                st.caption(f"Expected Save % for {tasto_sel_gk_stag}: **{expected_testo_stag}**  |  "
-                                           f"Real: **{pct_sel_stag:.1f}%** ({s_sel_stag}/{len(df_per_porta_gk_stag)})")
-                            else:
-                                st.caption(f"Expected Save % for {tasto_sel_gk_stag}: **{expected_testo_stag}**  |  No shots from this sector.")
+                            st.caption(_didascalia_expected_efficiency(tasto_sel_gk_stag, expected_sel_stag, df_per_porta_gk_stag))
                     with col_tast_gk_stag:
                         tasto_cliccato_gk_stag = pulsantiera_settori_campo(
                             tot_tast_gk_stag, salvate_tast_gk_stag, tasto_sel_gk_stag,
@@ -14503,17 +14535,15 @@ with tab6:
                         df_porta_tg_gk = df_tg_gk_filtrato
                         colore_cornice_tg_gk = None
 
-                    tot_porta_tg_gk, salvate_porta_tg_gk = costruisci_conteggi_porta(df_porta_tg_gk, esiti_successo=('save', 's'))
+                    tot_porta_tg_gk, salvate_porta_tg_gk = costruisci_conteggi_porta(df_porta_tg_gk, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
                     immagine_porta_tg_gk_bytes = _porta_cacheable(tot_porta_tg_gk, salvate_porta_tg_gk, colore_cornice=colore_cornice_tg_gk)
-                    tot_tast_tg_gk, salvate_tast_tg_gk = costruisci_conteggi_tastiera(df_tg_gk_filtrato, esiti_successo=('save', 's'))
+                    tot_tast_tg_gk, salvate_tast_tg_gk = costruisci_conteggi_tastiera(df_tg_gk_filtrato, esiti_successo=ESITI_EFFICIENZA_PORTIERE)
 
                     col_p_tg_gk, col_t_tg_gk = st.columns([1, 2])
                     with col_p_tg_gk:
                         st.image(immagine_porta_tg_gk_bytes)
                         if tasto_sel_tg_gk and len(df_porta_tg_gk) > 0:
-                            expected_testo_tg_gk = f"{expected_sel_tg_gk:.0f}%" if expected_sel_tg_gk is not None else "n/a"
-                            st.caption(f"Expected Save % for {tasto_sel_tg_gk}: **{expected_testo_tg_gk}**  |  "
-                                       f"Real: **{pct_reale:.1f}%** ({s_reale}/{len(df_porta_tg_gk)})")
+                            st.caption(_didascalia_expected_efficiency(tasto_sel_tg_gk, expected_sel_tg_gk, df_porta_tg_gk))
                     with col_t_tg_gk:
                         tasto_cliccato_tg_gk = pulsantiera_settori_campo(tot_tast_tg_gk, salvate_tast_tg_gk, tasto_sel_tg_gk,
                                                                           key_prefix=f"tag_go_gk_pulsantiera_{chiave_tg_gk_sicura}")
