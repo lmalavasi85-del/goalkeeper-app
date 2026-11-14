@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -2425,12 +2425,12 @@ def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato,
                                  selected=dict(marker=dict(opacity=0)), unselected=dict(marker=dict(opacity=0))))
         fig.update_xaxes(range=[-2, 711], visible=False, fixedrange=True)
         fig.update_yaxes(range=[-2, 486], visible=False, fixedrange=True, scaleanchor='x', scaleratio=1, constrain='domain')
-        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=altezza_px, dragmode=False,
+        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=altezza_px, width=int(round(altezza_px * 713 / 488)), autosize=False, dragmode=False,
                           clickmode='event+select', paper_bgcolor='white', plot_bgcolor='white', hoverdistance=18)
         chiave_n = f"{key_prefix}__campo_n"
         n = st.session_state.get(chiave_n, 0)
         evento = st.plotly_chart(fig, key=f"{key_prefix}__campo_{n}", on_select="rerun", selection_mode="points",
-                                 use_container_width=True, config={'displayModeBar': False})
+                                 use_container_width=False, config={'displayModeBar': False})   # v108: misura fissa con la proporzione esatta del campo (713:488), così non può mai venire stirato
     except TypeError:
         return _pulsantiera_settori_campo_bottoni(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix)
     punti = []
@@ -5520,7 +5520,7 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
                 titolo_gen = "General Shot Map (all shots)"
             blocco_generale = _blocco_porta_tastiera_pdf(
                 df_match, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=titolo_gen,
-                larghezza_porta_cm=9, larghezza_tastiera_cm=13
+                larghezza_porta_cm=9.8, larghezza_tastiera_cm=14.4
             )
             blocco_generale.hAlign = 'CENTER'
             parti_generale = [titolo_shot_maps, blocco_generale]
@@ -5539,32 +5539,20 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
                 while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
                     elementi.pop()
                 elementi.append(PageBreak())
-                titolo_shot_maps = Paragraph("Shot Maps — Individual Goalkeepers", sezione_stile)
-                titolo_gia_posizionato = False
+                titolo_gia_posizionato = True   # il titolo di ogni pagina portiere lo mette il ciclo sotto
 
         if liste_mappe_gk:
-            n_gk = len(liste_mappe_gk)
-            if n_gk <= 2:
-                larg_porta_gk, larg_tast_gk = (6.5, 9.5) if n_gk == 1 else (5, 7)
-                blocchi_gk = [_blocco_porta_tastiera_pdf(df_gk_pdf, ('save', 's'), titolo_mappa, larg_porta_gk, larg_tast_gk)
-                              for titolo_mappa, df_gk_pdf in liste_mappe_gk]
-                riga_gk = Table([blocchi_gk])
-                riga_gk.hAlign = 'CENTER'
-                riga_gk.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
-                if not titolo_gia_posizionato:
-                    elementi.append(KeepTogether([titolo_shot_maps, riga_gk]))
-                    titolo_gia_posizionato = True
-                else:
-                    elementi.append(riga_gk)
-            else:
-                for i_gk, (titolo_mappa, df_gk_pdf) in enumerate(liste_mappe_gk):
-                    blocco = _blocco_porta_tastiera_pdf(df_gk_pdf, ('save', 's'), titolo_mappa, 6, 8.5)
-                    blocco.hAlign = 'CENTER'
-                    if not titolo_gia_posizionato and i_gk == 0:
-                        elementi.append(KeepTogether([titolo_shot_maps, blocco, Spacer(1, 0.25 * cm)]))
-                        titolo_gia_posizionato = True
-                    else:
-                        elementi.append(KeepTogether([blocco, Spacer(1, 0.25 * cm)]))
+            # v108: una pagina per ogni portiere, identica alla pagina generale (porta + campo) e un po' più grande.
+            for i_gk, (titolo_mappa, df_gk_pdf) in enumerate(liste_mappe_gk):
+                blocco = _blocco_porta_tastiera_pdf(df_gk_pdf, ('save', 's'), titolo_mappa, 9.8, 14.4)
+                blocco.hAlign = 'CENTER'
+                if i_gk > 0 or not titolo_gia_posizionato:
+                    while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
+                        elementi.pop()
+                    if i_gk > 0 or titolo_gia_posizionato:
+                        elementi.append(PageBreak())
+                elementi.append(KeepTogether([Paragraph("Shot Maps — Individual Goalkeeper", sezione_stile), blocco]))
+                titolo_gia_posizionato = True
             elementi.append(Spacer(1, 0.4 * cm))
 
         for i_extra, (titolo_mappa, df_mappa) in enumerate(liste_mappe_extra):
