@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -1578,9 +1578,9 @@ def _classifica_portieri_da_df(df_gk_subset):
     df_r = df_r.sort_values(by=['_k1', '_k2', '_k3', '_k4', 'Shots Faced', 'Goalkeeper'],
                              ascending=[False, False, False, False, False, True]).reset_index(drop=True)
     df_r['Save % (Shots)'] = df_r.apply(
-        lambda r: f"{int(r['Saves'])}/{int(r['OnTarget'])} = {r['Save %']:.0f}%" if r['OnTarget'] > 0 else "0/0 = 0%", axis=1)
+        lambda r: f"{int(r['Saves'])}/{int(r['OnTarget'])} = {r['_k1']}%" if r['OnTarget'] > 0 else "0/0 = 0%", axis=1)
     df_r['Efficiency % (Shots)'] = df_r.apply(
-        lambda r: f"{int(r['EffNum'])}/{int(r['Shots Faced'])} = {r['Efficiency %']:.0f}%", axis=1)
+        lambda r: f"{int(r['EffNum'])}/{int(r['Shots Faced'])} = {r['_k2']}%", axis=1)
     return df_r[colonne_vuote]
 
 def classifiche_portieri_universale(df, soglia_tiri_minimi=100):
@@ -1614,10 +1614,10 @@ def _classifica_tiratori_da_df(df_tir_subset):
     righe = []
     for giocatore, df_g in df_tir_subset.groupby('TIRATORE_ID'):
         goal, tot, pct = calcola_metriche_tiratori_gruppo(df_g)
-        righe.append({'Player': giocatore, 'Goal %': round(pct, 1), 'Goals': goal, 'Shots': tot})
+        righe.append({'Player': giocatore, 'Goal %': round(pct, 1), '_k': int(f"{pct:.0f}"), 'Goals': goal, 'Shots': tot})
     df_r = pd.DataFrame(righe)
     df_r = df_r.sort_values(by=['Goal %', 'Shots', 'Player'], ascending=[False, False, True]).reset_index(drop=True)
-    df_r['Goal % (Shots)'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['Goal %']:.0f}%", axis=1)
+    df_r['Goal % (Shots)'] = df_r.apply(lambda r: f"{int(r['Goals'])}/{int(r['Shots'])} = {r['_k']}%", axis=1)   # v109: la % mostrata viene dal valore esatto (niente doppio arrotondamento 33,46 -> 33,5 -> 34)
     return df_r[colonne_vuote]
 
 def classifiche_tiratori_universale(df, soglia_tiri_minimi=20):
