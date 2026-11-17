@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -1562,6 +1562,12 @@ def tabella_volume_tiri_per_giocatore(df, soglia_altri_pct=2.0):
     elif len(piccoli) > 1:
         righe.append({'Player': f"Others ({len(piccoli)})", 'Shots': int(piccoli.sum()), '%': piccoli.sum() / tot * 100})
     return pd.DataFrame(righe)
+
+def df_tiri_money_time(df):
+    """Solo i tiri in Money Time (vuoto se la colonna non esiste)."""
+    if df is None or df.empty or 'Is_Money_Time' not in df.columns:
+        return df.iloc[0:0] if df is not None else pd.DataFrame()
+    return df[df['Is_Money_Time'] == True]
 
 def disegna_torta_volume_tiratori(df, titolo=None):
     """Grafico a torta del VOLUME di tiro per giocatore: quanta parte dei tiri della squadra ha preso ciascuno.
@@ -10152,12 +10158,15 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
         blocchi_pagine.append(pagina1)
 
         # v110: pagina con la torta del volume di tiro per giocatore (quota sul totale dei tiri della squadra)
-        if not tabella_volume_tiri_per_giocatore(df_squadra_riepilogo).empty:
-            _fig_tv_pdf = disegna_torta_volume_tiratori(df_squadra_riepilogo, titolo=None)
-            blocchi_pagine.append([
-                Paragraph("Shot Volume by Player (team total)", sezione_stile), Spacer(1, 0.3 * cm),
-                _immagine_da_figura_matplotlib(_fig_tv_pdf, 15, 13.8),
-            ])
+        for _tit_tv, _df_tv in (("Shot Volume by Player (team total)", df_squadra_riepilogo),
+                                ("Shot Volume by Player — Money Time", df_tiri_money_time(df_squadra_riepilogo)),
+                                ("Shot Volume by Player — Passive Play", filtra_tiri_passivi(df_squadra_riepilogo))):
+            if not tabella_volume_tiri_per_giocatore(_df_tv).empty:
+                _fig_tv_pdf = disegna_torta_volume_tiratori(_df_tv, titolo=None)
+                blocchi_pagine.append([
+                    Paragraph(_tit_tv, sezione_stile), Spacer(1, 0.3 * cm),
+                    _immagine_da_figura_matplotlib(_fig_tv_pdf, 15, 13.8),
+                ])
 
         # Pagina 3: statistiche per macro-zona di squadra (ingrandita), più sotto la stessa
         # scomposizione a macro-settore (7m/LW/RW/6M/9M/BT/FB) usata in Universal Stats — stessa
@@ -13196,13 +13205,22 @@ with tab4:
                         st.markdown("**By Money Time shot volume**")
                         st.dataframe(classifica_tiratori_per_volume(df_selezione, solo_money_time=True), use_container_width=True, hide_index=True)
 
-                    # v110: torta del volume di tiro per giocatore (quota di ogni giocatore sul totale dei tiri della squadra)
-                    st.markdown("**Share of the team's shots, by player**")
-                    _fig_tv = disegna_torta_volume_tiratori(df_selezione)
-                    _cv1, _cv2, _cv3 = st.columns([1, 2, 1])
-                    with _cv2:
+                    # v110/v111: torte del volume di tiro per giocatore (totale e Money Time affiancate)
+                    _cv1, _cv2 = st.columns(2)
+                    with _cv1:
+                        st.markdown("**Share of the team's shots, by player — total**")
+                        _fig_tv = disegna_torta_volume_tiratori(df_selezione)
                         st.pyplot(_fig_tv, use_container_width=True)
-                    plt.close(_fig_tv)
+                        plt.close(_fig_tv)
+                    with _cv2:
+                        st.markdown("**Share of the team's shots, by player — Money Time**")
+                        _df_mt_tv = df_tiri_money_time(df_selezione)
+                        if _df_mt_tv.empty:
+                            st.caption("No Money Time shots in this selection.")
+                        else:
+                            _fig_tv_mt = disegna_torta_volume_tiratori(_df_mt_tv)
+                            st.pyplot(_fig_tv_mt, use_container_width=True)
+                            plt.close(_fig_tv_mt)
 
                     st.markdown("---")
                     st.subheader(f"🎯 Passive Play — {titolo_dashboard}")
@@ -13218,6 +13236,12 @@ with tab4:
                         with cp2:
                             st.markdown("**By Goal %**")
                             st.dataframe(df_passivo_pct, use_container_width=True, hide_index=True)
+                        st.markdown("**Share of the team's passive-play shots, by player**")
+                        _fig_tv_pas = disegna_torta_volume_tiratori(filtra_tiri_passivi(df_selezione))
+                        _cp1, _cp2, _cp3 = st.columns([1, 2, 1])
+                        with _cp2:
+                            st.pyplot(_fig_tv_pas, use_container_width=True)
+                        plt.close(_fig_tv_pas)
 
                     st.markdown("---")
                     st.subheader(f"🥊 Duels — {titolo_dashboard}")
