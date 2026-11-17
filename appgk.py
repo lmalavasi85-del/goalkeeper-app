@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -8823,6 +8823,14 @@ def _ottieni_worksheet_training_pdf():
     # secondi) senza far percepire l'app come bloccata.
     return _WorksheetConRetry(worksheet, tentativi_massimi=4, attesa_iniziale=1.2)
 
+def ordina_link_esercizi(lista):
+    """Ordina i link degli esercizi per numero (Exercise 1, 2, 3, ... 10), qualunque sia l'ordine in cui sono stati
+    aggiunti. Le voci senza numero vanno in fondo, mantenendo il loro ordine."""
+    def _chiave(v):
+        m = re.search(r'\d+', str(v.get('nome', '')))
+        return (0, int(m.group()), '') if m else (1, 0, '')
+    return sorted(lista or [], key=_chiave)   # sorted è stabile: a parità di numero resta l'ordine di inserimento
+
 def carica_sessioni_allenamento_da_disco():
     if _google_sheets_configurato():
         try:
@@ -8869,7 +8877,7 @@ def carica_sessioni_allenamento_da_disco():
                     pdf_bytes = base64.b64decode(b64_completo)
                 sessioni.append({
                     'id': id_sessione, 'nome_sessione': nome_sessione, 'pdf_bytes': pdf_bytes,
-                    'link_list': dati.get('link_list', []), 'note_generali': dati.get('note_generali', ''),
+                    'link_list': ordina_link_esercizi(dati.get('link_list', [])), 'note_generali': dati.get('note_generali', ''),
                     'assegnazioni': dati.get('assegnazioni', []), 'gruppo': dati.get('gruppo'),
                 })
             return sessioni
@@ -10465,7 +10473,7 @@ def genera_pdf_sessione_allenamento(sessione, assegnazione, squadre_allenate):
     if sessione.get('link_list'):
         colonna_destra.append(Paragraph("Exercise videos", sezione_stile))
         colonna_destra.append(Spacer(1, 0.15 * cm * fattore_scala))
-        for link in sessione['link_list']:
+        for link in ordina_link_esercizi(sessione['link_list']):
             colonna_destra.append(_pulsante_link(link['nome'], link['url'], larghezza_colonna))
             colonna_destra.append(Spacer(1, 0.2 * cm * fattore_scala))
 
@@ -14311,6 +14319,7 @@ with tab5:
                                     st.caption(f"{nome_fase}: {secondi:.1f}s")
 
                     st.markdown("**Exercise video links**")
+                    sessione['link_list'][:] = ordina_link_esercizi(sessione['link_list'])   # v112: sempre in ordine di numero
                     for i_link, link in enumerate(sessione['link_list']):
                         col_l1, col_l2, col_l3 = st.columns([2, 4, 1])
                         col_l1.caption(link['nome'])
@@ -14326,6 +14335,8 @@ with tab5:
                         if nome_link_nuovo.strip() and url_link_nuovo.strip():
                             st.session_state['sessioni_allenamento'][idx_sessione]['link_list'].append(
                                 {'nome': nome_link_nuovo.strip(), 'url': url_link_nuovo.strip()})
+                            st.session_state['sessioni_allenamento'][idx_sessione]['link_list'][:] = ordina_link_esercizi(
+                                st.session_state['sessioni_allenamento'][idx_sessione]['link_list'])
                             aggiorna_metadati_singola_sessione(sessione['id'], st.session_state['sessioni_allenamento'])
                             st.rerun()
 
