@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -1542,6 +1542,50 @@ def disegna_torta_macro_universale(df_distribuzione, titolo=None):
     if titolo:
         ax.set_title(titolo, fontsize=13, color='#15304f', fontweight='bold')
     if df_distribuzione.empty:
+        fig.tight_layout()
+    return fig
+
+def tabella_volume_tiri_per_giocatore(df, soglia_altri_pct=2.0):
+    """Tiri presi da ciascun giocatore sul totale della squadra (selezione corrente). I giocatori sotto la soglia
+    (default 2% del totale) vengono riuniti in una sola voce 'Others (n)' per tenere il grafico leggibile."""
+    if df is None or df.empty or 'TIRATORE_ID' not in df.columns:
+        return pd.DataFrame(columns=['Player', 'Shots', '%'])
+    c = df['TIRATORE_ID'].dropna().astype(str).value_counts()
+    tot = int(c.sum())
+    if tot == 0:
+        return pd.DataFrame(columns=['Player', 'Shots', '%'])
+    grandi = c[c / tot * 100 >= soglia_altri_pct]
+    piccoli = c[c / tot * 100 < soglia_altri_pct]
+    righe = [{'Player': k, 'Shots': int(v), '%': v / tot * 100} for k, v in grandi.items()]
+    if len(piccoli) == 1:
+        righe.append({'Player': piccoli.index[0], 'Shots': int(piccoli.iloc[0]), '%': piccoli.iloc[0] / tot * 100})
+    elif len(piccoli) > 1:
+        righe.append({'Player': f"Others ({len(piccoli)})", 'Shots': int(piccoli.sum()), '%': piccoli.sum() / tot * 100})
+    return pd.DataFrame(righe)
+
+def disegna_torta_volume_tiratori(df, titolo=None):
+    """Grafico a torta del VOLUME di tiro per giocatore: quanta parte dei tiri della squadra ha preso ciascuno.
+    Percentuale e numero di tiri dentro la fetta, nome fuori; le fette strette ricevono l'etichetta fuori con una freccia."""
+    d = tabella_volume_tiri_per_giocatore(df)
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    if d.empty:
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center', fontsize=14, color='gray')
+        ax.axis('off')
+    else:
+        pal = list(plt.get_cmap('tab20').colors)
+        colori = [pal[(2 * i) % 20 if i < 10 else (2 * (i - 10) + 1) % 20] for i in range(len(d))]
+        colori = [('#b0b0b0' if str(n).startswith('Others (') else col) for n, col in zip(d['Player'], colori)]
+        wedges, _ = ax.pie([float(v) for v in d['Shots']], colors=colori, startangle=90, counterclock=False,
+                           wedgeprops=dict(edgecolor='white', linewidth=1))
+        interni = [f"{p:.1f}%\n{int(n)} shots" for p, n in zip(d['%'], d['Shots'])]
+        _etichette_torta_senza_sovrapposizioni(
+            ax, wedges, interni, [str(n) for n in d['Player']], [float(p) for p in d['%']],
+            soglia=6.0, fs_int=10, fs_est=11)
+        ax.set_aspect('equal')
+        fig.subplots_adjust(left=0.04, right=0.96, bottom=0.04, top=0.94 if titolo else 0.96)
+    if titolo:
+        ax.set_title(titolo, fontsize=13, color='#15304f', fontweight='bold')
+    if d.empty:
         fig.tight_layout()
     return fig
 
@@ -10107,6 +10151,14 @@ def genera_pdf_tiratori(titolo_report, dati_per_giocatore, note_dict=None, df_sq
 
         blocchi_pagine.append(pagina1)
 
+        # v110: pagina con la torta del volume di tiro per giocatore (quota sul totale dei tiri della squadra)
+        if not tabella_volume_tiri_per_giocatore(df_squadra_riepilogo).empty:
+            _fig_tv_pdf = disegna_torta_volume_tiratori(df_squadra_riepilogo, titolo=None)
+            blocchi_pagine.append([
+                Paragraph("Shot Volume by Player (team total)", sezione_stile), Spacer(1, 0.3 * cm),
+                _immagine_da_figura_matplotlib(_fig_tv_pdf, 15, 13.8),
+            ])
+
         # Pagina 3: statistiche per macro-zona di squadra (ingrandita), più sotto la stessa
         # scomposizione a macro-settore (7m/LW/RW/6M/9M/BT/FB) usata in Universal Stats — stessa
         # nomenclatura "macro-sector" per distinguerla dalla "macro-zone" (Sector 1/1.5/2...).
@@ -13143,6 +13195,14 @@ with tab4:
                     with cc2:
                         st.markdown("**By Money Time shot volume**")
                         st.dataframe(classifica_tiratori_per_volume(df_selezione, solo_money_time=True), use_container_width=True, hide_index=True)
+
+                    # v110: torta del volume di tiro per giocatore (quota di ogni giocatore sul totale dei tiri della squadra)
+                    st.markdown("**Share of the team's shots, by player**")
+                    _fig_tv = disegna_torta_volume_tiratori(df_selezione)
+                    _cv1, _cv2, _cv3 = st.columns([1, 2, 1])
+                    with _cv2:
+                        st.pyplot(_fig_tv, use_container_width=True)
+                    plt.close(_fig_tv)
 
                     st.markdown("---")
                     st.subheader(f"🎯 Passive Play — {titolo_dashboard}")
