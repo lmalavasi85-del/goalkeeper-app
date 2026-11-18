@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -2479,8 +2479,13 @@ def pulsantiera_settori_campo(conteggi_totali, conteggi_goal, tasto_selezionato,
                           clickmode='event+select', paper_bgcolor='white', plot_bgcolor='white', hoverdistance=18)
         chiave_n = f"{key_prefix}__campo_n"
         n = st.session_state.get(chiave_n, 0)
-        evento = st.plotly_chart(fig, key=f"{key_prefix}__campo_{n}", on_select="rerun", selection_mode="points",
-                                 use_container_width=False, config={'displayModeBar': False})   # v108: misura fissa con la proporzione esatta del campo (713:488), così non può mai venire stirato
+        _larg_px = int(round(altezza_px * 713 / 488))
+        try:   # v114: misura esplicita (larghezza e altezza in pixel) dove Streamlit lo permette: la mappa ha sempre la stessa grandezza in ogni sezione
+            evento = st.plotly_chart(fig, key=f"{key_prefix}__campo_{n}", on_select="rerun", selection_mode="points",
+                                     width=_larg_px, height=altezza_px, config={'displayModeBar': False})
+        except (TypeError, ValueError):   # Streamlit più vecchio: vecchio parametro
+            evento = st.plotly_chart(fig, key=f"{key_prefix}__campo_{n}", on_select="rerun", selection_mode="points",
+                                     use_container_width=False, config={'displayModeBar': False})   # v108: misura fissa con la proporzione esatta del campo (713:488), così non può mai venire stirato
     except TypeError:
         return _pulsantiera_settori_campo_bottoni(conteggi_totali, conteggi_goal, tasto_selezionato, key_prefix)
     punti = []
