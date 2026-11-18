@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -1564,10 +1564,10 @@ def tabella_volume_tiri_per_giocatore(df, soglia_altri_pct=2.0):
     return pd.DataFrame(righe)
 
 def df_tiri_money_time(df):
-    """Solo i tiri in Money Time (vuoto se la colonna non esiste)."""
-    if df is None or df.empty or 'Is_Money_Time' not in df.columns:
-        return df.iloc[0:0] if df is not None else pd.DataFrame()
-    return df[df['Is_Money_Time'] == True]
+    """Solo i tiri in Money Time (vuoto se le colonne non esistono)."""
+    if df is None:
+        return pd.DataFrame()
+    return _filtra_money_time_generico(df)
 
 def disegna_torta_volume_tiratori(df, titolo=None):
     """Grafico a torta del VOLUME di tiro per giocatore: quanta parte dei tiri della squadra ha preso ciascuno.
@@ -9451,6 +9451,13 @@ def genera_pdf_universal_stats(titolo_report, sezioni):
                     ]))
             elementi.append(_separatore())
 
+        elif sezione['tipo'] == 'figure':
+            immagini = [_immagine_da_figura_matplotlib(f, 12, 10) for f in sezione['figs']]
+            riga_fig = Table([immagini], colWidths=[12.3 * cm] * len(immagini))
+            riga_fig.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+            elementi.append(KeepTogether([Paragraph(sezione['titolo'], sezione_stile), Spacer(1, 0.2 * cm), riga_fig]))
+            elementi.append(_separatore())
+
         elif sezione['tipo'] == 'ranking':
             if sezione['df_generale'].empty:
                 elementi.append(KeepTogether([
@@ -10804,6 +10811,341 @@ if st.session_state.get('ruolo_utente') == 'portiere':
     mostra_vista_portiere(st.session_state['nome_portiere_autenticato'])
     st.stop()
 
+# ============================================================
+# RADAR (v113): rendimento per situazione e per macro-settore, per portiere/giocatore o per squadra,
+# a confronto con la media di tutti oppure con un altro portiere/giocatore/squadra.
+# Assi: Total, Passive, Money Time, 9m, 6m, 7m, BT, RW, LW, FB.
+# Portieri: Save % (parate / tiri in porta) ed Efficiency % ((parate + fuori) / tutti i tiri subiti).
+# Tiratori: Goal % (goal / tutti i tiri) e Goal % on target (goal / tiri in porta).
+# Stessi filtri per soggetto e confronto: campionato, intervallo di date, partite scelte; più il
+# filtro "tutti i tiri / solo passivo / solo Money Time" applicato a tutti gli assi.
+# ============================================================
+RADAR_ASSI = ['Total', 'Passive', 'Money Time', '9m', '6m', '7m', 'BT', 'RW', 'LW', 'FB']
+_RADAR_MACRO = {'9m': '9m', '6m': '6m', '7m': '7m', 'BT': 'bt', 'RW': 'rw', 'LW': 'lw', 'FB': 'fb'}
+
+def _filtra_money_time_generico(df):
+    if df is None or df.empty:
+        return df
+    if 'Is_Stress_Test' in df.columns:
+        return df[df['Is_Stress_Test'] == True]
+    if 'Is_Money_Time' in df.columns:
+        return df[df['Is_Money_Time'] == True]
+    return df.iloc[0:0]
+
+def _metriche_radar_da_df(df, ruolo):
+    """Restituisce ((valore_1, n_1), (valore_2, n_2)); valore None se il denominatore è zero.
+    gk: Save % = s/(s+g), n = s+g ; Efficiency % = (s+m)/(s+g+m), n = s+g+m.
+    tir: Goal % = g/(g+s+m), n = tutti ; Goal % on target = g/(g+s), n = g+s."""
+    if df is None or df.empty or 'RESULT_CLEAN' not in df.columns:
+        return (None, 0), (None, 0)
+    r = df['RESULT_CLEAN'].astype(str).str.lower()
+    s = int(r.isin(['save', 's']).sum()); g = int(r.isin(['goal', 'g']).sum()); m = int(r.isin(['miss', 'm']).sum())
+    if ruolo == 'gk':
+        n1, n2 = s + g, s + g + m
+        return ((s / n1 * 100) if n1 else None, n1), (((s + m) / n2 * 100) if n2 else None, n2)
+    n1, n2 = s + g + m, s + g
+    return ((g / n1 * 100) if n1 else None, n1), ((g / n2 * 100) if n2 else None, n2)
+
+def calcola_valori_radar(df, ruolo, contesto='all'):
+    """df: tiri del soggetto (già filtrati per partite). contesto: 'all' | 'passive' | 'mt' — filtro applicato a
+    TUTTI gli assi. Restituisce ({asse: (v1, n1)}, {asse: (v2, n2)})."""
+    if df is None:
+        df = pd.DataFrame()
+    if not df.empty:
+        if contesto == 'passive':
+            df = filtra_tiri_passivi(df)
+        elif contesto == 'mt':
+            df = _filtra_money_time_generico(df)
+    out1, out2 = {}, {}
+    macro_per_riga = df['TIRO_CLEAN'].apply(mappa_macro_settore) if (not df.empty and 'TIRO_CLEAN' in df.columns) else None
+    for asse in RADAR_ASSI:
+        if asse == 'Total':
+            sub = df
+        elif asse == 'Passive':
+            sub = filtra_tiri_passivi(df) if not df.empty else df
+        elif asse == 'Money Time':
+            sub = _filtra_money_time_generico(df)
+        else:
+            sub = df[macro_per_riga == _RADAR_MACRO[asse]] if macro_per_riga is not None else df.iloc[0:0]
+        (v1, n1), (v2, n2) = _metriche_radar_da_df(sub, ruolo)
+        out1[asse], out2[asse] = (v1, n1), (v2, n2)
+    return out1, out2
+
+def disegna_radar(serie, titolo):
+    """serie: lista di dict(nome, valori={asse: (valore|None, n)}, colore). Il valore di ogni serie è scritto
+    nell'etichetta dell'asse (mai sopra il grafico), così i testi non si sovrappongono."""
+    import numpy as np
+    n = len(RADAR_ASSI)
+    ang = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    fig = plt.figure(figsize=(7.4, 6.8))
+    ax = fig.add_subplot(111, polar=True)
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    ax.set_ylim(0, 100)
+    ax.set_yticks([20, 40, 60, 80, 100])
+    ax.set_yticklabels(['20', '40', '60', '80', '100'], fontsize=7, color='#888888')
+    ax.set_rlabel_position(180 / n)
+    ax.grid(color='#cccccc', linewidth=0.7)
+    ax.spines['polar'].set_color('#cccccc')
+    etichette = []
+    for asse in RADAR_ASSI:
+        righe = [asse]
+        for s in serie:
+            v = s['valori'].get(asse, (None, 0))[0]
+            righe.append('n/a' if v is None else f"{v:.0f}%")
+        etichette.append(righe[0] + '\n' + '  |  '.join(righe[1:]))
+    ax.set_xticks(ang)
+    ax.set_xticklabels(etichette, fontsize=9)
+    ax.tick_params(axis='x', pad=14)
+    chiusi = np.append(ang, ang[0])
+    for s in serie:
+        vals = [s['valori'].get(a, (None, 0))[0] for a in RADAR_ASSI]
+        y = np.array([0.0 if v is None else float(v) for v in vals])
+        y = np.append(y, y[0])
+        ax.plot(chiusi, y, color=s['colore'], linewidth=2.2, label=s['nome'], marker='o', markersize=4)
+        ax.fill(chiusi, y, color=s['colore'], alpha=0.16)
+    ax.set_title(titolo, fontsize=12, fontweight='bold', color='#15304f', pad=34)
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.17), ncol=max(1, len(serie)), frameon=False, fontsize=9)
+    fig.subplots_adjust(left=0.1, right=0.9, top=0.84, bottom=0.14)
+    return fig
+
+def tabella_valori_radar(serie):
+    righe = []
+    for asse in RADAR_ASSI:
+        r = {'Axis': asse}
+        for s in serie:
+            v, n = s['valori'].get(asse, (None, 0))
+            r[s['nome']] = 'n/a' if v is None else f"{v:.0f}% ({n})"
+        righe.append(r)
+    return pd.DataFrame(righe)
+
+def _filtra_partite_radar(prefix, elenco):
+    """Filtri condivisi (campionato / date / partite scelte) per soggetto e confronto del radar."""
+    modo = st.radio("Filter matches by:", ["All Data & All Time", "Championship", "Date Range", "Custom Match Selection"],
+                    horizontal=True, key=f"{prefix}_modo")
+    if modo == "Championship":
+        nomi = [c['nome'] for c in st.session_state['campionati']]
+        if not nomi:
+            st.info("No championships created yet — showing All Data & All Time instead.")
+            return elenco
+        camp = next(c for c in st.session_state['campionati'] if c['nome'] == st.selectbox("Championship:", nomi, key=f"{prefix}_camp"))
+        return partite_in_campionato(elenco, camp)
+    if modo == "Date Range":
+        date_disp = [m['data'] for m in elenco if hasattr(m['data'], 'year')]
+        if not date_disp:
+            return elenco
+        c1, c2 = st.columns(2)
+        d1 = c1.date_input("From:", value=min(date_disp), key=f"{prefix}_d1")
+        d2 = c2.date_input("To:", value=max(date_disp), key=f"{prefix}_d2")
+        return [m for m in elenco if hasattr(m['data'], 'year') and d1 <= m['data'] <= d2]
+    if modo == "Custom Match Selection":
+        etich = sorted({f"{m['nome']} ({m['data']})" for m in elenco})
+        scelte = st.multiselect("Select matches:", etich, key=f"{prefix}_match")
+        if not scelte:
+            st.info("No matches selected — showing All Data & All Time instead.")
+            return elenco
+        return [m for m in elenco if f"{m['nome']} ({m['data']})" in scelte]
+    return elenco
+
+def sezione_radar(prefix, elenco_partite, ruolo):
+    """Sezione completa (filtri + soggetto + confronto + due radar). ruolo: 'gk' (db portieri) o 'tir' (db tiratori)."""
+    col_id = 'PORTIERE_ID' if ruolo == 'gk' else 'TIRATORE_ID'
+    nome_ruolo = "Goalkeeper" if ruolo == 'gk' else "Player"
+    nomi_metriche = ("Save %", "Efficiency %") if ruolo == 'gk' else ("Goal %", "Goal % on target")
+    st.caption("Axes: Total, Passive, Money Time, 9m, 6m, 7m, BT, RW, LW, FB. The numbers next to each axis follow the legend order; "
+               "in the table, the number in brackets is the shots the % is based on. 'n/a' = no shots.")
+    partite = _filtra_partite_radar(prefix, elenco_partite)
+    if not partite:
+        st.info("No matches in this selection.")
+        return
+    contesto_lbl = st.radio("Shots to include:", ["All shots", "Passive play only", "Money Time only"], horizontal=True, key=f"{prefix}_ctx")
+    contesto = {'All shots': 'all', 'Passive play only': 'passive', 'Money Time only': 'mt'}[contesto_lbl]
+
+    giocatori = sorted({x for m in partite if col_id in m['dati'].columns for x in m['dati'][col_id].dropna().unique()})
+    squadre = sorted({m['squadra'] for m in partite})
+    c1, c2 = st.columns(2)
+    tipo = c1.radio("Show:", [nome_ruolo, "Team"], horizontal=True, key=f"{prefix}_tipo")
+    elenco_soggetti = giocatori if tipo == nome_ruolo else squadre
+    if not elenco_soggetti:
+        st.info("Nothing to show in this selection.")
+        return
+    soggetto = c1.selectbox(f"{tipo}:", elenco_soggetti, key=f"{prefix}_soggetto_{tipo}")
+    modi_conf = ["Average of all " + ("goalkeepers" if ruolo == 'gk' else "players"),
+                 "Another " + (nome_ruolo.lower() if tipo == nome_ruolo else "team")]
+    confronto_modo = c2.radio("Compare with:", modi_conf, key=f"{prefix}_conf_modo_{tipo}")
+    altro = None
+    if confronto_modo == modi_conf[1]:
+        altri = [x for x in elenco_soggetti if x != soggetto]
+        if not altri:
+            st.info("There is nobody else to compare with in this selection.")
+            return
+        altro = c2.selectbox(f"Which {tipo.lower()}:", altri, key=f"{prefix}_altro_{tipo}")
+
+    def _df_di(nome):
+        if tipo == nome_ruolo:
+            frammenti = [m['dati'][m['dati'][col_id] == nome] for m in partite if col_id in m['dati'].columns]
+        else:
+            frammenti = [m['dati'] for m in partite if m['squadra'] == nome]
+        frammenti = [f for f in frammenti if not f.empty]
+        return pd.concat(frammenti, ignore_index=True) if frammenti else pd.DataFrame()
+
+    df_sogg = _df_di(soggetto)
+    if altro is not None:
+        df_conf, nome_conf = _df_di(altro), altro
+    else:
+        tutti = [m['dati'] for m in partite if not m['dati'].empty]
+        df_conf = pd.concat(tutti, ignore_index=True) if tutti else pd.DataFrame()
+        nome_conf = "Average of all " + ("goalkeepers" if ruolo == 'gk' else "players")
+    if df_sogg.empty:
+        st.info(f"No shots for {soggetto} in this selection.")
+        return
+    v_sogg = calcola_valori_radar(df_sogg, ruolo, contesto)
+    v_conf = calcola_valori_radar(df_conf, ruolo, contesto)
+    n_part = len({(m['nome'], str(m['data'])) for m in partite})
+    st.caption(f"{len(partite)} match record(s) in the selection · {n_part} match(es) · {contesto_lbl.lower()}.")
+    colonne = st.columns(2)
+    for i in range(2):
+        serie = [{'nome': soggetto, 'valori': v_sogg[i], 'colore': '#1f77b4'},
+                 {'nome': nome_conf, 'valori': v_conf[i], 'colore': '#ff7f0e'}]
+        with colonne[i]:
+            fig = disegna_radar(serie, nomi_metriche[i])
+            st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+            with st.expander(f"Values — {nomi_metriche[i]}"):
+                st.dataframe(tabella_valori_radar(serie), use_container_width=True, hide_index=True)
+
+
+# ============================================================
+# v113 — CONFRONTO TRA TEAM PORTIERI (Single Game) e VITTORIE vs % PARATA (Universal Stats)
+# ============================================================
+def _arrotonda_visualizzato(v):
+    """Intero come lo mostra l'app (nessun doppio arrotondamento)."""
+    return int(f"{v:.0f}")
+
+def disegna_confronto_due_valori(nome_a, nome_b, val_a, val_b, dett_a, dett_b, titolo, colori=('#1f77b4', '#ff7f0e')):
+    """Due barre (una per squadra) con il valore % sopra e il dettaglio (es. '18/52') sotto il nome."""
+    fig, ax = plt.subplots(figsize=(5.6, 4.4))
+    barre = ax.bar([0, 1], [val_a, val_b], color=list(colori), width=0.55, edgecolor='white')
+    ax.set_ylim(0, 100)
+    ax.set_xlim(-0.7, 1.7)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels([f"{nome_a}\n{dett_a}", f"{nome_b}\n{dett_b}"], fontsize=10)
+    ax.set_yticks([0, 20, 40, 60, 80, 100])
+    ax.set_yticklabels([f"{t}%" for t in (0, 20, 40, 60, 80, 100)], fontsize=8, color='#666666')
+    ax.grid(axis='y', color='#e3e3e3', linewidth=0.7)
+    ax.set_axisbelow(True)
+    for s in ('top', 'right'):
+        ax.spines[s].set_visible(False)
+    for b, v in zip(barre, (val_a, val_b)):
+        ax.text(b.get_x() + b.get_width() / 2, v + 2, f"{v:.1f}%", ha='center', va='bottom', fontsize=12, fontweight='bold', color='#15304f')
+    ax.set_title(titolo, fontsize=12, fontweight='bold', color='#15304f', pad=10)
+    fig.tight_layout()
+    return fig
+
+def trova_controparte_partita(match, elenco_partite):
+    """L'altro record portieri della stessa partita (squadra avversaria), se caricato."""
+    for m in elenco_partite:
+        if m is match:
+            continue
+        if m['nome'] == match['nome'] and str(m['data']) == str(match['data']) and m['squadra'] != match['squadra'] \
+                and m.get('categoria') == match.get('categoria'):
+            return m
+    return None
+
+def mostra_confronto_team_portieri(match, elenco_partite, chiave):
+    """Single Game Analysis: Save % ed Efficiency % del team portieri di una squadra contro quelli dell'altra."""
+    altro = trova_controparte_partita(match, elenco_partite)
+    st.subheader("⚔️ Goalkeeping Team vs Goalkeeping Team")
+    if altro is None:
+        st.caption("The opposing team's goalkeeper data for this match has not been uploaded, so no comparison is possible.")
+        return
+    s_a, g_a, m_a, pct_a, eff_a = calcola_metriche_gruppo(match['dati'])
+    s_b, g_b, m_b, pct_b, eff_b = calcola_metriche_gruppo(altro['dati'])
+    nome_a, nome_b = str(match['squadra']), str(altro['squadra'])
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = disegna_confronto_due_valori(nome_a, nome_b, pct_a, pct_b, f"{s_a}/{s_a + g_a} saves", f"{s_b}/{s_b + g_b} saves", "Save %")
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+    with c2:
+        fig = disegna_confronto_due_valori(nome_a, nome_b, eff_a, eff_b, f"{s_a + m_a}/{s_a + g_a + m_a}", f"{s_b + m_b}/{s_b + g_b + m_b}", "Efficiency %")
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+    st.caption("Save % = saves / shots on target. Efficiency % = (saves + misses) / all shots faced. "
+               "Each bar covers all the goalkeepers who played for that team in this match.")
+
+def tabella_vittorie_vs_parate(elenco_gk):
+    """Per ogni partita con ENTRAMBI i record portieri completi e un vincitore (no pareggi), calcola Save % ed
+    Efficiency % dei due team portieri e chi ha vinto. Punteggio = goal subiti dal team portieri avversario.
+    Restituisce DataFrame: Match, Winner, Loser, Save_W, Save_L, Eff_W, Eff_L (valori esatti)."""
+    gruppi = {}
+    for m in elenco_gk:
+        if m.get('categoria'):
+            continue
+        gruppi.setdefault((m['nome'], str(m['data'])), []).append(m)
+    righe = []
+    for (nome, data), voci in gruppi.items():
+        squadre = {}
+        for v in voci:
+            squadre.setdefault(v['squadra'], v)
+        if len(squadre) != 2:
+            continue
+        (sa, va), (sb, vb) = list(squadre.items())
+        if not (va.get('partita_completa', True) and vb.get('partita_completa', True)):
+            continue
+        sa_s, sa_g, _, sa_pct, sa_eff = calcola_metriche_gruppo(va['dati'])
+        sb_s, sb_g, _, sb_pct, sb_eff = calcola_metriche_gruppo(vb['dati'])
+        gol_a, gol_b = sb_g, sa_g      # i goal di A sono quelli subiti dai portieri di B
+        if gol_a == gol_b:
+            continue
+        a_vince = gol_a > gol_b
+        w, l = (sa, sb) if a_vince else (sb, sa)
+        righe.append({'Match': f"{nome} ({data})", 'Winner': w, 'Loser': l,
+                      'Score': f"{max(gol_a, gol_b)}-{min(gol_a, gol_b)}",
+                      'Save_W': sa_pct if a_vince else sb_pct, 'Save_L': sb_pct if a_vince else sa_pct,
+                      'Eff_W': sa_eff if a_vince else sb_eff, 'Eff_L': sb_eff if a_vince else sa_eff})
+    return pd.DataFrame(righe, columns=['Match', 'Winner', 'Loser', 'Score', 'Save_W', 'Save_L', 'Eff_W', 'Eff_L'])
+
+def disegna_vittorie_vs_parate(n_alta, n_bassa, titolo, etichetta_metrica):
+    """Due barre: partite vinte dalla squadra col valore PIÙ ALTO / più basso di Save % (o Efficiency %)."""
+    tot = n_alta + n_bassa
+    fig, ax = plt.subplots(figsize=(6.2, 4.8))
+    barre = ax.bar([0, 1], [n_alta, n_bassa], color=['#2ca02c', '#d62728'], width=0.55, edgecolor='white')
+    ax.set_xlim(-0.7, 1.7)
+    ax.set_ylim(0, max(n_alta, n_bassa, 1) * 1.28)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels([f"Won by the team with the\nHIGHER {etichetta_metrica}", f"Won by the team with the\nLOWER {etichetta_metrica}"], fontsize=10)
+    ax.yaxis.get_major_locator().set_params(integer=True)
+    ax.grid(axis='y', color='#e3e3e3', linewidth=0.7)
+    ax.set_axisbelow(True)
+    for s in ('top', 'right'):
+        ax.spines[s].set_visible(False)
+    ax.set_ylabel('Matches', fontsize=9)
+    for b, n in zip(barre, (n_alta, n_bassa)):
+        pct = (n / tot * 100) if tot else 0
+        ax.text(b.get_x() + b.get_width() / 2, n + max(n_alta, n_bassa, 1) * 0.03, f"{n}  ({pct:.0f}%)",
+                ha='center', va='bottom', fontsize=12, fontweight='bold', color='#15304f')
+    ax.set_title(titolo, fontsize=12, fontweight='bold', color='#15304f', pad=10)
+    fig.tight_layout()
+    return fig
+
+def figure_vittorie_vs_parate(df_v):
+    """Restituisce ({'Save %': (fig, n_escluse, df_incluse), 'Efficiency %': ...}) escludendo le partite in cui le due
+    squadre hanno lo STESSO valore anche arrotondando all'intero (come lo vede l'utente)."""
+    out = {}
+    for etichetta, cw, cl in (("Save %", 'Save_W', 'Save_L'), ("Efficiency %", 'Eff_W', 'Eff_L')):
+        if df_v.empty:
+            out[etichetta] = (disegna_vittorie_vs_parate(0, 0, f"Matches won vs {etichetta}", etichetta), 0, df_v)
+            continue
+        uguali = df_v.apply(lambda r: _arrotonda_visualizzato(r[cw]) == _arrotonda_visualizzato(r[cl]), axis=1)
+        d = df_v[~uguali]
+        n_alta = int((d.apply(lambda r: _arrotonda_visualizzato(r[cw]) > _arrotonda_visualizzato(r[cl]), axis=1)).sum()) if not d.empty else 0
+        n_bassa = len(d) - n_alta
+        out[etichetta] = (disegna_vittorie_vs_parate(n_alta, n_bassa, f"Matches won vs {etichetta} of the goalkeeping teams", etichetta),
+                          int(uguali.sum()), d)
+    return out
+
+
 tab1, tab2, tab3, tab4, tab7, tab6, tab5, tab8 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🌍 Universal Stats', '🎬 Tag & Go Analysis', '🏋️ Training Sessions', '🎬 YouTube Links'])
 
 with tab1:
@@ -11953,6 +12295,9 @@ with tab2:
             c5.metric("Team GPI (Total)", f"{gpi_totale_squadra:+.1f}")
             if g_t != g_t_noeg:
                 st.caption(f"Excluding Empty Goals — Goals Conceded: {g_t_noeg} · Save %: {pct_t_noeg:.1f}% · Efficiency %: {eff_t_noeg:.1f}%")
+
+            st.markdown("---")
+            mostra_confronto_team_portieri(elenco_partite_smatch[idx_match], elenco_partite_smatch, "sg_confronto_team")
         
             st.markdown("---")
             st.subheader("📈 Goalkeeper Cumulative Match Performance Graph")
@@ -13071,6 +13416,12 @@ with tab3:
                         st.error(f"Error generating PDF: {e}")
 
 
+        # v113: radar Save % / Efficiency % (portiere o squadra, contro la media o contro un altro)
+        st.markdown("---")
+        st.subheader("🕸️ Goalkeeper Radar — Save % and Efficiency %")
+        sezione_radar("sr_radar", db_sorgente_sr, 'gk')
+
+
 st.sidebar.caption(f"   • Seasonal Report: {time.time() - _t_tab3:.1f}s")
 with tab4:
     _t_tab4 = time.time()
@@ -13147,6 +13498,12 @@ with tab4:
                 if macro_lega_scelto != "(none)":
                     macro_lega_key = next(k for k, v in ETICHETTA_MACRO_TIRATORI.items() if v == macro_lega_scelto)
                     st.dataframe(tabella_micro_di_un_macro(df_lega_totale, macro_lega_key), use_container_width=True, hide_index=True)
+
+            # v113: radar Goal % / Goal % on target (giocatore o squadra, contro la media o contro un altro)
+            st.markdown("---")
+            st.subheader("🕸️ Shooter Radar — Goal % and Goal % on target")
+            sezione_radar("tr_radar", escludi_empty_goal_stagionale(st.session_state['db_tiratori']), 'tir')
+            st.markdown("---")
 
             modalita_tir = st.radio("View by:", ["Team", "Player"], horizontal=True, key="modalita_tir")
 
@@ -14931,6 +15288,33 @@ with tab7:
         df_tiratori_universale = pd.concat([m['dati'] for m in partite_tir_filtrate_us], ignore_index=True) \
             if partite_tir_filtrate_us else pd.DataFrame()
 
+        # v113: le partite si vincono con la % di parata? Confronto tra le partite vinte dalla squadra col team portieri
+        # migliore e quelle vinte dalla squadra col team portieri peggiore (stessi filtri sopra).
+        st.markdown("---")
+        st.subheader("⚖️ Does the better goalkeeping team win?")
+        st.caption("Only matches with both teams' goalkeeper data (complete) and a winner (draws excluded); the final score is "
+                   "taken from the goals conceded by each goalkeeping team. Matches where the two teams have the SAME value, "
+                   "even ignoring decimals, are left out of that chart.")
+        _df_vitt_us = tabella_vittorie_vs_parate(partite_filtrate_us)
+        _figs_vitt_us = figure_vittorie_vs_parate(_df_vitt_us)
+        _cvu1, _cvu2 = st.columns(2)
+        for _col_v, _etich_v in ((_cvu1, "Save %"), (_cvu2, "Efficiency %")):
+            _fig_v, _n_escl_v, _d_incl_v = _figs_vitt_us[_etich_v]
+            with _col_v:
+                st.pyplot(_fig_v, use_container_width=True)
+                plt.close(_fig_v)
+                st.caption(f"{len(_d_incl_v)} match(es) in the chart · {_n_escl_v} excluded (identical {_etich_v}) · "
+                           f"{len(_df_vitt_us)} match(es) with a winner and both goalkeeping teams in the selection.")
+        includi_pdf_vittorie_us = st.checkbox("📄 Include 'Does the better goalkeeping team win?' in PDF export", key="us_pdf_include_vittorie")
+        if not _df_vitt_us.empty:
+            with st.expander("Match list"):
+                _tab_v = _df_vitt_us.copy()
+                for _c in ('Save_W', 'Save_L', 'Eff_W', 'Eff_L'):
+                    _tab_v[_c] = _tab_v[_c].map(lambda v: f"{v:.1f}%")
+                st.dataframe(_tab_v.rename(columns={'Save_W': 'Save % (winner)', 'Save_L': 'Save % (loser)',
+                                                    'Eff_W': 'Efficiency % (winner)', 'Eff_L': 'Efficiency % (loser)'}),
+                             use_container_width=True, hide_index=True)
+
         def _mostra_torta_e_tabella(df_sorgente, titolo_torta, chiave, mostra_micro=False):
             col_torta, col_tabella = st.columns([1, 1])
             df_distribuzione = tabella_distribuzione_macro_universale(df_sorgente)
@@ -15332,6 +15716,9 @@ with tab7:
                                     'df': filtra_tiri_passivi(df_squadra_us), 'micro': True})
             sezioni_pdf_us.append({'tipo': 'torta_tabella', 'titolo': f'Money Time Shots — {squadra_scelta_us}',
                                     'df': _filtra_money_time(df_squadra_us), 'micro': True})
+        if includi_pdf_vittorie_us:
+            sezioni_pdf_us.append({'tipo': 'figure', 'titolo': 'Does the better goalkeeping team win?',
+                                    'figs': [figure_vittorie_vs_parate(_df_vitt_us)[k][0] for k in ("Save %", "Efficiency %")]})
         if includi_pdf_gk_rank:
             sezioni_pdf_us.append({'tipo': 'ranking', 'titolo': 'Goalkeeper Rankings', 'df_generale': gen_gk_us, 'sotto_tabelle': sotto_gk_us})
         sezioni_pdf_us.extend(sezioni_pdf_gk_method)
