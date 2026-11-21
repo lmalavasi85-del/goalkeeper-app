@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v115 - 2026-11-21 - Universal Stats: filtro sullo scarto (da -5 a +5 goal) per i grafici \"Does the better goalkeeping team win?\". v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -11106,10 +11106,10 @@ def tabella_vittorie_vs_parate(elenco_gk):
         a_vince = gol_a > gol_b
         w, l = (sa, sb) if a_vince else (sb, sa)
         righe.append({'Match': f"{nome} ({data})", 'Winner': w, 'Loser': l,
-                      'Score': f"{max(gol_a, gol_b)}-{min(gol_a, gol_b)}",
+                      'Score': f"{max(gol_a, gol_b)}-{min(gol_a, gol_b)}", 'Margin': abs(gol_a - gol_b),
                       'Save_W': sa_pct if a_vince else sb_pct, 'Save_L': sb_pct if a_vince else sa_pct,
                       'Eff_W': sa_eff if a_vince else sb_eff, 'Eff_L': sb_eff if a_vince else sa_eff})
-    return pd.DataFrame(righe, columns=['Match', 'Winner', 'Loser', 'Score', 'Save_W', 'Save_L', 'Eff_W', 'Eff_L'])
+    return pd.DataFrame(righe, columns=['Match', 'Winner', 'Loser', 'Score', 'Margin', 'Save_W', 'Save_L', 'Eff_W', 'Eff_L'])
 
 def disegna_vittorie_vs_parate(n_alta, n_bassa, titolo, etichetta_metrica):
     """Due barre: partite vinte dalla squadra col valore PIÙ ALTO / più basso di Save % (o Efficiency %)."""
@@ -15301,6 +15301,10 @@ with tab7:
                    "taken from the goals conceded by each goalkeeping team. Matches where the two teams have the SAME value, "
                    "even ignoring decimals, are left out of that chart.")
         _df_vitt_us = tabella_vittorie_vs_parate(partite_filtrate_us)
+        # v115: filtro sullo scarto finale (partite equilibrate: scarto da -5 a +5 goal)
+        _solo_equilibrate_us = st.checkbox("Only matches decided by a margin between -5 and +5 goals (close matches)", key="us_vittorie_scarto5")
+        if _solo_equilibrate_us and not _df_vitt_us.empty:
+            _df_vitt_us = _df_vitt_us[_df_vitt_us['Margin'] <= 5].reset_index(drop=True)
         _figs_vitt_us = figure_vittorie_vs_parate(_df_vitt_us)
         _cvu1, _cvu2 = st.columns(2)
         for _col_v, _etich_v in ((_cvu1, "Save %"), (_cvu2, "Efficiency %")):
@@ -15309,14 +15313,15 @@ with tab7:
                 st.pyplot(_fig_v, use_container_width=True)
                 plt.close(_fig_v)
                 st.caption(f"{len(_d_incl_v)} match(es) in the chart · {_n_escl_v} excluded (identical {_etich_v}) · "
-                           f"{len(_df_vitt_us)} match(es) with a winner and both goalkeeping teams in the selection.")
+                           f"{len(_df_vitt_us)} match(es) with a winner and both goalkeeping teams in the selection"
+                           f"{' and a final margin of 5 goals or fewer' if _solo_equilibrate_us else ''}.")
         includi_pdf_vittorie_us = st.checkbox("📄 Include 'Does the better goalkeeping team win?' in PDF export", key="us_pdf_include_vittorie")
         if not _df_vitt_us.empty:
             with st.expander("Match list"):
                 _tab_v = _df_vitt_us.copy()
                 for _c in ('Save_W', 'Save_L', 'Eff_W', 'Eff_L'):
                     _tab_v[_c] = _tab_v[_c].map(lambda v: f"{v:.1f}%")
-                st.dataframe(_tab_v.rename(columns={'Save_W': 'Save % (winner)', 'Save_L': 'Save % (loser)',
+                st.dataframe(_tab_v.drop(columns=['Margin']).rename(columns={'Save_W': 'Save % (winner)', 'Save_L': 'Save % (loser)',
                                                     'Eff_W': 'Efficiency % (winner)', 'Eff_L': 'Efficiency % (loser)'}),
                              use_container_width=True, hide_index=True)
 
