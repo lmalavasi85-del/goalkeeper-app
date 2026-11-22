@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v116 - 2026-11-21 - Corretto errore \"DuplicateElementKey\" nei radar (filtro per campionato con più campionati). v115 - 2026-11-21 - Universal Stats: filtro sullo scarto (da -5 a +5 goal) per i grafici \"Does the better goalkeeping team win?\". v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v117 - 2026-11-22 - Seasonal Report e Single Game: utilizzo dei portieri (quota dei tiri subiti dalla squadra); PDF partita: grafici di utilizzo e confronto team portieri, nuova impaginazione senza vuoti (grafici elastici, una pagina di statistiche per portiere). v116 - 2026-11-21 - Corretto errore \"DuplicateElementKey\" nei radar (filtro per campionato con più campionati). v115 - 2026-11-21 - Universal Stats: filtro sullo scarto (da -5 a +5 goal) per i grafici \"Does the better goalkeeping team win?\". v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -5415,10 +5415,117 @@ def _separatore():
     return HRFlowable(width="100%", thickness=1, color=colors.HexColor('#dcdcdc'),
                        spaceBefore=10, spaceAfter=10)
 
+# ============================================================
+# v117 — IMPAGINAZIONE DEL PDF DELLA PARTITA SINGOLA (regole fisse, niente pagine vuote né grandi buchi)
+# Regole:
+#  1. Pagina 1: intestazione, totali di squadra, tabella portieri e, sotto, la riga dei grafici di confronto
+#     (utilizzo dei portieri + confronto team portieri), ridimensionata per riempire la pagina.
+#  2. I grafici sono "elastici": tra una misura minima e una massima, si adattano allo spazio libero
+#     (misurato con una impaginazione di prova), così nessuna pagina resta mezza vuota.
+#  3. Ordine: confronti, GPI progressivo, scarto/parate, blocchi da 10 minuti, sequenza dei tiri (la tabella
+#     riempie lo spazio restante e continua), mappe (generale e una pagina per portiere), statistiche
+#     dettagliate (una pagina per portiere, tabelle affiancate).
+#  4. Nuova pagina solo se serve: mai una pagina bianca (CondPageBreak a pagina intera).
+# ============================================================
+from reportlab.platypus import Flowable as _RLFlowable
+
+class _SondaResto(_RLFlowable):
+    """Flowable di altezza zero: registra quanto spazio resta libero nella pagina in cui viene a trovarsi."""
+    def __init__(self):
+        super().__init__()
+        self.resto = None
+    def wrap(self, larghezza, altezza):
+        self.resto = altezza
+        return 0, 0
+    def draw(self):
+        pass
+
+def _ripulisci_flowable_prova(oggetti):
+    """Una impaginazione di prova marca (_postponed) i flowable rimandati alla pagina dopo: se lo stesso oggetto viene
+    impaginato di nuovo, reportlab darebbe LayoutError. Qui tolgo il marchio, anche dentro KeepTogether e tabelle."""
+    visti = set()
+    def _vai(o):
+        if id(o) in visti:
+            return
+        visti.add(id(o))
+        if isinstance(o, (list, tuple)):
+            for x in o:
+                _vai(x)
+            return
+        if getattr(o, '_postponed', None) is not None:
+            try:
+                del o._postponed
+            except Exception:
+                pass
+        for attributo in ('_content', '_cellvalues'):
+            v = getattr(o, attributo, None)
+            if v is not None:
+                _vai(v)
+    _vai(list(oggetti))
+
+def _misura_resto_pagina(elementi, **margini_doc):
+    """Impagina 'elementi' in un PDF di prova e restituisce (punti liberi nell'ultima pagina, numero pagine)."""
+    sonda = _SondaResto()
+    doc_prova = SimpleDocTemplate(io.BytesIO(), pagesize=landscape(A4), **margini_doc)
+    try:
+        doc_prova.build(list(elementi) + [sonda])
+    finally:
+        _ripulisci_flowable_prova(elementi)
+    return (sonda.resto if sonda.resto is not None else 0), doc_prova.page
+
+def _altezza_flowables(parti, larghezza):
+    """Altezza totale (punti) di una lista di flowable messi uno sotto l'altro, spazi prima/dopo compresi."""
+    return sum(f.wrap(larghezza, 1000 * cm)[1] + f.getSpaceBefore() + f.getSpaceAfter() for f in parti)
+
+def _png_da_figura_pdf(fig, dpi=150):
+    """Salva una figura matplotlib in PNG (bbox stretto) e restituisce (percorso, rapporto larghezza/altezza)."""
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+        fig.savefig(tmp.name, bbox_inches='tight', dpi=dpi)
+        plt.close(fig)
+    larghezza_px, altezza_px = PILImage.open(tmp.name).size
+    return tmp.name, larghezza_px / float(altezza_px)
+
+def _riga_immagini_elastica(titolo_par, immagini, altezza_totale, larghezza_totale=26 * cm, spazio_titolo=0.95 * cm):
+    """Titolo + una riga di immagini [(percorso, rapporto)] tutte alla stessa altezza, la massima che ci sta
+    nell'altezza_totale (punti) e nella larghezza; ritorna una lista di flowable (un unico KeepTogether)."""
+    n = len(immagini)
+    h_max = max(altezza_totale - spazio_titolo, 1.0)
+    larghezza_slot = larghezza_totale / n
+    h = min([h_max] + [(larghezza_slot - 0.3 * cm) / r for _, r in immagini])
+    celle = [RLImage(p, width=h * r, height=h) for p, r in immagini]
+    riga = Table([celle], colWidths=[larghezza_slot] * n)
+    riga.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                              ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                              ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0)]))
+    return [KeepTogether([titolo_par, riga])]
+
+def _meta_tabella_per_riga(df, col_widths_cm_totale=12.6, font_size=7, funzione_tabella=None):
+    """Dividi una tabella lunga in due metà affiancate (stessa pagina), per non sprecare l'altezza."""
+    n = len(df)
+    if funzione_tabella is None:
+        funzione_tabella = lambda d, cw: _df_to_reportlab_table(d, col_widths=cw, font_size=font_size)
+    n_col = len(df.columns)
+    cw = [col_widths_cm_totale * cm / n_col] * n_col
+    if n <= 9:
+        return funzione_tabella(df, [LARGHEZZA_MASSIMA_TABELLA_PDF / n_col] * n_col)
+    meta = (n + 1) // 2
+    sinistra = funzione_tabella(df.iloc[:meta].reset_index(drop=True), cw)
+    destra = funzione_tabella(df.iloc[meta:].reset_index(drop=True), cw)
+    t = Table([[sinistra, destra]], colWidths=[(col_widths_cm_totale + 0.4) * cm, (col_widths_cm_totale + 0.4) * cm])
+    t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                           ('RIGHTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0)]))
+    return t
+
+def _due_tabelle_affiancate(sx, dx, larghezza_cm=12.8):
+    t = Table([[sx, dx]], colWidths=[(larghezza_cm + 0.4) * cm, (larghezza_cm + 0.4) * cm])
+    t.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                           ('RIGHTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0)]))
+    return t
+
 def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_portieri, df_blocchi, df_match, fig_blocchi,
                         includi_mappa_generale=True, includi_mappe_per_portiere=True, mappe_extra=None,
                         squadra_home=None, squadra_away=None, riga_gpi_squadra=None, partita_completa=True,
-                        elenco_df_traiettoria=None):
+                        elenco_df_traiettoria=None, uso_portieri=None, confronto_team=None):
     """Costruisce il PDF completo della pagina Single Game Analysis e lo restituisce come bytes.
     includi_mappa_generale: aggiunge la porta con tutti i tiri del match (tutti i portieri insieme).
     includi_mappe_per_portiere: aggiunge una porta per ciascun portiere che ha subito almeno un tiro.
@@ -5426,10 +5533,18 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
     misura (es. filtrate per tipologia di tiro/traiettoria/settore specifico).
     squadra_home/squadra_away: se fornite, i loro loghi (se caricati) compaiono in copertina.
     riga_gpi_squadra: lista con un solo dict, dati aggregati di squadra (tutti i portieri di questa
-    partita insieme), mostrata in cima alla prima pagina sopra la tabella per singolo portiere."""
+    partita insieme), mostrata in cima alla prima pagina sopra la tabella per singolo portiere.
+    uso_portieri (v117): lista di dict {label, pct, detail, colore} = quota dei tiri subiti dalla squadra per ciascun
+    portiere; mostrato solo se hanno giocato almeno 2 portieri.
+    confronto_team (v117): dict di dati_confronto_team_portieri(...) oppure None (se è stata taggata solo la squadra
+    che subisce i tiri, il confronto non c'è e il grafico non compare)."""
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=1.6*cm, bottomMargin=1.4*cm,
-                             leftMargin=1.2*cm, rightMargin=1.2*cm)
+    margini_doc = dict(topMargin=1.6*cm, bottomMargin=1.4*cm, leftMargin=1.2*cm, rightMargin=1.2*cm)
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), **margini_doc)
+    # Altezza utile di una pagina (il frame ha 6 pt di margine interno sopra e sotto) e piccolo margine di sicurezza.
+    ALTEZZA_PAGINA = doc.height - 12 - 2
+    SICUREZZA = 0.35 * cm
+    GAP = 0.3 * cm
     stili = getSampleStyleSheet()
     titolo_stile = ParagraphStyle('TitoloReport', parent=stili['Title'], fontSize=20,
                                    textColor=COLORE_ACCENTO, spaceAfter=2)
@@ -5466,11 +5581,10 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
     elementi.append(blocco_titolo)
-    elementi.append(Spacer(1, 0.5*cm))
+    elementi.append(Spacer(1, 0.4*cm))
 
     # Avviso "dati parziali" — stesso identico significato del banner giallo mostrato a schermo
-    # in Single Game Analysis: compare SOLO quando la partita è segnata come incompleta, non
-    # aggiunge nulla altrimenti.
+    # in Single Game Analysis: compare SOLO quando la partita è segnata come incompleta.
     if not partita_completa:
         stile_testo_avviso = ParagraphStyle('TestoAvviso', parent=stili['Normal'], fontSize=11,
                                              textColor=colors.HexColor('#664d03'), leading=14)
@@ -5483,84 +5597,132 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#fff3cd')),
             ('BOX', (0, 0), (-1, -1), 0.75, colors.HexColor('#ffc107')),
             ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ]))
         elementi.append(box_avviso)
-        elementi.append(Spacer(1, 0.4*cm))
+        elementi.append(Spacer(1, 0.3*cm))
 
-    # Totale di squadra (tutti i portieri di questa partita insieme), prima della tabella per
-    # singolo portiere — dà subito il quadro complessivo della gara.
+    # Totale di squadra (tutti i portieri di questa partita insieme)
     if riga_gpi_squadra:
         elementi.append(KeepTogether([
             Paragraph("Total Match Performance — Team", sezione_stile),
-            Spacer(1, 0.2 * cm),
+            Spacer(1, 0.1 * cm),
             _df_to_reportlab_table(pd.DataFrame(riga_gpi_squadra), font_size=8)
         ]))
-        elementi.append(Spacer(1, 0.4 * cm))
+        elementi.append(Spacer(1, 0.2 * cm))
 
-    # Total match performance per goalkeeper — ingrandita: di solito solo 1-3 portieri per
-    # partita, quindi c'è ampio spazio per una tabella grande invece che minuscola con pagina
-    # mezza vuota sotto.
+    # Total match performance per goalkeeper: più portieri = foto più piccole, così la pagina 1 resta compatta.
+    n_portieri_tab = len(righe_gpi_totale or [])
+    foto_cm = 2.4 if n_portieri_tab <= 1 else (1.9 if n_portieri_tab == 2 else 1.5)
     elementi.append(KeepTogether([
         Paragraph("Total Match Performance per Goalkeeper", sezione_stile),
-        Spacer(1, 0.2 * cm),
-        _tabella_giocatori_con_foto(righe_gpi_totale, font_size=8, larghezza_foto_cm=2.5)
+        Spacer(1, 0.1 * cm),
+        _tabella_giocatori_con_foto(righe_gpi_totale, font_size=8, larghezza_foto_cm=foto_cm)
     ]))
-    elementi.append(_separatore())
+    elementi.append(Spacer(1, 0.2 * cm))
 
-    # Main chart (GPI/timeline line) — single chart, drawn with Matplotlib
-    # to guarantee no label is ever cut off (bbox_inches='tight').
+    # ------------------------------------------------------------------
+    # Blocchi "elastici": ognuno ha altezza minima e massima (punti) e una funzione che lo costruisce
+    # per una data altezza totale. La misura reale si decide impaginando una prova (vedi sotto).
+    # ------------------------------------------------------------------
+    blocchi_elastici = []
+
+    # (1) Confronti: utilizzo dei portieri + Save % e Efficiency % dei due team portieri
+    immagini_confronti = []
+    voci_uso = list(uso_portieri or [])
+    if len(voci_uso) >= 2:
+        immagini_confronti.append(_png_da_figura_pdf(disegna_barre_utilizzo(
+            voci_uso, "Share of the team's shots faced", figsize=(4.4, 3.5))))
+    if confronto_team:
+        fig_sv, fig_ef = figure_confronto_team_portieri(confronto_team, figsize=(4.4, 3.5))
+        immagini_confronti.append(_png_da_figura_pdf(fig_sv))
+        immagini_confronti.append(_png_da_figura_pdf(fig_ef))
+    if immagini_confronti:
+        titolo_conf = ("Goalkeeping Team vs Opponent &amp; Goalkeeper Usage" if (confronto_team and len(voci_uso) >= 2)
+                       else ("Goalkeeping Team vs Opponent" if confronto_team else "Goalkeeper Usage"))
+        blocchi_elastici.append({
+            'min': 4.6 * cm + 0.95 * cm, 'max': 7.2 * cm + 0.95 * cm,
+            'build': (lambda h, imm=immagini_confronti, tt=titolo_conf:
+                      _riga_immagini_elastica(Paragraph(tt, sezione_stile), imm, h))})
+
+    # (2) Progressive GPI Trend
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_linee:
         _disegna_grafico_timeline_pdf(df_match, tmp_linee.name)
-        larghezza_px, altezza_px = PILImage.open(tmp_linee.name).size
-        larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 9.0)
-        elementi.append(KeepTogether([
-            Paragraph("Progressive GPI Trend", sezione_stile),
-            RLImage(tmp_linee.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
-        ]))
-    elementi.append(_separatore())
+        _px_l, _py_l = PILImage.open(tmp_linee.name).size
+    blocchi_elastici.append({
+        'min': 5.6 * cm + 0.95 * cm, 'max': 8.6 * cm + 0.95 * cm,
+        'build': (lambda h, p=tmp_linee.name, r=_px_l / float(_py_l):
+                  _riga_immagini_elastica(Paragraph("Progressive GPI Trend", sezione_stile), [(p, r)], h, larghezza_totale=25.6 * cm))})
 
-    # Scarto gol + parate dei portieri (stessa immagine mostrata a schermo)
+    # (3) Score Margin & Goalkeeper Saves
     _punti_pdf, _parate_pdf = raccogli_traiettoria_e_parate(elenco_df_traiettoria or [df_match], df_match)
     if len(_punti_pdf) > 1:
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_scarto:
             disegna_grafico_scarto_parate(_punti_pdf, _parate_pdf, squadra_home or 'Home', squadra_away or 'Away', tmp_scarto.name)
-            larghezza_px, altezza_px = PILImage.open(tmp_scarto.name).size
-            larghezza_pdf_cm, altezza_pdf_cm = _dimensioni_adattate(larghezza_px, altezza_px, 25.5, 13.0)
-            elementi.append(KeepTogether([
-                Paragraph("Score Margin &amp; Goalkeeper Saves", sezione_stile),
-                RLImage(tmp_scarto.name, width=larghezza_pdf_cm*cm, height=altezza_pdf_cm*cm)
-            ]))
-        elementi.append(_separatore())
+            _px_s, _py_s = PILImage.open(tmp_scarto.name).size
+        blocchi_elastici.append({
+            'min': 7.0 * cm + 0.95 * cm, 'max': 11.5 * cm + 0.95 * cm,
+            'build': (lambda h, p=tmp_scarto.name, r=_px_s / float(_py_s):
+                      _riga_immagini_elastica(Paragraph("Score Margin &amp; Goalkeeper Saves", sezione_stile), [(p, r)], h, larghezza_totale=25.6 * cm))})
 
-    # Chronological shot sequence — starts right after (no wasted blank page),
-    # the table automatically continues onto the following pages if needed.
-    elementi.append(KeepTogether([
-        Paragraph("Chronological Shot Sequence", sezione_stile),
-        Spacer(1, 0.15*cm)
-    ]))
+    # (4) Performance by 10-Minute Blocks: grafico a sinistra, tabella a destra (saltato se la partita non ha timeline valida)
+    if df_blocchi is not None:
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_blocchi:
+            _disegna_grafico_blocchi_pdf(df_blocchi, tmp_blocchi.name)
+            _px_b, _py_b = PILImage.open(tmp_blocchi.name).size
+        def _build_blocchi(h, p=tmp_blocchi.name, r=_px_b / float(_py_b), dfb=df_blocchi):
+            h_img = max(h - 0.95 * cm, 1.0)
+            h_img = min(h_img, 15.0 * cm / r)
+            immagine = RLImage(p, width=h_img * r, height=h_img)
+            tabella = _df_to_reportlab_table(dfb, col_widths=[2.2 * cm, 2.6 * cm, 2.6 * cm, 2.2 * cm], font_size=8)
+            riga = Table([[immagine, tabella]], colWidths=[h_img * r + 0.8 * cm, 10 * cm])
+            riga.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
+            return [KeepTogether([Paragraph("Performance by 10-Minute Blocks", sezione_stile), riga])]
+        blocchi_elastici.append({'min': 5.6 * cm + 0.95 * cm, 'max': 9.0 * cm + 0.95 * cm, 'build': _build_blocchi})
+
+    # Impagino i blocchi elastici uno dopo l'altro: ognuno prende lo spazio libero (tra min e max); se ne
+    # entra anche il successivo (almeno al minimo) gli lascia il posto; se non ci sta, nuova pagina.
+    for i_b, blocco in enumerate(blocchi_elastici):
+        libero, _ = _misura_resto_pagina(elementi, **margini_doc)
+        libero -= SICUREZZA
+        nuova_pagina = libero < blocco['min']
+        if nuova_pagina:
+            elementi.append(CondPageBreak(ALTEZZA_PAGINA))
+            libero = ALTEZZA_PAGINA - SICUREZZA
+        h = min(blocco['max'], libero)
+        if i_b + 1 < len(blocchi_elastici):
+            successivo = blocchi_elastici[i_b + 1]
+            if libero - (successivo['min'] + GAP) >= blocco['min']:
+                h = min(blocco['max'], libero - (successivo['min'] + GAP))
+        elementi.extend(blocco['build'](h))
+        elementi.append(Spacer(1, GAP))
+
+    # Chronological shot sequence: la tabella riempie lo spazio rimasto e continua sulle pagine seguenti.
+    elementi.append(CondPageBreak(3.2 * cm))
+    elementi.append(Paragraph("Chronological Shot Sequence", sezione_stile))
     elementi.append(_df_to_reportlab_table(tabella_sequenza, font_size=7))
-    elementi.append(_separatore())
 
-    # Shot Maps: porta generale (più grande) + una per portiere (affiancate, centrate) + eventuali
-    # mappe su misura — ognuna sempre con la sua heat map dei settori specifici (tastiera) accanto.
+    # Shot Maps: porta generale (più grande) + una per portiere + eventuali mappe su misura — ognuna sempre con
+    # la sua heat map dei settori specifici (tastiera) accanto.
     liste_mappe_gk = []
     if includi_mappe_per_portiere:
         for gk_label in dati_portieri.keys():
             gk_raw = gk_label.split(' ', 1)[1] if ' ' in gk_label else gk_label
             df_gk_pdf = df_match[df_match['PORTIERE_CLEAN'] == gk_raw]
             if not df_gk_pdf.empty:
-                liste_mappe_gk.append((f"Shot Map — {gk_label}", df_gk_pdf))
+                liste_mappe_gk.append((f"Shot Map — {gk_label}", df_gk_pdf, gk_label))
 
     liste_mappe_extra = [(m['titolo'], m['df']) for m in (mappe_extra or []) if not m['df'].empty]
 
     # Un solo portiere ha giocato: mappa generale e mappa individuale coincidono, quindi ne basta una
-    # (con una riga che lo dice) e non si stampa la seconda, che sarebbe solo un doppione.
     gk_unico_coincide = None
     if (includi_mappa_generale and not df_match.empty and len(liste_mappe_gk) == 1
             and len(liste_mappe_gk[0][1]) == len(df_match)):
         gk_unico_coincide = liste_mappe_gk[0][0].replace("Shot Map — ", "", 1)
         liste_mappe_gk = []
+
+    def _riga_kpi(riga_dict):
+        return _df_to_reportlab_table(pd.DataFrame([riga_dict]), font_size=8)
 
     if (includi_mappa_generale and not df_match.empty) or liste_mappe_gk or liste_mappe_extra:
         titolo_shot_maps = Paragraph("Shot Maps", sezione_stile)
@@ -5573,69 +5735,87 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
                 titolo_gen = "General Shot Map (all shots, all goalkeepers)"
             else:
                 titolo_gen = "General Shot Map (all shots)"
-            blocco_generale = _blocco_porta_tastiera_pdf(
-                df_match, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=titolo_gen,
-                larghezza_porta_cm=9.8, larghezza_tastiera_cm=14.4
-            )
-            blocco_generale.hAlign = 'CENTER'
-            parti_generale = [titolo_shot_maps, blocco_generale]
-            if gk_unico_coincide:
-                nota_unico_stile = ParagraphStyle('NotaMappaUnica', parent=stili['Normal'], fontSize=9.5,
-                                                   textColor=colors.HexColor('#555555'), alignment=1,
-                                                   spaceBefore=4)
-                parti_generale.append(Paragraph(
-                    f"Only one goalkeeper played: the general shot map and the individual shot map of "
-                    f"{gk_unico_coincide} coincide.", nota_unico_stile))
+
+            def _gruppo_generale(scala, con_kpi):
+                blocco_g = _blocco_porta_tastiera_pdf(
+                    df_match, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=titolo_gen,
+                    larghezza_porta_cm=9.8 * scala, larghezza_tastiera_cm=14.4 * scala)
+                blocco_g.hAlign = 'CENTER'
+                parti_g = [titolo_shot_maps]
+                if con_kpi and riga_gpi_squadra:
+                    parti_g += [_riga_kpi(riga_gpi_squadra[0]), Spacer(1, 0.2 * cm)]
+                indice_g = len(parti_g)
+                parti_g.append(blocco_g)
+                if gk_unico_coincide:
+                    nota_unico_stile = ParagraphStyle('NotaMappaUnica', parent=stili['Normal'], fontSize=9.5,
+                                                       textColor=colors.HexColor('#555555'), alignment=1,
+                                                       spaceBefore=4)
+                    parti_g.append(Paragraph(
+                        f"Only one goalkeeper played: the general shot map and the individual shot map of "
+                        f"{gk_unico_coincide} coincide.", nota_unico_stile))
+                return parti_g, indice_g, blocco_g
+
+            # Dove va la mappa generale: (1) sulla pagina in cui finisce la tabella dei tiri, se ci sta tutta;
+            # (2) altrimenti, se la tabella finisce presto, rimpicciolita (senza riga numeri) purché resti almeno
+            # al 70%; (3) altrimenti sulla sua pagina, con il contenuto un po' abbassato per bilanciare i vuoti.
+            libero_dopo_tabella, _ = _misura_resto_pagina(elementi, **margini_doc)
+            libero_dopo_tabella -= SICUREZZA + GAP
+            parti_generale, _indice_mappa_gen, _bl = _gruppo_generale(1.0, True)
+            h_gruppo = _altezza_flowables(parti_generale, doc.width)
+            if libero_dopo_tabella >= h_gruppo:
+                elementi.append(Spacer(1, GAP))
+            else:
+                parti_compatte, _i2, _bl2 = _gruppo_generale(1.0, False)
+                h_compatto = _altezza_flowables(parti_compatte, doc.width)
+                h_blocco = _altezza_flowables([_bl2], doc.width)
+                scala = (libero_dopo_tabella - (h_compatto - h_blocco)) / float(h_blocco)
+                if libero_dopo_tabella > 0 and scala >= 0.70:
+                    parti_generale, _indice_mappa_gen, _bl = _gruppo_generale(min(scala, 1.0), False)
+                    elementi.append(Spacer(1, GAP))
+                else:
+                    elementi.append(CondPageBreak(ALTEZZA_PAGINA))
+                    parti_generale.insert(_indice_mappa_gen, Spacer(1, max(ALTEZZA_PAGINA - SICUREZZA - h_gruppo, 0) * 0.3))
             elementi.append(KeepTogether(parti_generale))
             titolo_gia_posizionato = True
-            elementi.append(Spacer(1, 0.4 * cm))
-            if liste_mappe_gk:
-                # Due o più portieri: la mappa generale ha la sua pagina, i singoli portieri la pagina seguente.
-                while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
-                    elementi.pop()
-                elementi.append(PageBreak())
-                titolo_gia_posizionato = True   # il titolo di ogni pagina portiere lo mette il ciclo sotto
 
         if liste_mappe_gk:
-            # v108: una pagina per ogni portiere, identica alla pagina generale (porta + campo) e un po' più grande.
-            for i_gk, (titolo_mappa, df_gk_pdf) in enumerate(liste_mappe_gk):
+            # Una pagina per ogni portiere: titolo, sua riga di numeri, porta + campo (stesso schema della generale).
+            for (titolo_mappa, df_gk_pdf, gk_label) in liste_mappe_gk:
                 blocco = _blocco_porta_tastiera_pdf(df_gk_pdf, ('save', 's'), titolo_mappa, 9.8, 14.4)
                 blocco.hAlign = 'CENTER'
-                if i_gk > 0 or not titolo_gia_posizionato:
-                    while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
-                        elementi.pop()
-                    if i_gk > 0 or titolo_gia_posizionato:
-                        elementi.append(PageBreak())
-                elementi.append(KeepTogether([Paragraph("Shot Maps — Individual Goalkeeper", sezione_stile), blocco]))
-                titolo_gia_posizionato = True
-            elementi.append(Spacer(1, 0.4 * cm))
+                riga_gk = next((r for r in (righe_gpi_totale or []) if str(r.get('Goalkeeper')) == gk_label), None)
+                parti = [Paragraph("Shot Maps — Individual Goalkeeper", sezione_stile)]
+                if riga_gk:
+                    parti += [_riga_kpi(riga_gk), Spacer(1, 0.2 * cm)]
+                _spazio_extra = max(ALTEZZA_PAGINA - SICUREZZA - _altezza_flowables(parti + [blocco], doc.width), 0) * 0.3
+                if _spazio_extra > 0.2 * cm:
+                    parti.append(Spacer(1, _spazio_extra))
+                parti.append(blocco)
+                elementi.append(CondPageBreak(ALTEZZA_PAGINA))
+                elementi.append(KeepTogether(parti))
 
+        # Mappe su misura: 2 per pagina; se sono 3 o più, un po' più piccole per averne 3 per pagina (niente pagine con una mappa sola).
+        _scala_extra = 0.78 if len(liste_mappe_extra) >= 3 else 1.0
         for i_extra, (titolo_mappa, df_mappa) in enumerate(liste_mappe_extra):
             blocco_extra = _blocco_porta_tastiera_pdf(df_mappa, esiti_successo=ESITI_EFFICIENZA_PORTIERE, titolo=titolo_mappa,
-                                                        larghezza_porta_cm=6.5, larghezza_tastiera_cm=9.5)
+                                                        larghezza_porta_cm=6.5 * _scala_extra, larghezza_tastiera_cm=9.5 * _scala_extra)
             blocco_extra.hAlign = 'CENTER'
-            if not titolo_gia_posizionato and i_extra == 0:
-                elementi.append(KeepTogether([titolo_shot_maps, blocco_extra, Spacer(1, 0.3 * cm)]))
-                titolo_gia_posizionato = True
+            if i_extra == 0:
+                elementi.append(CondPageBreak(ALTEZZA_PAGINA))
+                elementi.append(KeepTogether([Paragraph("Custom Shot Maps", sezione_stile), blocco_extra, Spacer(1, 0.3 * cm)]))
             else:
                 elementi.append(KeepTogether([blocco_extra, Spacer(1, 0.3 * cm)]))
 
-    # Detailed statistics per goalkeeper — sempre su una pagina nuova per ciascun portiere.
-    # Prima del salto pagina tolgo separatori e spazi finali: se l'ultimo elemento riempie la pagina,
-    # sconfinerebbero da soli su una pagina nuova e ne uscirebbe una bianca.
-    while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
-        elementi.pop()
+    # Detailed statistics per goalkeeper — UNA pagina per portiere, con le tabelle lunghe affiancate.
     for indice_gk, (gk, info) in enumerate(dati_portieri.items()):
-        while elementi and isinstance(elementi[-1], (Spacer, HRFlowable)):
-            elementi.pop()
-        elementi.append(PageBreak())
+        elementi.append(CondPageBreak(ALTEZZA_PAGINA))
         gk_raw_foto = gk.split(' ', 1)[1] if ' ' in gk else gk
         foto_gk_b64 = st.session_state.get('foto_giocatori', {}).get(identita_giocatore(gk_raw_foto))
         if foto_gk_b64:
             intestazione_gk = Table(
-                [[RLImage(io.BytesIO(foto_base64_a_bytes(foto_gk_b64)), width=1.8 * cm, height=1.8 * cm),
+                [[RLImage(io.BytesIO(foto_base64_a_bytes(foto_gk_b64)), width=1.6 * cm, height=1.6 * cm),
                   Paragraph(f"Detailed Statistics — {gk}", sezione_stile)]],
-                colWidths=[2.1 * cm, None]
+                colWidths=[1.9 * cm, None]
             )
             intestazione_gk.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -5652,47 +5832,35 @@ def genera_pdf_partita(titolo_partita, righe_gpi_totale, tabella_sequenza, dati_
             _testo_metriche_gk_pdf.append(
                 f"Excluding Empty Goals — Save %: {info['pct_no_eg']:.1f}%   |   Efficiency: {info['eff_no_eg']:.1f}%"
             )
-        elementi.append(KeepTogether([
-            intestazione_gk,
-            Paragraph("<br/>".join(_testo_metriche_gk_pdf), stili['Normal']),
-            Spacer(1, 0.2*cm),
-            Paragraph("By specific micro-zone", stili['Heading4']),
-            _tabella_settore_reportlab(info['tabella_settore'], font_size=7),
-        ]))
-        elementi.append(Spacer(1, 0.2*cm))
+        elementi.append(intestazione_gk)
+        elementi.append(Paragraph("<br/>".join(_testo_metriche_gk_pdf), stili['Normal']))
+        elementi.append(Spacer(1, 0.15 * cm))
+        elementi.append(Paragraph("By specific micro-zone", stili['Heading4']))
+        elementi.append(_meta_tabella_per_riga(
+            info['tabella_settore'],
+            funzione_tabella=lambda d, cw: _tabella_settore_reportlab(d, col_widths=cw, font_size=7)))
+        elementi.append(Spacer(1, 0.2 * cm))
         df_gk_per_macro_zona = df_match[df_match['PORTIERE_CLEAN'] == gk_raw_foto]
-        elementi.append(KeepTogether([
-            Paragraph("By macro-zone (LW, RW, 7m, FB, Zone 1...3)", stili['Heading4']),
-            _df_to_reportlab_table(tabella_macro_zone_universale(df_gk_per_macro_zona, ruolo='portiere'), font_size=7),
-        ]))
-        elementi.append(Spacer(1, 0.2*cm))
-        elementi.append(KeepTogether([
-            Paragraph("By aggregated macro-sector", stili['Heading4']),
-            _df_to_reportlab_table(info['tabella_macro'], font_size=7),
-        ]))
-        elementi.append(Spacer(1, 0.2*cm))
+        _df_macro_zona = tabella_macro_zone_universale(df_gk_per_macro_zona, ruolo='portiere')
+        _n_col_mz = max(len(_df_macro_zona.columns), 1)
+        tab_macro_zona = _df_to_reportlab_table(_df_macro_zona, col_widths=[12.8 * cm / _n_col_mz] * _n_col_mz, font_size=7)
+        n_col_macro = len(info['tabella_macro'].columns)
+        tab_macro_sett = _df_to_reportlab_table(
+            info['tabella_macro'], col_widths=[12.8 * cm / max(n_col_macro, 1)] * max(n_col_macro, 1), font_size=7)
+        titoli_macro = Table([[Paragraph("By macro-zone (LW, RW, 7m, FB, Zone 1...3)", stili['Heading4']),
+                               Paragraph("By aggregated macro-sector", stili['Heading4'])]],
+                             colWidths=[13.2 * cm, 13.2 * cm])
+        titoli_macro.setStyle(TableStyle([('LEFTPADDING', (0, 0), (-1, -1), 0), ('TOPPADDING', (0, 0), (-1, -1), 0)]))
+        elementi.append(KeepTogether([titoli_macro, _due_tabelle_affiancate(tab_macro_zona, tab_macro_sett)]))
+        elementi.append(Spacer(1, 0.2 * cm))
         elementi.append(Paragraph(
             f"Money Time (from the 50th minute onward, score margin between -5 and +5): {info['money_time_riassunto']}", stili['Normal']
         ))
-        elementi.append(_separatore())
-
-    # 10-minute block performance — skipped entirely when this match has no valid timeline
-    # (every shot would otherwise misleadingly land in the first block).
-    if df_blocchi is not None:
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_blocchi:
-            _disegna_grafico_blocchi_pdf(df_blocchi, tmp_blocchi.name)
-            larghezza_px, altezza_px = PILImage.open(tmp_blocchi.name).size
-            larghezza_blocchi_cm, altezza_blocchi_cm = _dimensioni_adattate(larghezza_px, altezza_px, 16, 9)
-            elementi.append(KeepTogether([
-                Paragraph("Performance by 10-Minute Blocks", sezione_stile),
-                RLImage(tmp_blocchi.name, width=larghezza_blocchi_cm*cm, height=altezza_blocchi_cm*cm)
-            ]))
-        elementi.append(Spacer(1, 0.3*cm))
-        elementi.append(_df_to_reportlab_table(df_blocchi))
 
     doc.build(elementi, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     buffer.seek(0)
     return buffer.getvalue()
+
 
 def unisci_partite_squadra(dati_per_portiere):
     """Unisce gli storici dei singoli portieri in una lista-partita UNICA per squadra (una voce per
@@ -11028,9 +11196,9 @@ def _arrotonda_visualizzato(v):
     """Intero come lo mostra l'app (nessun doppio arrotondamento)."""
     return int(f"{v:.0f}")
 
-def disegna_confronto_due_valori(nome_a, nome_b, val_a, val_b, dett_a, dett_b, titolo, colori=('#1f77b4', '#ff7f0e')):
+def disegna_confronto_due_valori(nome_a, nome_b, val_a, val_b, dett_a, dett_b, titolo, colori=('#1f77b4', '#ff7f0e'), figsize=None):
     """Due barre (una per squadra) con il valore % sopra e il dettaglio (es. '18/52') sotto il nome."""
-    fig, ax = plt.subplots(figsize=(5.6, 4.4))
+    fig, ax = plt.subplots(figsize=figsize or (5.6, 4.4))
     barre = ax.bar([0, 1], [val_a, val_b], color=list(colori), width=0.55, edgecolor='white')
     ax.set_ylim(0, 100)
     ax.set_xlim(-0.7, 1.7)
@@ -11150,6 +11318,206 @@ def figure_vittorie_vs_parate(df_v):
         out[etichetta] = (disegna_vittorie_vs_parate(n_alta, n_bassa, f"Matches won vs {etichetta} of the goalkeeping teams", etichetta),
                           int(uguali.sum()), d)
     return out
+
+
+# ============================================================
+# v117 — UTILIZZO DEI PORTIERI: quota dei tiri subiti dalla squadra, per portiere (Seasonal Report e Single Game)
+# I tiri a porta vuota (Empty Goal) non contano: il portiere in quel momento non è in campo.
+# ============================================================
+PALETTE_PORTIERI_UTILIZZO = ['#1E88E5', '#E53935', '#43A047', '#FDD835', '#8E24AA']
+
+def _colonna_id_portiere(df):
+    return 'PORTIERE_ID' if 'PORTIERE_ID' in df.columns else 'PORTIERE_CLEAN'
+
+def _senza_empty_goal(df):
+    if df is not None and not df.empty and 'Is_Empty_Goal' in df.columns:
+        return df[~df['Is_Empty_Goal'].fillna(False).astype(bool)]
+    return df
+
+def utilizzo_portieri_squadra(elenco_partite, squadra):
+    """Per una squadra, su tutte le sue partite dell'elenco: quota dei tiri subiti da ciascun portiere.
+    Restituisce (DataFrame ordinato per tiri, tiri totali della squadra, n. partite della squadra).
+    Colonne: Goalkeeper, Matches (partite giocate), Shots, Share (% sui tiri della squadra), Share_played
+    (% sui tiri delle sole partite in cui è sceso in campo), Saves, Goals, Save_pct, Eff_pct."""
+    record = [m for m in elenco_partite if m['squadra'] == squadra]
+    n_partite = len({(m['nome'], str(m['data'])) for m in record})
+    frammenti = []
+    for m in record:
+        d = _senza_empty_goal(m['dati'])
+        if d is None or d.empty:
+            continue
+        frammenti.append(d.assign(_gk=d[_colonna_id_portiere(d)].astype(str), _partita=f"{m['nome']}|{m['data']}"))
+    colonne = ['Goalkeeper', 'Matches', 'Shots', 'Share', 'Share_played', 'Saves', 'Goals', 'Save_pct', 'Eff_pct']
+    if not frammenti:
+        return pd.DataFrame(columns=colonne), 0, n_partite
+    tutti = pd.concat(frammenti, ignore_index=True)
+    tot = len(tutti)
+    righe = []
+    for gk, d in tutti.groupby('_gk'):
+        s, g_, m_, pct, eff = calcola_metriche_gruppo(d)
+        partite_gk = d['_partita'].unique()
+        tiri_partite = int(tutti['_partita'].isin(partite_gk).sum())
+        righe.append({'Goalkeeper': gk, 'Matches': len(partite_gk), 'Shots': len(d),
+                      'Share': len(d) / tot * 100, 'Share_played': len(d) / tiri_partite * 100 if tiri_partite else 0.0,
+                      'Saves': s, 'Goals': g_, 'Save_pct': pct, 'Eff_pct': eff})
+    df = pd.DataFrame(righe, columns=colonne).sort_values(['Shots', 'Goalkeeper'], ascending=[False, True]).reset_index(drop=True)
+    return df, tot, n_partite
+
+def utilizzo_portiere_per_squadra(elenco_partite, portiere):
+    """Per un portiere: una riga per ogni squadra con cui ha giocato (stessa idea di utilizzo_portieri_squadra,
+    con in più il totale dei tiri e le partite della squadra)."""
+    squadre = sorted({m['squadra'] for m in elenco_partite
+                      if (lambda d: (not d.empty) and portiere in set(d[_colonna_id_portiere(d)].astype(str)))(_senza_empty_goal(m['dati']))})
+    righe = []
+    for sq in squadre:
+        df_sq, tot, n_part = utilizzo_portieri_squadra(elenco_partite, sq)
+        r = df_sq[df_sq['Goalkeeper'] == portiere]
+        if r.empty:
+            continue
+        r = r.iloc[0].to_dict()
+        r.update({'Team': sq, 'Team_shots': tot, 'Team_matches': n_part})
+        righe.append(r)
+    return pd.DataFrame(righe)
+
+def disegna_barre_utilizzo(voci, titolo, figsize=None, evidenzia=None):
+    """Barre orizzontali: una per portiere, lunghezza = % dei tiri subiti dalla squadra.
+    voci: lista di dict {label, pct, detail, colore(opz.)}. Il nome e il dettaglio (es. '18 of 40 shots') stanno
+    sull'asse a sinistra, il valore % a fine barra: nessun testo può sovrapporsi."""
+    import textwrap
+    voci = sorted(voci, key=lambda v: -v['pct'])
+    n = len(voci)
+    if figsize is None:
+        figsize = (7.2, max(2.5, 0.72 * n + 1.5))
+    fig, ax = plt.subplots(figsize=figsize)
+    colori = []
+    for i, v in enumerate(voci):
+        if evidenzia is not None:
+            colori.append('#1f77b4' if v['label'] in evidenzia else '#b9c0cc')
+        else:
+            colori.append(v.get('colore') or '#1f77b4')
+    pos = list(range(n))
+    ax.barh(pos, [v['pct'] for v in voci], color=colori, height=0.62, edgecolor='white')
+    ax.set_yticks(pos)
+    ax.set_yticklabels([f"{v['label']}\n{v.get('detail', '')}" for v in voci], fontsize=9)
+    ax.invert_yaxis()
+    massimo = max([v['pct'] for v in voci] + [1.0])
+    ax.set_xlim(0, max(massimo * 1.2, 12))
+    ticks = [t for t in range(0, 101, 20) if t <= ax.get_xlim()[1]]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t}%" for t in ticks], fontsize=8, color='#666666')
+    ax.grid(axis='x', color='#e3e3e3', linewidth=0.7)
+    ax.set_axisbelow(True)
+    for s_ in ('top', 'right'):
+        ax.spines[s_].set_visible(False)
+    for p, v in zip(pos, voci):
+        ax.text(v['pct'] + massimo * 0.02, p, f"{v['pct']:.1f}%", va='center', ha='left', fontsize=10.5, fontweight='bold', color='#15304f')
+    ax.set_title(textwrap.fill(titolo, 48), fontsize=11, fontweight='bold', color='#15304f', pad=10)
+    fig.tight_layout()
+    return fig
+
+def voci_utilizzo_partita(df_match):
+    """Single Game: quota dei tiri subiti dalla squadra per portiere (Empty Goal esclusi). Stessi colori del grafico GPI."""
+    if df_match is None or df_match.empty or 'PORTIERE_CLEAN' not in df_match.columns:
+        return []
+    ordine = list(df_match['PORTIERE_CLEAN'].dropna().unique())
+    d = _senza_empty_goal(df_match)
+    tot = len(d)
+    voci = []
+    for i, gk in enumerate(ordine):
+        n = int((d['PORTIERE_CLEAN'] == gk).sum())
+        if n > 0 and tot > 0:
+            voci.append({'label': str(gk), 'pct': n / tot * 100, 'detail': f"{n} of {tot} shots",
+                         'colore': PALETTE_PORTIERI_UTILIZZO[i % len(PALETTE_PORTIERI_UTILIZZO)]})
+    return voci
+
+def _formatta_tabella_utilizzo(df, con_squadra=False):
+    out = pd.DataFrame()
+    if con_squadra:
+        out['Team'] = df['Team']
+        out['Team matches'] = df['Team_matches'].astype(int)
+    else:
+        out['Goalkeeper'] = df['Goalkeeper']
+    out['Matches played'] = df['Matches'].astype(int)
+    out['Shots faced'] = df['Shots'].astype(int)
+    if con_squadra:
+        out['Team shots faced'] = df['Team_shots'].astype(int)
+    out['Share of team shots'] = df['Share'].map(lambda v: f"{v:.1f}%")
+    out['Share in matches played'] = df['Share_played'].map(lambda v: f"{v:.1f}%")
+    out['Saves'] = df['Saves'].astype(int)
+    out['Goals'] = df['Goals'].astype(int)
+    out['Save %'] = df['Save_pct'].map(lambda v: f"{v:.1f}%")
+    out['Efficiency %'] = df['Eff_pct'].map(lambda v: f"{v:.1f}%")
+    return out
+
+def sezione_utilizzo_portieri(prefix, elenco_partite):
+    """Seasonal Report: quota dei tiri subiti dalla squadra per portiere, filtrabile per campionato, date o partite scelte.
+    Vista Team: tutti i portieri di una squadra. Vista Goalkeeper: un portiere, con le statistiche separate per ogni squadra
+    in cui ha giocato (club, nazionale...)."""
+    st.caption("Share of the shots faced by the team that each goalkeeper took while on court (Empty Goal shots are left out: "
+               "no goalkeeper is on court then). 'Share of team shots' counts every selected match of the team; "
+               "'Share in matches played' only the matches where the goalkeeper played.")
+    partite = _filtra_partite_radar(prefix, elenco_partite)
+    if not partite:
+        st.info("No matches in this selection.")
+        return
+    squadre = sorted({m['squadra'] for m in partite})
+    giocatori = sorted({str(x) for m in partite for x in _senza_empty_goal(m['dati'])[_colonna_id_portiere(m['dati'])].dropna().unique()})
+    if not squadre or not giocatori:
+        st.info("Nothing to show in this selection.")
+        return
+    tipo = st.radio("Show:", ["Team", "Goalkeeper"], horizontal=True, key=f"{prefix}_tipo")
+    if tipo == "Team":
+        squadra = st.selectbox("Team:", squadre, key=f"{prefix}_squadra")
+        df, tot, n_part = utilizzo_portieri_squadra(partite, squadra)
+        if df.empty:
+            st.info("No shots faced by this team in the selection.")
+            return
+        st.caption(f"{squadra}: {n_part} match(es) in the selection · {tot} shots faced in total.")
+        voci = [{'label': r.Goalkeeper, 'pct': r.Share, 'detail': f"{int(r.Shots)} of {tot} shots · {int(r.Matches)} match(es)"} for r in df.itertuples()]
+        fig = disegna_barre_utilizzo(voci, f"Share of {squadra}'s shots faced, by goalkeeper")
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.dataframe(_formatta_tabella_utilizzo(df), use_container_width=True, hide_index=True)
+    else:
+        portiere = st.selectbox("Goalkeeper:", giocatori, key=f"{prefix}_portiere")
+        df = utilizzo_portiere_per_squadra(partite, portiere)
+        if df.empty:
+            st.info("No shots faced by this goalkeeper in the selection.")
+            return
+        st.caption(f"{portiere} played for {len(df)} team(s) in the selection. One row (and one chart) per team: the share is always "
+                   f"calculated on the shots faced by THAT team.")
+        voci = [{'label': r.Team, 'pct': r.Share, 'detail': f"{int(r.Shots)} of {int(r.Team_shots)} shots"} for r in df.itertuples()]
+        fig = disegna_barre_utilizzo(voci, f"Share of the team's shots faced by {portiere}")
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+        st.dataframe(_formatta_tabella_utilizzo(df, con_squadra=True), use_container_width=True, hide_index=True)
+        for sq in df['Team']:
+            df_sq, tot_sq, n_sq = utilizzo_portieri_squadra(partite, sq)
+            with st.expander(f"{sq} — all goalkeepers ({n_sq} match(es), {tot_sq} shots faced)", expanded=(len(df) == 1)):
+                voci_sq = [{'label': r.Goalkeeper, 'pct': r.Share, 'detail': f"{int(r.Shots)} of {tot_sq} shots · {int(r.Matches)} match(es)"} for r in df_sq.itertuples()]
+                fig_sq = disegna_barre_utilizzo(voci_sq, f"Share of {sq}'s shots faced, by goalkeeper", evidenzia={portiere})
+                st.pyplot(fig_sq, use_container_width=True)
+                plt.close(fig_sq)
+                st.dataframe(_formatta_tabella_utilizzo(df_sq), use_container_width=True, hide_index=True)
+
+def dati_confronto_team_portieri(match, elenco_partite):
+    """Dati per confrontare il team portieri della squadra di 'match' con quello avversario (stessa partita).
+    None se l'altro record non è stato caricato (es. taggati solo i tiri subiti): il confronto allora non esiste."""
+    altro = trova_controparte_partita(match, elenco_partite)
+    if altro is None or match['dati'].empty or altro['dati'].empty:
+        return None
+    s_a, g_a, m_a, pct_a, eff_a = calcola_metriche_gruppo(match['dati'])
+    s_b, g_b, m_b, pct_b, eff_b = calcola_metriche_gruppo(altro['dati'])
+    return {'nome_a': str(match['squadra']), 'nome_b': str(altro['squadra']),
+            'pct_a': pct_a, 'pct_b': pct_b, 'eff_a': eff_a, 'eff_b': eff_b,
+            'det_pct_a': f"{s_a}/{s_a + g_a} saves", 'det_pct_b': f"{s_b}/{s_b + g_b} saves",
+            'det_eff_a': f"{s_a + m_a}/{s_a + g_a + m_a}", 'det_eff_b': f"{s_b + m_b}/{s_b + g_b + m_b}"}
+
+def figure_confronto_team_portieri(d, figsize=None):
+    """(figura Save %, figura Efficiency %) dal dict di dati_confronto_team_portieri."""
+    f1 = disegna_confronto_due_valori(d['nome_a'], d['nome_b'], d['pct_a'], d['pct_b'], d['det_pct_a'], d['det_pct_b'], "Save %", figsize=figsize)
+    f2 = disegna_confronto_due_valori(d['nome_a'], d['nome_b'], d['eff_a'], d['eff_b'], d['det_eff_a'], d['det_eff_b'], "Efficiency %", figsize=figsize)
+    return f1, f2
 
 
 tab1, tab2, tab3, tab4, tab7, tab6, tab5, tab8 = st.tabs(['📥 Upload Match Sheets', '📊 Single Game Analysis', '🏆 Seasonal Report', '🎯 Shooting Trend Analysis', '🌍 Universal Stats', '🎬 Tag & Go Analysis', '🏋️ Training Sessions', '🎬 YouTube Links'])
@@ -12304,6 +12672,18 @@ with tab2:
 
             st.markdown("---")
             mostra_confronto_team_portieri(elenco_partite_smatch[idx_match], elenco_partite_smatch, "sg_confronto_team")
+
+            # v117: quota dei tiri subiti dalla squadra, per portiere (stessa idea del Seasonal Report, riferita a questa partita)
+            st.markdown("---")
+            st.subheader("🧤 Goalkeeper Usage in this match")
+            _voci_uso_match = voci_utilizzo_partita(df_match)
+            if len(_voci_uso_match) >= 2:
+                _fig_uso_match = disegna_barre_utilizzo(_voci_uso_match, f"Share of {elenco_partite_smatch[idx_match]['squadra']}'s shots faced, by goalkeeper")
+                st.pyplot(_fig_uso_match, use_container_width=True)
+                plt.close(_fig_uso_match)
+                st.caption("Empty Goal shots are left out: no goalkeeper is on court then. Colours match the GPI chart below.")
+            else:
+                st.caption("Only one goalkeeper faced shots for this team in this match (100%): no chart needed.")
         
             st.markdown("---")
             st.subheader("📈 Goalkeeper Cumulative Match Performance Graph")
@@ -12754,7 +13134,9 @@ with tab2:
                             squadra_home=squadra_home_match,
                             squadra_away=squadra_away_match,
                             partita_completa=partita_completa_sel,
-                            elenco_df_traiettoria=_dfs_traiettoria_sm
+                            elenco_df_traiettoria=_dfs_traiettoria_sm,
+                            uso_portieri=voci_utilizzo_partita(df_match),
+                            confronto_team=dati_confronto_team_portieri(elenco_partite_smatch[idx_match], elenco_partite_smatch)
                         )
                         nome_file_pdf = f"Report_{scelta}".replace(' ', '_').replace('/', '-') + ".pdf"
                         st.download_button(
@@ -13426,6 +13808,11 @@ with tab3:
         st.markdown("---")
         st.subheader("🕸️ Goalkeeper Radar — Save % and Efficiency %")
         sezione_radar("sr_radar", db_sorgente_sr, 'gk')
+
+        # v117: utilizzo dei portieri (quota dei tiri subiti dalla squadra), squadra o portiere singolo
+        st.markdown("---")
+        st.subheader("🧤 Goalkeeper Usage — share of the team's shots faced")
+        sezione_utilizzo_portieri("sr_uso", db_sorgente_sr)
 
 
 st.sidebar.caption(f"   • Seasonal Report: {time.time() - _t_tab3:.1f}s")
