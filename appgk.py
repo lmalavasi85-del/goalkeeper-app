@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v119 - 2026-11-23 - Shooting Trend, vista Giocatore: scelta del perimetro delle partite (tutte le disponibili, una lega, un intervallo di date, partite a scelta) valida anche per il PDF; il giocatore che cambia squadra resta un'unica identità. v118 - 2026-11-22 - Nomi file con cifre nel nome squadra (es. \"H71-Ostrovia 21-11-2026\") ora riconosciuti. v117 - 2026-11-22 - Seasonal Report e Single Game: utilizzo dei portieri (quota dei tiri subiti dalla squadra); PDF partita: grafici di utilizzo e confronto team portieri, nuova impaginazione senza vuoti (grafici elastici, una pagina di statistiche per portiere). v116 - 2026-11-21 - Corretto errore \"DuplicateElementKey\" nei radar (filtro per campionato con più campionati). v115 - 2026-11-21 - Universal Stats: filtro sullo scarto (da -5 a +5 goal) per i grafici \"Does the better goalkeeping team win?\". v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v120 - 2026-11-23 - Shooting Trend, vista Team: per i giocatori in più squadre si sceglie quali partite alimentano mappe e PDF (solo questa squadra, tutte, una lega, date, a scelta); i totali di squadra non cambiano. v119 - 2026-11-23 - Shooting Trend, vista Giocatore: scelta del perimetro delle partite (tutte le disponibili, una lega, un intervallo di date, partite a scelta) valida anche per il PDF; il giocatore che cambia squadra resta un'unica identità. v118 - 2026-11-22 - Nomi file con cifre nel nome squadra (es. \"H71-Ostrovia 21-11-2026\") ora riconosciuti. v117 - 2026-11-22 - Seasonal Report e Single Game: utilizzo dei portieri (quota dei tiri subiti dalla squadra); PDF partita: grafici di utilizzo e confronto team portieri, nuova impaginazione senza vuoti (grafici elastici, una pagina di statistiche per portiere). v116 - 2026-11-21 - Corretto errore \"DuplicateElementKey\" nei radar (filtro per campionato con più campionati). v115 - 2026-11-21 - Universal Stats: filtro sullo scarto (da -5 a +5 goal) per i grafici \"Does the better goalkeeping team win?\". v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -14308,6 +14308,73 @@ with tab4:
                 dati_pdf_giocatori = {}
                 dati_completi_per_giocatore_stagione = {}
                 chiave_roster_ctx = _chiave_css_sicura(titolo_dashboard)
+
+                # v120: giocatori che risultano in PIÙ squadre (es. Molteno -> Chiaravalle). Per ognuno si
+                # può scegliere quali partite alimentano mappe e PDF individuali: solo quelle di questa
+                # squadra (default), tutte le disponibili, quelle di una lega, un intervallo di date o
+                # partite a scelta. I totali della squadra restano sempre quelli delle sue partite.
+                partite_scope_giocatore = {}
+                descrizione_scope_giocatore = {}
+                if modalita_tir == "Team":
+                    _db_tutte_tir = escludi_empty_goal_stagionale(st.session_state['db_tiratori'])
+                    _squadre_per_giocatore = {}
+                    for _m_all in _db_tutte_tir:
+                        for _g_all in set(_m_all['dati']['TIRATORE_ID'].dropna().unique()):
+                            if _g_all in giocatori_da_mostrare:
+                                _squadre_per_giocatore.setdefault(_g_all, set()).add(_m_all['squadra'])
+                    _giocatori_multi = [g for g in giocatori_da_mostrare if len(_squadre_per_giocatore.get(g, ())) > 1]
+                    if _giocatori_multi:
+                        with st.expander(f"🔀 Players with more than one team ({len(_giocatori_multi)}) — choose which matches "
+                                         f"their maps and PDF cover", expanded=True):
+                            st.caption("These players appear for more than one team. By default only this team's matches "
+                                       "count; for each of them you can also use all their matches, one league, a date "
+                                       "range, or matches you pick. The team totals above never change.")
+                            _opz_multi = ["This team only", "All available matches", "Matches of one league",
+                                          "Date range", "Matches I choose"]
+                            for _g_multi in _giocatori_multi:
+                                _ck = f"{chiave_roster_ctx}_{_chiave_css_sicura(_g_multi)}"
+                                st.markdown(f"**{_g_multi}** — teams: {', '.join(sorted(_squadre_per_giocatore[_g_multi]))}")
+                                _scelta_multi = st.radio("Matches to use:", _opz_multi, horizontal=True,
+                                                         key=f"perim_tm_{_ck}", label_visibility="collapsed")
+                                if _scelta_multi == "This team only":
+                                    continue
+                                _tutte_g = sorted([m for m in _db_tutte_tir if _g_multi in m['dati']['TIRATORE_ID'].values],
+                                                  key=lambda m: str(m['data']))
+                                _lista_g, _desc_g = _tutte_g, "all available matches"
+                                if _scelta_multi == "Matches of one league":
+                                    if not st.session_state['campionati']:
+                                        st.info("No league (championship) created yet: create one in 📥 Upload Match Sheets → "
+                                                "🏆 Championships. Using all available matches for now.")
+                                    else:
+                                        _nomi_c = [c['nome'] for c in st.session_state['campionati']]
+                                        _idx_c = _nomi_c.index(campionato_scelto_tir) if campionato_scelto_tir in _nomi_c else 0
+                                        _lega_g = st.selectbox("League:", _nomi_c, index=_idx_c, key=f"perim_tm_lega_{_ck}")
+                                        _lista_g = partite_in_campionato(_tutte_g, next(c for c in st.session_state['campionati'] if c['nome'] == _lega_g))
+                                        _desc_g = f"league: {_lega_g}"
+                                elif _scelta_multi == "Date range":
+                                    _date_g = [m['data'] for m in _tutte_g if hasattr(m['data'], 'year')]
+                                    if _date_g:
+                                        _dmin, _dmax = min(_date_g), max(_date_g)
+                                        _sel_d = st.date_input("From – To", value=(_dmin, _dmax), min_value=_dmin, max_value=_dmax,
+                                                               key=f"perim_tm_date_{_ck}")
+                                        if isinstance(_sel_d, (tuple, list)) and len(_sel_d) == 2:
+                                            _lista_g = [m for m in _tutte_g if hasattr(m['data'], 'year') and _sel_d[0] <= m['data'] <= _sel_d[1]]
+                                            _desc_g = f"{_sel_d[0]} → {_sel_d[1]}"
+                                        else:
+                                            st.caption("Pick the end date to apply the filter.")
+                                            continue
+                                elif _scelta_multi == "Matches I choose":
+                                    _etich_g = [f"{m['nome']} ({m['data']})" for m in _tutte_g]
+                                    _sel_m = st.multiselect("Choose the matches:", _etich_g, key=f"perim_tm_match_{_ck}")
+                                    if _sel_m:
+                                        _lista_g = [m for m, e in zip(_tutte_g, _etich_g) if e in _sel_m]
+                                        _desc_g = "matches chosen by you"
+                                    else:
+                                        st.caption("Nothing chosen yet: using all available matches.")
+                                partite_scope_giocatore[_g_multi] = _lista_g
+                                descrizione_scope_giocatore[_g_multi] = f"{_desc_g} — {len(_lista_g)} match(es)"
+                                if not _lista_g:
+                                    st.warning(f"No matches with {_g_multi}'s shots in this selection: he will not appear below.")
                 if modalita_tir == "Team":
                     st.caption("Untick a player below to leave them out of the team PDF export (e.g. injured, "
                                "not called up) — everyone is included by default.")
@@ -14317,7 +14384,10 @@ with tab4:
                 for nome_giocatore in giocatori_da_mostrare:
                     frammenti_g = []
                     lista_partite_g = []
-                    for m in match_filtrati:
+                    _partite_di_questo_giocatore = partite_scope_giocatore.get(nome_giocatore)
+                    if _partite_di_questo_giocatore is None:
+                        _partite_di_questo_giocatore = match_filtrati
+                    for m in _partite_di_questo_giocatore:
                         df_g_match = m['dati'][m['dati']['TIRATORE_ID'] == nome_giocatore]
                         if df_g_match.empty:
                             continue
@@ -14348,6 +14418,8 @@ with tab4:
                         else:
                             includi_giocatore_pdf = True
                         gestisci_foto_giocatore(nome_giocatore, key_prefix="tir")
+                        if nome_giocatore in descrizione_scope_giocatore:
+                            st.caption(f"🔀 Maps and PDF for {nome_giocatore} cover: {descrizione_scope_giocatore[nome_giocatore]}.")
                         goal_tot, shots_tot, pct_tot = calcola_metriche_tiratori_gruppo(df_giocatore_vista)
                         cA, cB, cC = st.columns(3)
                         cA.metric("Shots", shots_tot)
@@ -14512,7 +14584,11 @@ with tab4:
                             st.rerun()
 
                 st.markdown("**📋 Matches Analyzed page**")
-                chiave_contesto_ma = _chiave_css_sicura(f"{titolo_dashboard}_{len(match_filtrati)}")
+                _partite_per_ma = {(m['nome'], str(m['data'])): m for m in match_filtrati}
+                for _lista_extra in partite_scope_giocatore.values():
+                    for _m_extra in _lista_extra:
+                        _partite_per_ma.setdefault((_m_extra['nome'], str(_m_extra['data'])), _m_extra)
+                chiave_contesto_ma = _chiave_css_sicura(f"{titolo_dashboard}_{len(_partite_per_ma)}")
                 includi_matches_analyzed = st.checkbox("Include a 'Matches Analyzed' page in the PDF", value=True,
                                                          key=f"includi_matches_analyzed_tir_{chiave_contesto_ma}")
                 st.caption("Match and Date are pre-filled automatically from the matches in this selection — "
@@ -14539,7 +14615,7 @@ with tab4:
                          "Untick it and the table is calculated automatically again from the matches of "
                          "the selection.")
                 righe_auto_ma = []
-                for m in sorted(match_filtrati, key=lambda m: str(m['data'])):
+                for m in sorted(_partite_per_ma.values(), key=lambda m: str(m['data'])):
                     righe_auto_ma.append({
                         'Match': m['nome'], 'Date': str(m['data']),
                         'Competition': st.session_state['competizioni_partite'].get(f"{m['nome']}|{m['data']}", '')
