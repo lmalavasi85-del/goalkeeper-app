@@ -1169,7 +1169,7 @@ st.set_page_config(
 # ============================================================
 APP_ACCESS_CODE = "GigiGiambaGenna#1"
 
-APP_VERSION = ("v118 - 2026-11-22 - Nomi file con cifre nel nome squadra (es. \"H71-Ostrovia 21-11-2026\") ora riconosciuti. v117 - 2026-11-22 - Seasonal Report e Single Game: utilizzo dei portieri (quota dei tiri subiti dalla squadra); PDF partita: grafici di utilizzo e confronto team portieri, nuova impaginazione senza vuoti (grafici elastici, una pagina di statistiche per portiere). v116 - 2026-11-21 - Corretto errore \"DuplicateElementKey\" nei radar (filtro per campionato con più campionati). v115 - 2026-11-21 - Universal Stats: filtro sullo scarto (da -5 a +5 goal) per i grafici \"Does the better goalkeeping team win?\". v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
+APP_VERSION = ("v119 - 2026-11-23 - Shooting Trend, vista Giocatore: scelta del perimetro delle partite (tutte le disponibili, una lega, un intervallo di date, partite a scelta) valida anche per il PDF; il giocatore che cambia squadra resta un'unica identità. v118 - 2026-11-22 - Nomi file con cifre nel nome squadra (es. \"H71-Ostrovia 21-11-2026\") ora riconosciuti. v117 - 2026-11-22 - Seasonal Report e Single Game: utilizzo dei portieri (quota dei tiri subiti dalla squadra); PDF partita: grafici di utilizzo e confronto team portieri, nuova impaginazione senza vuoti (grafici elastici, una pagina di statistiche per portiere). v116 - 2026-11-21 - Corretto errore \"DuplicateElementKey\" nei radar (filtro per campionato con più campionati). v115 - 2026-11-21 - Universal Stats: filtro sullo scarto (da -5 a +5 goal) per i grafici \"Does the better goalkeeping team win?\". v114 - 2026-11-18 - Mappa del campo con misura esplicita (uguale in Seasonal e Shooting Report). v113 - 2026-11-18 - Radar portieri (Seasonal Report) e tiratori (Shooting Trend); confronto team portieri (Single Game); vittorie vs % parata/efficacia (Universal Stats). v112 - 2026-11-17 - Training Sessions: i link degli esercizi si ordinano sempre da soli per numero (a schermo, nel salvataggio e nel PDF). v111 - 2026-11-17 - Shooting Trend (Team): torte del volume di tiro per giocatore anche per Money Time e Passive Play (schermo e PDF). v110 - 2026-11-17 - Shooting Trend (vista Team): grafico a torta del volume di tiro per giocatore (a schermo e nel PDF). v109 - 2026-11-15 - classifiche: la % mostrata coincide con quella usata per ordinare (niente doppio arrotondamento). v108 - 2026-11-14 - PDF partita: una pagina per ogni portiere (porta + campo, stesso schema della generale, più grandi); mappa del campo a video con proporzione fissa (non si stira più). v107 - 2026-11-07 - PDF partita: con un solo portiere la mappa generale coincide con la sua (una sola mappa, con la nota); con 2 o più portieri una pagina per la generale e una per i singoli; niente pagina bianca. "
     "v106 - 2026-11-06 - Porta: in ogni riquadro g/s/m (es. 2g 4s 3m) e totale g/s/m sopra la porta, ovunque nell'app e nei PDF. "
     "v105 - 2026-11-06 - Portieri: porta e campo contano tutti i tiri (anche i fuori) come efficienza; didascalia Expected efficiency / Real; cornice verde-gialla-rossa. "
     "v104 - 2026-11-06 - Campo generale: il dato (g/t) sempre sotto la percentuale. "
@@ -13914,18 +13914,67 @@ with tab4:
                 match_rilevanti = match_squadra
                 titolo_dashboard = squadra_scelta_tir
             else:
-                giocatore_scelto_tir = st.selectbox("Select player:", giocatori_tir, key="giocatore_scelto_tir")
+                # v119: in vista Giocatore la scelta delle partite parte da TUTTE quelle disponibili
+                # (un giocatore può cambiare squadra: es. Molteno -> Chiaravalle), non solo da quelle
+                # del campionato scelto in alto; il perimetro si sceglie qui sotto.
+                db_tir_tutte = escludi_empty_goal_stagionale(st.session_state['db_tiratori'])
+                giocatori_tir_tutti = sorted(set(
+                    g for m in db_tir_tutte for g in m['dati']['TIRATORE_ID'].dropna().unique()
+                ))
+                giocatore_scelto_tir = st.selectbox("Select player:", giocatori_tir_tutti, key="giocatore_scelto_tir")
                 giocatori_da_mostrare = [giocatore_scelto_tir]
-                match_rilevanti = [m for m in db_tir if giocatore_scelto_tir in m['dati']['TIRATORE_ID'].values]
                 titolo_dashboard = giocatore_scelto_tir
+                partite_giocatore_tutte = [m for m in db_tir_tutte
+                                           if giocatore_scelto_tir in m['dati']['TIRATORE_ID'].values]
+                squadre_giocatore = sorted(set(m['squadra'] for m in partite_giocatore_tutte))
+                if len(squadre_giocatore) > 1:
+                    st.caption(f"{giocatore_scelto_tir} appears for {len(squadre_giocatore)} teams: "
+                               f"{', '.join(squadre_giocatore)}. His shots are always counted together.")
+
+                st.markdown("**Which matches should this player's Shooting Report cover?**")
+                _opz_perimetro = ["All available matches", "Matches of one league", "Date range", "Matches I choose"]
+                _idx_perimetro = 1 if (campionato_scelto_tir != "All Data & All Time" and st.session_state['campionati']) else 0
+                perimetro_tir = st.radio("Scope:", _opz_perimetro, index=_idx_perimetro, horizontal=True,
+                                         key="perimetro_tir_giocatore", label_visibility="collapsed")
+                match_rilevanti = list(partite_giocatore_tutte)
+                _desc_perimetro = "all available matches"
+                if perimetro_tir == "Matches of one league":
+                    if not st.session_state['campionati']:
+                        st.info("No league (championship) created yet: create one in 📥 Upload Match Sheets → "
+                                "🏆 Championships. Showing all available matches for now.")
+                    else:
+                        _nomi_camp = [c['nome'] for c in st.session_state['campionati']]
+                        _idx_camp = _nomi_camp.index(campionato_scelto_tir) if campionato_scelto_tir in _nomi_camp else 0
+                        _camp_giocatore = st.selectbox("League:", _nomi_camp, index=_idx_camp, key="perimetro_tir_lega")
+                        _camp_obj = next(c for c in st.session_state['campionati'] if c['nome'] == _camp_giocatore)
+                        match_rilevanti = partite_in_campionato(partite_giocatore_tutte, _camp_obj)
+                        _desc_perimetro = f"league: {_camp_giocatore}"
+                elif perimetro_tir == "Date range":
+                    _date_giocatore = [m['data'] for m in partite_giocatore_tutte if hasattr(m['data'], 'year')]
+                    if _date_giocatore:
+                        _d_min_g, _d_max_g = min(_date_giocatore), max(_date_giocatore)
+                        _sel_date_g = st.date_input("From – To", value=(_d_min_g, _d_max_g), min_value=_d_min_g,
+                                                    max_value=_d_max_g, key="perimetro_tir_date")
+                        if isinstance(_sel_date_g, (tuple, list)) and len(_sel_date_g) == 2:
+                            match_rilevanti = [m for m in partite_giocatore_tutte
+                                               if hasattr(m['data'], 'year') and _sel_date_g[0] <= m['data'] <= _sel_date_g[1]]
+                            _desc_perimetro = f"{_sel_date_g[0]} → {_sel_date_g[1]}"
+                        else:
+                            st.caption("Pick the end date to apply the filter.")
+                if perimetro_tir != "Matches I choose":
+                    st.caption(f"Report scope: {_desc_perimetro} — {len(match_rilevanti)} match(es) with this player's shots.")
 
             # ---- Match group selector ----
             match_rilevanti_ord = sorted(match_rilevanti, key=lambda m: m['data'])
             etichette_match = [f"{m['nome']} ({m['data']})" for m in match_rilevanti_ord]
-            selezione_match_tir = st.multiselect(
-                "Filter matches (leave empty to use the whole season):",
-                etichette_match, default=[], key="selezione_match_tir"
-            )
+            if modalita_tir == "Player" and perimetro_tir != "Matches I choose":
+                # Il perimetro è già deciso dalla scelta qui sopra: nessun ulteriore filtro manuale.
+                selezione_match_tir = []
+            else:
+                selezione_match_tir = st.multiselect(
+                    "Choose the matches:" if modalita_tir == "Player" else "Filter matches (leave empty to use the whole season):",
+                    etichette_match, default=[], key="selezione_match_tir_giocatore" if modalita_tir == "Player" else "selezione_match_tir"
+                )
             match_filtrati = (
                 [m for m, lbl in zip(match_rilevanti_ord, etichette_match) if lbl in selezione_match_tir]
                 if selezione_match_tir else match_rilevanti_ord
